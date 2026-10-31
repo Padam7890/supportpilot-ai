@@ -7,10 +7,12 @@ import pytest
 from app.core.config import settings
 from app.schemas.ai import AIExecutionOut
 from app.services.ai_execution import (
+    AIProviderError,
     ExecutionState,
     build_grounded_draft_graph,
     is_provider_configured,
 )
+from app.services.ai_worker import _safe_ai_failure_code
 
 
 def test_execution_response_excludes_private_inputs_and_sensitive_provider_data():
@@ -50,6 +52,15 @@ def test_ai_execution_requires_base_url_and_model(monkeypatch):
     monkeypatch.setattr(settings, "ai_provider_base_url", "https://gateway.example/v1")
     monkeypatch.setattr(settings, "ai_model", "support-model")
     assert is_provider_configured() is True
+
+
+def test_ai_failures_have_safe_actionable_codes_without_exposing_exception_text():
+    provider_error = AIProviderError(
+        "provider_unreachable",
+        "AI provider could not be reached; token=do-not-log-this",
+    )
+    assert _safe_ai_failure_code(provider_error) == "provider_unreachable"
+    assert _safe_ai_failure_code(RuntimeError("checkpoint connection failed")) == "ai_execution_failed"
 
 
 def test_langgraph_execution_state_keeps_prompt_only_in_private_state():

@@ -46,6 +46,27 @@ RETRIEVAL_STOPWORDS = frozenset(
 NON_ORDER_NUMBER_WORDS = frozenset({"status", "update", "details", "detail", "tracking", "information", "number"})
 
 
+def _safe_ai_failure_code(exc: Exception) -> str:
+    """Classify known provider errors without recording response bodies or secrets."""
+    safe_code = getattr(exc, "code", None)
+    if isinstance(safe_code, str) and re.fullmatch(r"[a-z0-9_]{1,80}", safe_code):
+        return safe_code
+    message = str(exc)
+    provider_status = re.fullmatch(r"AI provider returned HTTP (\d{3})", message)
+    if provider_status:
+        return f"provider_http_{provider_status.group(1)}"
+    if message == "AI provider is not configured":
+        return "provider_not_configured"
+    if message == "AI provider URL must use HTTPS outside local development":
+        return "provider_url_invalid"
+    if message == "AI provider returned an empty draft":
+        return "provider_empty_response"
+    # Failures outside the provider call are commonly checkpoint/database or
+    # graph execution errors. Keep the public code useful without exposing
+    # exception text, SQL, prompt content, or credentials.
+    return "ai_execution_failed"
+
+
 def _question_order_number(question: str) -> str | None:
     match = re.search(r"#\s*([A-Za-z0-9][A-Za-z0-9-]{1,59})", question)
     if match is None:
@@ -470,7 +491,13 @@ async def process_ai_execution(organization_id: UUID, execution_id: UUID) -> Non
             row.completed_at = now
             await db.commit()
     except Exception as exc:  # noqa: BLE001 - record failures safely and keep the worker alive
-        logger.warning("AI execution failed: execution_id=%s error_type=%s", execution_id, type(exc).__name__)
+        failure_code = _safe_ai_failure_code(exc)
+        logger.warning(
+            "AI execution failed: execution_id=%s error_type=%s failure_code=%s",
+            execution_id,
+            type(exc).__name__,
+            failure_code,
+        )
         widget_fallback_mode: str | None = None
         async with SessionLocal() as db:
             await set_tenant_context(db, organization_id)
@@ -496,7 +523,7 @@ async def process_ai_execution(organization_id: UUID, execution_id: UUID) -> Non
                     row.reply_status = "failed" if exhausted else "processing"
                 if exhausted:
                     row.integration_context_encrypted = None
-                row.error_code = "generation_failed"
+                row.error_code = failure_code
                 row.safe_summary = (
                     "The AI request could not be completed. You can create a new request."
                     if exhausted

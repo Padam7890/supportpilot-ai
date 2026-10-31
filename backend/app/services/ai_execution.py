@@ -31,6 +31,14 @@ class ExecutionState(TypedDict, total=False):
     auto_reply: bool
 
 
+class AIProviderError(RuntimeError):
+    """Provider failure with a safe, non-sensitive diagnostic code."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
 def is_provider_configured() -> bool:
     return bool(settings.ai_provider_base_url and settings.ai_model)
 
@@ -113,7 +121,7 @@ def build_grounded_draft_graph(checkpointer: Any) -> Any:
 
         base_url = (settings.ai_provider_base_url or "").rstrip("/")
         if not base_url or not settings.ai_model:
-            raise RuntimeError("AI provider is not configured")
+            raise AIProviderError("provider_not_configured", "AI provider is not configured")
         parsed_url = urlsplit(base_url)
         local_http_host = parsed_url.scheme == "http" and parsed_url.hostname in {
             "localhost",
@@ -123,28 +131,48 @@ def build_grounded_draft_graph(checkpointer: Any) -> Any:
         if (
             parsed_url.scheme != "https" and not local_http_host
         ) or not parsed_url.hostname or parsed_url.username or parsed_url.password or parsed_url.query or parsed_url.fragment:
-            raise RuntimeError("AI provider URL must use HTTPS outside local development")
+            raise AIProviderError(
+                "provider_url_invalid", "AI provider URL must use HTTPS outside local development"
+            )
         headers = {"content-type": "application/json"}
         if settings.ai_provider_api_key:
             headers["authorization"] = f"Bearer {settings.ai_provider_api_key.get_secret_value()}"
-        async with httpx.AsyncClient(timeout=settings.ai_provider_timeout_seconds) as client:
-            response = await client.post(
-                f"{base_url}/chat/completions",
-                headers=headers,
-                json={
-                    "model": settings.ai_model,
-                    "messages": state.get("prompt", []),
-                    "temperature": 0.2,
-                    "max_tokens": 400,
-                },
-            )
+        try:
+            async with httpx.AsyncClient(timeout=settings.ai_provider_timeout_seconds) as client:
+                response = await client.post(
+                    f"{base_url}/chat/completions",
+                    headers=headers,
+                    json={
+                        "model": settings.ai_model,
+                        "messages": state.get("prompt", []),
+                        # max_completion_tokens is the current Chat Completions
+                        # limit and also applies when a reasoning model uses tokens
+                        # that are not part of its visible answer. Omit sampling
+                        # parameters so reasoning-model defaults remain compatible.
+                        "max_completion_tokens": 400,
+                    },
+                )
+        except httpx.TimeoutException as exc:
+            raise AIProviderError("provider_timeout", "AI provider request timed out") from exc
+        except httpx.RequestError as exc:
+            raise AIProviderError("provider_unreachable", "AI provider could not be reached") from exc
         if response.is_error:
-            raise RuntimeError(f"AI provider returned HTTP {response.status_code}")
-        body = response.json()
+            raise AIProviderError(
+                f"provider_http_{response.status_code}",
+                f"AI provider returned HTTP {response.status_code}",
+            )
+        try:
+            body = response.json()
+        except (ValueError, json.JSONDecodeError) as exc:
+            raise AIProviderError("provider_invalid_response", "AI provider returned invalid JSON") from exc
+        if not isinstance(body, dict):
+            raise AIProviderError("provider_invalid_response", "AI provider returned an invalid response")
         choices = body.get("choices")
-        content = choices[0].get("message", {}).get("content") if choices else None
+        first_choice = choices[0] if isinstance(choices, list) and choices else None
+        message = first_choice.get("message") if isinstance(first_choice, dict) else None
+        content = message.get("content") if isinstance(message, dict) else None
         if not isinstance(content, str) or not content.strip():
-            raise RuntimeError("AI provider returned an empty draft")
+            raise AIProviderError("provider_empty_response", "AI provider returned an empty draft")
         raw_usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
         usage = {
             key: int(raw_usage.get(source, 0) or 0)

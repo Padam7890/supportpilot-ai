@@ -28,5 +28,15 @@ def anyio_backend():
 
 @pytest.fixture
 async def client():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        yield ac
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            yield ac
+    finally:
+        # Lifespan-created Redis clients keep loop-bound sockets. Close and
+        # clear the app-state client before the next test creates a new loop.
+        redis_client = getattr(app.state, "redis", None)
+        close = getattr(redis_client, "aclose", None)
+        if close is not None:
+            await close()
+        if redis_client is not None:
+            del app.state.redis

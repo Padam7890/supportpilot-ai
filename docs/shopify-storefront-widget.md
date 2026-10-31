@@ -46,7 +46,7 @@ EMAIL_USE_SSL=false
 
 Port 587 uses STARTTLS. For implicit TLS, use port 465 and `EMAIL_USE_SSL=true`. Keep the credentials server-side. Apply migrations through `0021_widget_order_consent`, then reload the backend and worker so they use the new routes and worker policy. The widget returns a generic response for order matches and non-matches; codes expire after 10 minutes and allow at most five attempts. Verification is limited to three code requests per conversation per ten minutes.
 
-For AI replies, configure `AI_PROVIDER_BASE_URL`, `AI_PROVIDER_API_KEY`, and `AI_MODEL` in the root `.env` (Compose) or `backend/.env` (direct backend). Use a server-side OpenAI-compatible chat-completions endpoint. Keep the key out of storefront JavaScript and Next.js public environment variables. Set the widget to `auto_reply` to send replies to shoppers; `draft_only` intentionally keeps responses in the SupportPilot Inbox for an agent.
+For AI replies, configure `AI_PROVIDER_BASE_URL`, `AI_PROVIDER_API_KEY`, and `AI_MODEL` in `backend/.env`. Docker Compose passes this file to the API and background worker; direct backend runs also read it. Use a server-side OpenAI-compatible chat-completions endpoint. Keep the key out of storefront JavaScript and Next.js public environment variables. Set the widget to `auto_reply` to send replies to shoppers; `draft_only` intentionally keeps responses in the SupportPilot Inbox for an agent.
 
 The snippet resembles:
 

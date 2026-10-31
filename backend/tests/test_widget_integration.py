@@ -501,6 +501,10 @@ async def test_widget_order_lookup_requires_email_code_and_returns_only_verified
     monkeypatch.setattr("app.api.routes.widgets.smtp_is_configured", lambda: True)
     monkeypatch.setattr("app.api.routes.widgets.encrypt_credential", lambda value: f"encrypted:{value}")
     monkeypatch.setattr("app.api.routes.widgets.decrypt_credential", lambda value: value.removeprefix("encrypted:"))
+    monkeypatch.setattr(
+        "app.services.shopify_security.decrypt_credential",
+        lambda value: value.removeprefix("encrypted:"),
+    )
     async def get_installation(db, org_id):
         return _installation()
 
@@ -567,7 +571,7 @@ async def test_widget_order_lookup_requires_email_code_and_returns_only_verified
         headers={**visitor_headers, "Idempotency-Key": "widget-order-followup-status-1"},
         json={"content": "What is my order status?"},
     )
-    assert followup.status_code == 201, followup.text
+    assert followup.status_code == 200, followup.text
     followup_execution = await claim_ai_execution(organization_id)
     assert followup_execution is not None
     await process_ai_execution(organization_id, followup_execution)

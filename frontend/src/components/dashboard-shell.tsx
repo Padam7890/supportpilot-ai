@@ -103,19 +103,19 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           <button className="ml-auto rounded-lg p-2 text-slate-500 hover:bg-slate-100 lg:hidden" onClick={() => setMobileOpen(false)} aria-label="Close navigation"><X size={18}/></button>
         </div>
         <div className="mx-4 mb-6 rounded-2xl bg-slate-50 p-3">
-          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-400"><Building2 size={14}/> Workspace</div>
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-600"><Building2 size={14}/> Workspace</div>
           <p className="mt-2 truncate text-sm font-semibold text-slate-800">{user.organization?.name ?? "Your organization"}</p>
           <p className="mt-0.5 truncate text-xs text-slate-500">{user.organization?.slug}</p>
         </div>
         <nav aria-label="Main navigation" className="space-y-1 px-3">
-          <p className="px-3 pb-2 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Workspace</p>
+          <p className="px-3 pb-2 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600">Workspace</p>
           {links.map(({ href, label, icon: Icon, exact }) => {
             const active = exact ? pathname === href : pathname.startsWith(href);
             return <Link key={href} href={href} onClick={() => setMobileOpen(false)} className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition ${active ? "bg-blue-50 text-blue-800" : "text-slate-600 hover:bg-slate-50 hover:text-slate-950"}`}><Icon size={18}/>{label}{active && <span className="ml-auto size-1.5 rounded-full bg-blue-700"/>}</Link>;
           })}
         </nav>
         <div className="mt-auto border-t border-slate-100 p-4">
-          <div className="mb-3 flex items-center gap-2 px-2 text-xs text-slate-500"><CircleHelp size={15}/> Need a hand? <span className="ml-auto text-slate-400">v0.3</span></div>
+          <div className="mb-3 flex items-center gap-2 px-2 text-xs text-slate-600"><CircleHelp size={15}/> Need a hand? <span className="ml-auto text-slate-600">v0.3</span></div>
           <div className="flex items-center gap-3 rounded-xl p-2">
             <div className="grid size-9 shrink-0 place-items-center rounded-full bg-blue-100 text-sm font-bold text-blue-800">{user.full_name.slice(0, 1).toUpperCase()}</div>
             <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{user.full_name}</p><p className="truncate text-xs capitalize text-slate-500">{user.role}</p></div>

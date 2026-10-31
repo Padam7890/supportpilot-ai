@@ -29,14 +29,15 @@ test("register, create customer and ticket, assign an agent, and exchange a mess
   await page.getByLabel("Work email").fill(ownerEmail);
   await page.getByLabel("Password").fill(ownerPassword);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("alert")).toContainText("pending approval");
+  await expect(page.locator('p[role="alert"]')).toContainText("pending approval");
   expect((await page.context().cookies()).some((cookie) => cookie.name === "supportpilot_access")).toBe(false);
 
   const platformEmail = process.env.E2E_PLATFORM_OWNER_EMAIL;
   const platformPassword = process.env.E2E_PLATFORM_OWNER_PASSWORD;
   expect(platformEmail, "Set E2E_PLATFORM_OWNER_EMAIL to a bootstrapped platform owner").toBeTruthy();
   expect(platformPassword, "Set E2E_PLATFORM_OWNER_PASSWORD to a bootstrapped platform owner").toBeTruthy();
-  const platform = await browser.newPage();
+  const platformContext = await browser.newContext();
+  const platform = await platformContext.newPage();
   await platform.goto("/platform/login");
   await platform.getByLabel("Platform owner email").fill(platformEmail!);
   await platform.getByLabel("Password").fill(platformPassword!);
@@ -46,7 +47,7 @@ test("register, create customer and ticket, assign an agent, and exchange a mess
   const tenantRow = platform.getByRole("row").filter({ hasText: organizationSlug });
   await tenantRow.getByRole("button", { name: "Approve" }).click();
   await expect(tenantRow).toHaveCount(0);
-  await platform.close();
+  await platformContext.close();
 
   await page.goto("/login");
   await page.getByLabel("Organization slug").fill(organizationSlug);
@@ -57,10 +58,10 @@ test("register, create customer and ticket, assign an agent, and exchange a mess
   await page.getByRole("link", { name: "Operations" }).click();
   await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
   await expect(page.getByText("PostgreSQL database", { exact: true })).toBeVisible();
-  await expect(page.getByText("Core services ready")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Overall readiness" }).getByText("Core services ready")).toBeVisible();
   await expectAccessible(page);
   await page.getByRole("link", { name: "Security" }).click();
-  await expect(page.getByRole("heading", { name: "Security" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Security", exact: true })).toBeVisible();
   await expect(page.getByText("Sign-in session", { exact: true })).toBeVisible();
   await expectAccessible(page);
   await page.getByRole("link", { name: "Overview" }).click();
@@ -70,7 +71,7 @@ test("register, create customer and ticket, assign an agent, and exchange a mess
     : { configured: true, connected: false, shop_domain: null, granted_scopes: [], connected_at: null, access_token_expires_at: null, reconnect_required: false } }));
 
   await page.getByRole("link", { name: "Customers" }).click();
-  await page.getByText("Add a customer", { exact: true }).click();
+  await page.locator("details > summary").filter({ hasText: "Add a customer" }).click();
   await page.getByLabel("Full name").fill("Taylor Customer");
   await page.getByLabel("Email", { exact: true }).fill(`customer-${unique}@example.com`);
   await page.getByRole("button", { name: "Save customer" }).click();
@@ -296,21 +297,24 @@ test("rejected tenant remains blocked from workspace login", async ({ page, brow
   await page.getByRole("button", { name: "Submit for approval" }).click();
   await expect(page.getByRole("heading", { name: "Your workspace is awaiting review" })).toBeVisible();
 
-  const platform = await browser.newPage();
+  const platformContext = await browser.newContext();
+  const platform = await platformContext.newPage();
   await platform.goto("/platform/login");
   await platform.getByLabel("Platform owner email").fill(process.env.E2E_PLATFORM_OWNER_EMAIL!);
   await platform.getByLabel("Password").fill(process.env.E2E_PLATFORM_OWNER_PASSWORD!);
   await platform.getByRole("button", { name: "Sign in to platform" }).click();
+  await expect(platform.getByRole("heading", { name: "Tenant approvals" })).toBeVisible();
   const tenantRow = platform.getByRole("row").filter({ hasText: slug });
+  await expect(tenantRow).toBeVisible();
   await tenantRow.getByRole("button", { name: "Reject" }).click();
-  await platform.close();
+  await platformContext.close();
 
   await page.goto("/login");
   await page.getByLabel("Organization slug").fill(slug);
   await page.getByLabel("Work email").fill(email);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("alert")).toContainText("rejected");
+  await expect(page.locator('p[role="alert"]')).toContainText("rejected");
   expect((await page.context().cookies()).some((cookie) => cookie.name === "supportpilot_access")).toBe(false);
 });
 

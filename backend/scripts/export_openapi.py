@@ -1,9 +1,25 @@
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+# OpenAPI generation imports the application but must not require local service
+# credentials or live services. These dummy values are only used to satisfy
+# Settings validation; exporting the schema never opens a database or Redis
+# connection. Existing environment or .env values still take precedence.
+os.environ.setdefault(
+    "DATABASE_URL",
+    "postgresql+asyncpg://openapi:openapi@127.0.0.1:1/openapi",
+)
+os.environ.setdefault("REDIS_URL", "redis://127.0.0.1:1/0")
+os.environ.setdefault(
+    "JWT_SECRET",
+    "openapi-contract-generation-only-secret-not-for-authentication",
+)
+
 from app.main import app
 
 

@@ -15,6 +15,24 @@ import { playgroundSchema } from "../schemas/ai.schema";
 
 type PlaygroundValues = z.infer<typeof playgroundSchema>;
 
+function failureMessage(errorCode: string | null | undefined) {
+  if (errorCode === "provider_not_configured") return "The AI provider is not configured for this workspace.";
+  if (errorCode === "provider_url_invalid") return "The AI provider URL is invalid. Check the server configuration.";
+  if (errorCode === "provider_empty_response") return "The AI provider returned no answer. Try again.";
+  if (errorCode === "provider_invalid_response") return "The AI provider returned an unreadable response. Check the configured provider endpoint and API compatibility.";
+  if (errorCode === "provider_timeout") return "The AI provider took too long to respond. Check its availability, then retry.";
+  if (errorCode === "provider_unreachable") return "The backend could not reach the AI provider. Check the provider URL and backend network access.";
+  if (errorCode === "provider_http_401" || errorCode === "provider_http_403") return "The AI provider rejected its server credentials or access. Check the backend AI configuration.";
+  if (errorCode === "provider_http_429") return "The AI provider rate limit or usage quota was reached. Check its usage and billing.";
+  if (errorCode === "provider_http_400") return "The AI provider rejected the request parameters. Check the configured model and API compatibility.";
+  if (errorCode?.startsWith("provider_http_5")) return "The AI provider is temporarily unavailable. Try again shortly.";
+  if (errorCode === "ai_execution_failed") return "AI generation failed in the backend workflow (often a checkpoint/database or provider setup issue). Check the backend worker log at the request time, then retry.";
+  if (errorCode === "worker_lease_expired") return "The AI worker did not finish this request. Check that the background worker is running, then retry.";
+  return errorCode
+    ? `The AI request failed (${errorCode}). Check the backend worker log at the request time, then retry.`
+    : "The AI request could not be completed. Check the backend worker log at the request time, then retry.";
+}
+
 export function AIPlayground() {
   const [executionId, setExecutionId] = useState<string>();
   const [copied, setCopied] = useState(false);
@@ -84,7 +102,7 @@ export function AIPlayground() {
           {!executionId && <p className="text-sm text-slate-500">Ask a question to create a grounded answer.</p>}
           {executionId && execution.isPending && <div className="space-y-3"><div className="h-4 w-2/3 animate-pulse rounded bg-slate-100"/><div className="h-24 animate-pulse rounded-xl bg-slate-100"/></div>}
           {execution.data && ["queued", "running"].includes(execution.data.status) && <p role="status" className="flex items-center gap-2 text-sm text-slate-600"><LoaderCircle size={16} className="animate-spin"/>The assistant is checking relevant documents…</p>}
-          {execution.data?.status === "failed" && <p role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">The AI request could not be completed. You can retry it.</p>}
+          {execution.data?.status === "failed" && <p role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">{failureMessage(execution.data.error_code)}</p>}
           {execution.data?.status === "succeeded" && <>
             <div className="whitespace-pre-wrap rounded-xl bg-slate-50 p-4 text-sm leading-6 text-slate-800">{execution.data.draft}</div>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500"><span>Draft only · {execution.data.usage.total_tokens ?? 0} tokens</span><Button size="sm" variant="secondary" onClick={copyDraft}><Clipboard size={14}/>{copied ? "Copied" : "Copy answer"}</Button></div>

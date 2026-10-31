@@ -75,6 +75,13 @@ services:
       context: ./backend
       dockerfile: Dockerfile
 
+    # Keep provider credentials in the backend-only env file. The Compose
+    # project-level .env is used for Compose interpolation, not loaded by the
+    # container automatically.
+    env_file:
+      - path: ./backend/.env
+        required: false
+
     restart: unless-stopped
 
     environment:
@@ -87,9 +94,6 @@ services:
 
       REDIS_URL: redis://redis:6379/0
       JWT_SECRET: ${JWT_SECRET:-local-development-only-change-me}
-      AI_PROVIDER_BASE_URL: ${AI_PROVIDER_BASE_URL:-}
-      AI_PROVIDER_API_KEY: ${AI_PROVIDER_API_KEY:-}
-      AI_MODEL: ${AI_MODEL:-}
       AI_PROVIDER_TIMEOUT_SECONDS: ${AI_PROVIDER_TIMEOUT_SECONDS:-45}
       AI_PROVIDER_MAX_ATTEMPTS: ${AI_PROVIDER_MAX_ATTEMPTS:-2}
       AI_INPUT_COST_PER_MILLION: ${AI_INPUT_COST_PER_MILLION:-}
@@ -145,6 +149,9 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    env_file:
+      - path: ./backend/.env
+        required: false
     restart: unless-stopped
     environment:
       APP_NAME: "SupportPilot Document Worker"
@@ -152,9 +159,6 @@ services:
       DATABASE_URL: postgresql+asyncpg://${APP_DB_USER:-supportpilot_app}:${APP_DB_PASSWORD:-change_this_app_password}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
       JWT_SECRET: ${JWT_SECRET:-local-development-only-change-me}
-      AI_PROVIDER_BASE_URL: ${AI_PROVIDER_BASE_URL:-}
-      AI_PROVIDER_API_KEY: ${AI_PROVIDER_API_KEY:-}
-      AI_MODEL: ${AI_MODEL:-}
       AI_PROVIDER_TIMEOUT_SECONDS: ${AI_PROVIDER_TIMEOUT_SECONDS:-45}
       AI_PROVIDER_MAX_ATTEMPTS: ${AI_PROVIDER_MAX_ATTEMPTS:-2}
       AI_INPUT_COST_PER_MILLION: ${AI_INPUT_COST_PER_MILLION:-}
