@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -49,6 +50,7 @@ class ConversationService:
             content=data.content,
             content_type=data.content_type,
         )
+        conversation.updated_at = datetime.now(UTC)
         return await self.repo.add_message(message)
 
     async def messages(self, organization_id: UUID, conversation_id: UUID):

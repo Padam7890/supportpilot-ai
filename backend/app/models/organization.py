@@ -22,7 +22,11 @@ class Organization(UUIDPrimaryKey, TimestampMixin, Base):
     slug: Mapped[str] = mapped_column(String(80), unique=True, nullable=False)
     approval_status: Mapped[str] = mapped_column(String(20), default="approved", nullable=False)
     reviewed_by_platform_owner_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("platform_owners.id", ondelete="SET NULL")
+        ForeignKey(
+            "platform_owners.id",
+            ondelete="SET NULL",
+            name="fk_organizations_reviewed_by_platform_owner",
+        )
     )
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

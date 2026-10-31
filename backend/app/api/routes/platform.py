@@ -12,7 +12,6 @@ from app.core.security import (
     create_platform_access_token,
     create_platform_refresh_token,
     decode_platform_refresh_token,
-    hash_password,
     hash_token,
     verify_password,
 )
@@ -26,8 +25,11 @@ from app.schemas.auth import (
     PlatformTokenOut,
     RefreshRequest,
 )
+from app.schemas.errors import COMMON_ERROR_RESPONSES
 
-router = APIRouter(prefix="/platform", tags=["platform administration"])
+router = APIRouter(
+    prefix="/platform", tags=["platform administration"], responses=COMMON_ERROR_RESPONSES
+)
 
 
 async def issue_platform_tokens(db: AsyncSession, owner: PlatformOwner) -> PlatformTokenOut:
@@ -73,7 +75,9 @@ async def platform_refresh(
         claims = decode_platform_refresh_token(data.refresh_token)
         owner_id = UUID(claims["sub"])
     except (jwt.InvalidTokenError, KeyError, TypeError, ValueError):
-        raise HTTPException(status_code=401, detail="Invalid or expired platform refresh token") from None
+        raise HTTPException(
+            status_code=401, detail="Invalid or expired platform refresh token"
+        ) from None
     token_hash = hash_token(data.refresh_token)
     current = await db.scalar(
         select(PlatformRefreshSession)
@@ -147,8 +151,28 @@ async def list_tenants(
     result = await db.execute(
         query.order_by(Organization.created_at.desc()).limit(limit).offset(offset)
     )
+    items = []
+    for tenant in result.scalars():
+        await set_tenant_context(db, tenant.id)
+        requester = await db.scalar(
+            select(User)
+            .where(
+                User.organization_id == tenant.id,
+                User.role.in_(("owner", "pending_owner")),
+            )
+            .order_by(User.created_at)
+            .limit(1)
+        )
+        items.append(
+            PlatformTenantOut.model_validate(tenant).model_copy(
+                update={
+                    "requester_name": requester.full_name if requester else None,
+                    "requester_email": requester.email if requester else None,
+                }
+            )
+        )
     return PlatformTenantPage(
-        items=[PlatformTenantOut.model_validate(tenant) for tenant in result.scalars()],
+        items=items,
         total=total,
         limit=limit,
         offset=offset,
@@ -173,18 +197,32 @@ async def review_tenant(
     if status in {"approved", "rejected"} and tenant.approval_status != "pending":
         raise HTTPException(status_code=409, detail="Only pending tenant requests can be reviewed")
 
+    await set_tenant_context(db, tenant.id)
+    requester = await db.scalar(
+        select(User)
+        .where(
+            User.organization_id == tenant.id,
+            User.role.in_(("owner", "pending_owner")),
+        )
+        .order_by(User.created_at)
+        .limit(1)
+    )
     tenant.approval_status = status
     if status != "pending":
         tenant.reviewed_by_platform_owner_id = owner.id
         tenant.reviewed_at = datetime.now(UTC)
         if status == "approved":
-            await set_tenant_context(db, tenant.id)
             await db.execute(
                 update(User)
-                .where(User.organization_id == tenant.id, User.role == "owner")
-                .values(is_active=True)
+                .where(User.organization_id == tenant.id, User.role == "pending_owner")
+                .values(role="owner", is_active=True)
             )
-    return PlatformTenantOut.model_validate(tenant)
+    return PlatformTenantOut.model_validate(tenant).model_copy(
+        update={
+            "requester_name": requester.full_name if requester else None,
+            "requester_email": requester.email if requester else None,
+        }
+    )
 
 
 @router.post("/tenants/{tenant_id}/approve", response_model=PlatformTenantOut)

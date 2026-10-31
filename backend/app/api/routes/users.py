@@ -31,8 +31,9 @@ from app.schemas.auth import (
     TokenOut,
     UserOut,
 )
+from app.schemas.errors import COMMON_ERROR_RESPONSES
 
-router = APIRouter(tags=["team"])
+router = APIRouter(tags=["team"], responses=COMMON_ERROR_RESPONSES)
 
 
 @router.get("/users", response_model=list[UserOut])

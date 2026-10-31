@@ -13,10 +13,11 @@ from app.schemas.customer import (
     CustomerPage,
     CustomerUpdate,
 )
+from app.schemas.errors import COMMON_ERROR_RESPONSES
 from app.schemas.ticket import TicketPage
 from app.services.customer import CustomerService
 
-router = APIRouter(prefix="/customers", tags=["customers"])
+router = APIRouter(prefix="/customers", tags=["customers"], responses=COMMON_ERROR_RESPONSES)
 
 
 def service(db: AsyncSession) -> CustomerService:

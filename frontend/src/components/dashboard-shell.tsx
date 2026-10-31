@@ -4,12 +4,14 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, BarChart3, Building2, CircleHelp, Inbox, LogOut, Menu, Moon, Sun, Users, X } from "lucide-react";
+import { Activity, BarChart3, BookOpen, Building2, CircleHelp, Inbox, LogOut, Menu, Moon, Sun, Users, X } from "lucide-react";
 import { getCurrentUser, currentUserQueryKey, logout as logoutRequest } from "@/features/auth/api/auth-api";
 import { Button } from "@/components/ui/button";
 
 const navigation = [
   { href: "/dashboard", label: "Overview", icon: BarChart3, exact: true },
+  { href: "/dashboard/inbox", label: "Inbox", icon: Inbox },
+  { href: "/dashboard/knowledge", label: "Knowledge", icon: BookOpen },
   { href: "/dashboard/tickets", label: "Tickets", icon: Inbox },
   { href: "/dashboard/customers", label: "Customers", icon: Users },
 ];
@@ -48,8 +50,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const saved = window.localStorage.getItem("supportpilot-theme");
-    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    const enabled = saved ? saved === "dark" : prefersDark;
+    const enabled = saved === "dark";
     document.documentElement.dataset.theme = enabled ? "dark" : "light";
     window.dispatchEvent(new Event("supportpilot-theme-change"));
   }, []);

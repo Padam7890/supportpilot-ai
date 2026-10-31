@@ -23,14 +23,17 @@ from app.schemas.auth import (
     CurrentUserOut,
     LoginRequest,
     OrganizationOut,
-    RegistrationPendingOut,
     RefreshRequest,
     RegisterRequest,
+    RegistrationPendingOut,
     TokenOut,
     UserOut,
 )
+from app.schemas.errors import COMMON_ERROR_RESPONSES
 
-router = APIRouter(prefix="/auth", tags=["authentication"])
+router = APIRouter(
+    prefix="/auth", tags=["authentication"], responses=COMMON_ERROR_RESPONSES
+)
 
 
 async def issue_tokens(db: AsyncSession, user: User) -> TokenOut:
@@ -73,7 +76,7 @@ async def register(
     data: "RegisterRequest",
     request: Request,
     db: AsyncSession = Depends(get_db),
-):
+) -> RegistrationPendingOut:
     await limit_auth_attempts(request, data.email, limit=5, window_seconds=3600)
     organization = Organization(
         name=data.organization_name.strip(),
@@ -89,16 +92,16 @@ async def register(
             email=str(data.email).lower(),
             full_name=data.full_name.strip(),
             password_hash=hash_password(data.password),
-            role="owner",
+            role="pending_owner",
             is_active=False,
         )
         db.add(user)
         await db.flush()
-        return {
-            "status": "pending_approval",
-            "organization_name": organization.name,
-            "organization_slug": organization.slug,
-        }
+        return RegistrationPendingOut(
+            status="pending_approval",
+            organization_name=organization.name,
+            organization_slug=organization.slug,
+        )
     except IntegrityError as exc:
         if "uq_organizations_slug" in str(exc.orig):
             raise HTTPException(

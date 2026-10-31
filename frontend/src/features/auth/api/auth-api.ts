@@ -3,6 +3,11 @@ import type { User } from "../types/user.types";
 import type { InviteAcceptanceValues, LoginValues, RegisterValues } from "../schemas/auth.schema";
 
 export type InvitationPreview = { email: string; organization_name: string; role: string };
+export type RegistrationPending = {
+  status: "pending_approval";
+  organization_name: string;
+  organization_slug: string;
+};
 
 export const currentUserQueryKey = ["me"] as const;
 export const getCurrentUser = () => api<User>("/auth/me");
@@ -13,7 +18,7 @@ export function login(values: LoginValues) {
 }
 
 export function register(values: RegisterValues) {
-  return api<void>("/auth/register", { method: "POST", body: JSON.stringify(values) });
+  return api<RegistrationPending>("/auth/register", { method: "POST", body: JSON.stringify(values) });
 }
 
 export function previewInvitation(token: string) {

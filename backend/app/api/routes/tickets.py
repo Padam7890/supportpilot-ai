@@ -10,6 +10,7 @@ from app.db.session import get_db
 from app.models import Ticket, TicketActivity, User
 from app.repositories.customer import CustomerRepository
 from app.repositories.ticket import TicketRepository
+from app.schemas.errors import COMMON_ERROR_RESPONSES
 from app.schemas.ticket import (
     TicketActivityOut,
     TicketCreate,
@@ -21,7 +22,7 @@ from app.schemas.ticket import (
 )
 from app.services.ticket import TicketService
 
-router = APIRouter(prefix="/tickets", tags=["tickets"])
+router = APIRouter(prefix="/tickets", tags=["tickets"], responses=COMMON_ERROR_RESPONSES)
 
 
 def service(db: AsyncSession) -> TicketService:

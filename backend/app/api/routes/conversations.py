@@ -14,9 +14,10 @@ from app.schemas.conversation import (
     MessageCreate,
     MessageOut,
 )
+from app.schemas.errors import COMMON_ERROR_RESPONSES
 from app.services.conversation import ConversationService
 
-router = APIRouter(tags=["conversations"])
+router = APIRouter(tags=["conversations"], responses=COMMON_ERROR_RESPONSES)
 
 
 def service(db: AsyncSession) -> ConversationService:

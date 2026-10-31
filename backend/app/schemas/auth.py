@@ -78,6 +78,7 @@ class PlatformTokenOut(BaseModel):
 
 
 class PlatformTenantOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
     name: str
     slug: str
@@ -85,6 +86,8 @@ class PlatformTenantOut(BaseModel):
     created_at: datetime
     reviewed_at: datetime | None
     reviewed_by_platform_owner_id: uuid.UUID | None
+    requester_name: str | None = None
+    requester_email: EmailStr | None = None
 
 
 class PlatformTenantPage(BaseModel):

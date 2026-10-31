@@ -27,8 +27,13 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
   const submit = async (values: LoginValues | RegisterValues) => {
     setMessage("");
     try {
-      await (mode === "login" ? loginRequest(values as LoginValues) : registerRequest(values as RegisterValues));
-      router.replace("/dashboard");
+      if (mode === "login") {
+        await loginRequest(values as LoginValues);
+        router.replace("/dashboard");
+      } else {
+        await registerRequest(values as RegisterValues);
+        router.replace("/register/pending");
+      }
       router.refresh();
     } catch (error) {
       setMessage(error instanceof ApiError ? error.message : "Unable to connect. Please try again.");
@@ -59,7 +64,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
       </Field>
       {message && <p role="alert" className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{message}</p>}
       <Button className="w-full" type="submit" disabled={submitting}>
-        {submitting ? "Please wait…" : mode === "login" ? "Sign in" : "Create workspace"}
+        {submitting ? "Please wait…" : mode === "login" ? "Sign in" : "Submit for approval"}
       </Button>
       <p className="text-center text-sm text-slate-500">
         {mode === "login" ? "New to SupportPilot? " : "Already have a workspace? "}
@@ -91,8 +96,8 @@ export function AuthPanel({ mode }: { mode: "login" | "register" }) {
         </Link>
         <div className="mb-7">
           <p className="text-xs font-bold uppercase tracking-[0.16em] text-blue-700">{mode === "login" ? "Welcome back" : "Get started"}</p>
-          <h1 className="mt-2 text-2xl font-bold tracking-tight text-slate-950">{mode === "login" ? "Sign in to your workspace" : "Create your workspace"}</h1>
-          <p className="mt-2 text-sm leading-6 text-slate-500">{mode === "login" ? "Pick up where your support team left off." : "Start organizing customer conversations and tickets."}</p>
+          <h1 className="mt-2 text-2xl font-bold tracking-tight text-slate-950">{mode === "login" ? "Sign in to your workspace" : "Request a workspace"}</h1>
+          <p className="mt-2 text-sm leading-6 text-slate-500">{mode === "login" ? "Pick up where your support team left off." : "A platform owner will review your workspace before sign in is enabled."}</p>
         </div>
         <AuthForm mode={mode} />
       </section>

@@ -1,5 +1,12 @@
 from app.models.conversation import Conversation
+from app.models.conversation_read_state import ConversationReadState
 from app.models.customer import Customer
+from app.models.knowledge_document import (
+    DocumentChunk,
+    DocumentIngestionJob,
+    KnowledgeDocument,
+    KnowledgeDocumentSource,
+)
 from app.models.message import Message
 from app.models.organization import Organization
 from app.models.platform_owner import PlatformOwner
@@ -12,7 +19,12 @@ from app.models.user import User
 
 __all__ = [
     "Conversation",
+    "ConversationReadState",
     "Customer",
+    "DocumentChunk",
+    "DocumentIngestionJob",
+    "KnowledgeDocument",
+    "KnowledgeDocumentSource",
     "Message",
     "Organization",
     "PlatformOwner",

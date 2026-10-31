@@ -47,3 +47,15 @@ Sprint 3 adds short-lived access JWTs, rotating refresh sessions, owner/admin
 team invitations, role checks, ticket activity, customer and ticket search,
 pagination, aggregate statistics, and message sender names. API responses return
 `items`, `total`, `limit`, and `offset` for paginated collections.
+
+New tenant registrations remain pending and receive no session until approved by
+a platform owner. Existing tenants are migrated as approved. After applying
+migrations, create the initial isolated platform owner once with:
+
+```bash
+python -m app.cli create-platform-owner
+```
+
+Platform owners sign in separately at `/platform/login` and can approve, reject,
+or reopen tenant registrations. Tenant Owners/Admins continue to onboard team
+members through the existing one-time invite flow.

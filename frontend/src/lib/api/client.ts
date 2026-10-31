@@ -12,8 +12,18 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     },
   });
   if (!response.ok) {
-    const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
-    throw new ApiError(payload?.detail ?? "The request could not be completed.", response.status);
+    const payload = (await response.json().catch(() => null)) as {
+      detail?: string;
+      title?: string;
+      code?: string;
+      type?: string;
+      instance?: string;
+    } | null;
+    throw new ApiError(
+      payload?.detail ?? payload?.title ?? "The request could not be completed.",
+      response.status,
+      payload ?? {},
+    );
   }
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;

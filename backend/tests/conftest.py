@@ -4,6 +4,8 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
+if os.environ.get("CI") and not TEST_DATABASE_URL:
+    raise RuntimeError("CI must set TEST_DATABASE_URL to an isolated PostgreSQL test database")
 if TEST_DATABASE_URL:
     os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 else:

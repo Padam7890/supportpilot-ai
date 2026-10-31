@@ -2,7 +2,8 @@ import argparse
 import asyncio
 from getpass import getpass
 
-from sqlalchemy import func, select
+from pydantic import EmailStr, TypeAdapter, ValidationError
+from sqlalchemy import func, select, text
 
 from app.core.security import hash_password
 from app.db.session import SessionLocal
@@ -11,7 +12,9 @@ from app.models import PlatformOwner
 
 async def create_platform_owner() -> None:
     email = input("Platform owner email: ").strip().lower()
-    if "@" not in email or len(email) > 320:
+    try:
+        email = str(TypeAdapter(EmailStr).validate_python(email)).lower()
+    except ValidationError:
         raise SystemExit("Enter a valid email address")
     password = getpass("Password (12+ characters): ")
     confirmation = getpass("Confirm password: ")
@@ -21,6 +24,7 @@ async def create_platform_owner() -> None:
         raise SystemExit("Passwords do not match")
 
     async with SessionLocal() as db:
+        await db.execute(text("SELECT pg_advisory_xact_lock(8119237401)"))
         count = await db.scalar(select(func.count()).select_from(PlatformOwner))
         if count:
             raise SystemExit("Platform owner bootstrap has already been completed")
