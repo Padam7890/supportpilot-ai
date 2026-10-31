@@ -1,6 +1,7 @@
 import uuid
 
 from sqlalchemy import (
+    CheckConstraint,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
@@ -17,6 +18,7 @@ from app.models.mixins import TimestampMixin, UUIDPrimaryKey
 class Conversation(UUIDPrimaryKey, TimestampMixin, Base):
     __tablename__ = "conversations"
     __table_args__ = (
+        CheckConstraint("ai_mode IN ('ai', 'human')", name="ck_conversations_ai_mode"),
         Index("ix_conversations_org_ticket", "organization_id", "ticket_id"),
         UniqueConstraint("organization_id", "id", name="uq_conversations_org_id"),
         ForeignKeyConstraint(
@@ -33,6 +35,9 @@ class Conversation(UUIDPrimaryKey, TimestampMixin, Base):
     ticket_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     channel: Mapped[str] = mapped_column(String(30), default="web", nullable=False)
     status: Mapped[str] = mapped_column(String(30), default="active", nullable=False)
+    ai_mode: Mapped[str] = mapped_column(
+        String(12), default="human", server_default="human", nullable=False
+    )
 
     ticket = relationship("Ticket", back_populates="conversations")
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")

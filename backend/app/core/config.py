@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
+        # Compose may pass optional settings as empty strings; let backend/.env
+        # supply a configured value instead of treating the empty override as set.
+        env_ignore_empty=True,
         extra="ignore",
     )
 

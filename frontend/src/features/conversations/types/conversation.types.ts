@@ -3,6 +3,7 @@ export type Conversation = {
   ticket_id: string;
   channel: string;
   status: string;
+  ai_mode: "ai" | "human";
   created_at: string;
   updated_at: string;
 };

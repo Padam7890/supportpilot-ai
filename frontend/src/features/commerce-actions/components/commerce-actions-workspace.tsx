@@ -33,10 +33,7 @@ export function CommerceActionsWorkspace() {
   const actions = useQuery({
     queryKey: commerceActionKeys.list(statusFilter || undefined, offset),
     queryFn: () => listCommerceActions(statusFilter || undefined, offset),
-    refetchInterval: (query) => {
-      const busy = query.state.data?.items.some((item) => item.execution_status === "queued" || item.execution_status === "running");
-      return busy && typeof document !== "undefined" && document.visibilityState === "visible" ? 2500 : false;
-    },
+    refetchInterval: () => typeof document !== "undefined" && document.visibilityState === "visible" ? 10_000 : false,
     refetchIntervalInBackground: false,
   });
   const tickets = useQuery({

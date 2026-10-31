@@ -8,8 +8,8 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
-    Integer,
     Index,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -121,5 +121,6 @@ class WidgetOrderVerification(UUIDPrimaryKey, Base):
     status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
     attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consented_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False)

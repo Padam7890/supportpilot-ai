@@ -18,12 +18,19 @@ from app.models import (
     Message,
     SupportWidget,
     Ticket,
+    WidgetOrderVerification,
 )
-from app.services.ai_execution import create_grounded_draft
+from app.services.ai_execution import create_grounded_draft, is_provider_configured
 from app.services.widget_ai import (
-    HANDOFF_MESSAGE,
+    AI_TEMPORARY_FAILURE_REPLY,
+    VERIFIED_CANCELLATION_REPLY,
+    format_verified_order_status,
+    widget_clarification_reply,
     widget_greeting_reply,
-    widget_request_needs_human,
+    widget_is_cancellation_request,
+    widget_missing_knowledge_reply,
+    widget_request_needs_order_verification,
+    widget_sensitive_reply,
 )
 
 logger = logging.getLogger(__name__)
@@ -36,6 +43,80 @@ RETRIEVAL_STOPWORDS = frozenset(
         "where", "which", "who", "why", "with", "would", "you", "your",
     }
 )
+NON_ORDER_NUMBER_WORDS = frozenset({"status", "update", "details", "detail", "tracking", "information", "number"})
+
+
+def _question_order_number(question: str) -> str | None:
+    match = re.search(r"#\s*([A-Za-z0-9][A-Za-z0-9-]{1,59})", question)
+    if match is None:
+        match = re.search(
+            r"\border(?:\s+(?:number|no\.?))?\s+([A-Za-z0-9][A-Za-z0-9-]{2,59})\b",
+            question,
+            re.IGNORECASE,
+        )
+    if match is None:
+        return None
+    value = match.group(1).strip().lstrip("#")
+    return None if value.casefold() in NON_ORDER_NUMBER_WORDS else value
+
+
+async def verified_widget_order_reply(
+    organization_id: UUID,
+    conversation_id: UUID,
+    question: str,
+) -> tuple[bool, str | None]:
+    """Reuse an unexpired OTP verification for the same conversation and order."""
+    requested_number = _question_order_number(question)
+    async with SessionLocal() as db:
+        await set_tenant_context(db, organization_id)
+        verification = await db.scalar(
+            select(WidgetOrderVerification)
+            .where(
+                WidgetOrderVerification.organization_id == organization_id,
+                WidgetOrderVerification.conversation_id == conversation_id,
+                WidgetOrderVerification.status == "verified",
+                WidgetOrderVerification.expires_at > datetime.now(UTC),
+            )
+            .order_by(WidgetOrderVerification.verified_at.desc())
+            .limit(1)
+        )
+        if verification is None:
+            return False, None
+        if requested_number and requested_number.casefold() != verification.order_number.lstrip("#").casefold():
+            return False, None
+        email_encrypted = verification.customer_email_encrypted
+        order_number = verification.order_number
+        order_id = verification.shopify_order_id
+
+    try:
+        from app.api.routes.integrations import installation_for, map_order, valid_access_token
+        from app.services.shopify_orders import lookup_authorized_order
+        from app.services.shopify_security import decrypt_credential
+
+        email = decrypt_credential(email_encrypted)
+        async with SessionLocal() as db:
+            await set_tenant_context(db, organization_id)
+            installation = await installation_for(db, organization_id)
+            access_token = await valid_access_token(db, installation)
+            shop_domain = installation.shop_domain
+        order = await lookup_authorized_order(
+            shop_domain=shop_domain,
+            access_token=access_token,
+            order_number=order_number,
+            customer_email=email,
+        )
+        if order is None or order.get("id") != order_id:
+            return False, None
+        mapped = map_order(order)
+        return True, format_verified_order_status(mapped, opening="I checked your verified order")
+    except Exception as exc:  # noqa: BLE001 - fail closed while retaining the verified session.
+        logger.warning(
+            "Verified widget order lookup failed: organization_id=%s conversation_id=%s error_type=%s",
+            organization_id,
+            conversation_id,
+            type(exc).__name__,
+        )
+        return True, "I’ve verified your order, but I’m having trouble checking its latest status right now. A support teammate can help."
 
 
 async def claim_ai_execution(organization_id: UUID) -> UUID | None:
@@ -249,13 +330,36 @@ async def process_ai_execution(organization_id: UUID, execution_id: UUID) -> Non
         if execution.kind == "widget_reply":
             if await widget_reply_is_stale(organization_id, execution_id):
                 return
-            if widget_request_needs_human(execution.question):
+            delivery_status = "draft_ready" if execution.delivery_mode == "draft_only" else "sent"
+            sensitive_reply = widget_sensitive_reply(execution.question)
+            if sensitive_reply is not None:
+                draft, safe_summary = sensitive_reply
+                reply_status = "escalated"
+                if widget_is_cancellation_request(execution.question):
+                    order_verified, _order_reply = await verified_widget_order_reply(
+                        organization_id, execution.conversation_id, execution.question
+                    )
+                    if order_verified:
+                        draft = VERIFIED_CANCELLATION_REPLY
+                        safe_summary = "A previously verified order cancellation still requires human approval."
+                elif widget_request_needs_order_verification(execution.question):
+                    order_verified, order_reply = await verified_widget_order_reply(
+                        organization_id, execution.conversation_id, execution.question
+                    )
+                    if order_verified:
+                        draft = order_reply or AI_TEMPORARY_FAILURE_REPLY
+                        reply_status = (
+                            "escalated"
+                            if draft == AI_TEMPORARY_FAILURE_REPLY
+                            else delivery_status
+                        )
+                        safe_summary = "A current Shopify order lookup used the shopper’s active email verification."
                 await finish_widget_reply(
                     organization_id,
                     execution_id,
-                    draft=HANDOFF_MESSAGE,
-                    reply_status="escalated",
-                    safe_summary="This request needs a support teammate. No private order or account data was disclosed.",
+                    draft=draft,
+                    reply_status=reply_status,
+                    safe_summary=safe_summary,
                     citations=[],
                     outcomes=[],
                     usage={},
@@ -268,8 +372,22 @@ async def process_ai_execution(organization_id: UUID, execution_id: UUID) -> Non
                     organization_id,
                     execution_id,
                     draft=greeting,
-                    reply_status="draft_ready" if execution.delivery_mode == "draft_only" else "sent",
-                    safe_summary="A short greeting reply was prepared without using private customer or order data.",
+                    reply_status=delivery_status,
+                    safe_summary="A conversational reply was prepared without using private customer or order data.",
+                    citations=[],
+                    outcomes=[],
+                    usage={},
+                    model_name=None,
+                )
+                return
+            clarification = widget_clarification_reply(execution.question, transcript)
+            if clarification is not None:
+                await finish_widget_reply(
+                    organization_id,
+                    execution_id,
+                    draft=clarification,
+                    reply_status=delivery_status,
+                    safe_summary="A deterministic clarification explained the active support workflow without a model call.",
                     citations=[],
                     outcomes=[],
                     usage={},
@@ -280,9 +398,23 @@ async def process_ai_execution(organization_id: UUID, execution_id: UUID) -> Non
                 await finish_widget_reply(
                     organization_id,
                     execution_id,
-                    draft=HANDOFF_MESSAGE,
+                    draft=widget_missing_knowledge_reply(execution.question),
                     reply_status="escalated",
-                    safe_summary="No matching tenant knowledge was found. A support teammate needs to answer.",
+                    safe_summary="No matching tenant knowledge was found. The shopper received a clear next step without unsupported claims.",
+                    citations=[],
+                    outcomes=[],
+                    usage={},
+                    model_name=None,
+                )
+                return
+            if not is_provider_configured():
+                logger.warning("Widget AI provider is not configured: execution_id=%s", execution_id)
+                await finish_widget_reply(
+                    organization_id,
+                    execution_id,
+                    draft=AI_TEMPORARY_FAILURE_REPLY,
+                    reply_status="escalated",
+                    safe_summary="The AI provider is unavailable. A safe handoff reply was prepared.",
                     citations=[],
                     outcomes=[],
                     usage={},
@@ -338,11 +470,8 @@ async def process_ai_execution(organization_id: UUID, execution_id: UUID) -> Non
             row.completed_at = now
             await db.commit()
     except Exception as exc:  # noqa: BLE001 - record failures safely and keep the worker alive
-        logger.warning(
-            "AI execution failed (%s)",
-            type(exc).__name__,
-            extra={"execution_id": str(execution_id), "error_type": type(exc).__name__},
-        )
+        logger.warning("AI execution failed: execution_id=%s error_type=%s", execution_id, type(exc).__name__)
+        widget_fallback_mode: str | None = None
         async with SessionLocal() as db:
             await set_tenant_context(db, organization_id)
             row = await db.scalar(
@@ -358,20 +487,43 @@ async def process_ai_execution(organization_id: UUID, execution_id: UUID) -> Non
                 await db.rollback()
                 return
             exhausted = row.attempt_count >= row.max_attempts
-            row.status = "failed" if exhausted else "queued"
-            if row.kind == "widget_reply":
-                row.reply_status = "failed" if exhausted else "processing"
-            if exhausted:
-                row.integration_context_encrypted = None
-            row.error_code = "generation_failed"
-            row.safe_summary = (
-                "The AI request could not be completed. You can create a new request."
-                if exhausted
-                else None
-            )
-            row.next_attempt_at = now + timedelta(seconds=min(5 * (2 ** (row.attempt_count - 1)), 60))
-            row.completed_at = now if exhausted else None
-            await db.commit()
+            if exhausted and row.kind == "widget_reply":
+                widget_fallback_mode = row.delivery_mode
+                await db.rollback()
+            else:
+                row.status = "failed" if exhausted else "queued"
+                if row.kind == "widget_reply":
+                    row.reply_status = "failed" if exhausted else "processing"
+                if exhausted:
+                    row.integration_context_encrypted = None
+                row.error_code = "generation_failed"
+                row.safe_summary = (
+                    "The AI request could not be completed. You can create a new request."
+                    if exhausted
+                    else None
+                )
+                row.next_attempt_at = now + timedelta(seconds=min(5 * (2 ** (row.attempt_count - 1)), 60))
+                row.completed_at = now if exhausted else None
+                await db.commit()
+        if widget_fallback_mode is not None:
+            try:
+                await finish_widget_reply(
+                    organization_id,
+                    execution_id,
+                    draft=AI_TEMPORARY_FAILURE_REPLY,
+                    reply_status="escalated",
+                    safe_summary="AI generation failed after its retry limit. A safe handoff reply was prepared.",
+                    citations=[],
+                    outcomes=[],
+                    usage={},
+                    model_name=None,
+                )
+            except Exception as fallback_exc:  # noqa: BLE001 - keep the worker alive if persistence is unavailable.
+                logger.error(
+                    "AI widget fallback persistence failed: execution_id=%s error_type=%s",
+                    execution_id,
+                    type(fallback_exc).__name__,
+                )
 
 
 async def widget_reply_is_stale(organization_id: UUID, execution_id: UUID) -> bool:
@@ -387,6 +539,20 @@ async def widget_reply_is_stale(organization_id: UUID, execution_id: UUID) -> bo
             )
         )
         if execution is None or execution.source_message_id is None:
+            return True
+        conversation = await db.scalar(
+            select(Conversation).where(
+                Conversation.id == execution.conversation_id,
+                Conversation.organization_id == organization_id,
+            )
+        )
+        if conversation is None or conversation.ai_mode != "ai":
+            execution.status = "succeeded"
+            execution.reply_status = "escalated"
+            execution.safe_summary = "A teammate switched this conversation to Human mode. No AI reply was sent."
+            execution.draft = None
+            execution.completed_at = datetime.now(UTC)
+            await db.commit()
             return True
         source = await db.scalar(
             select(Message).where(
@@ -477,6 +643,14 @@ async def finish_widget_reply(
         )
         if conversation is None or source is None:
             await db.rollback()
+            return
+        if conversation.ai_mode != "ai":
+            row.status = "succeeded"
+            row.reply_status = "escalated"
+            row.safe_summary = "A teammate switched this conversation to Human mode. No AI reply was sent."
+            row.draft = None
+            row.completed_at = now
+            await db.commit()
             return
         widget = await db.scalar(
             select(SupportWidget)

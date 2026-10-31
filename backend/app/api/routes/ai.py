@@ -9,7 +9,7 @@ from app.api.deps import get_current_user, require_roles
 from app.api.routes.integrations import verified_lookup
 from app.core.config import settings
 from app.db.session import get_db
-from app.models import AIExecution, Conversation, Customer, Organization, Ticket, User
+from app.models import AIExecution, Conversation, Customer, Message, Organization, Ticket, User
 from app.schemas.ai import (
     AIExecutionOut,
     AIExecutionPage,
@@ -213,6 +213,8 @@ async def get_widget_reply_status(
     )
     if conversation is None:
         raise HTTPException(status_code=404, detail="Widget conversation not found")
+    if conversation.ai_mode != "ai":
+        return None
     execution = await db.scalar(
         select(AIExecution)
         .where(
@@ -225,6 +227,39 @@ async def get_widget_reply_status(
     )
     if execution is None or execution.reply_status is None or execution.delivery_mode is None:
         return None
+    source = None
+    if execution.source_message_id:
+        source = await db.scalar(
+            select(Message).where(
+                Message.id == execution.source_message_id,
+                Message.organization_id == user.organization_id,
+                Message.conversation_id == conversation_id,
+            )
+        )
+    if source is not None:
+        teammate_activity = await db.scalar(
+            select(Message.id)
+            .where(
+                Message.organization_id == user.organization_id,
+                Message.conversation_id == conversation_id,
+                Message.sender_type.in_(("agent", "internal_note")),
+                Message.created_at >= source.created_at,
+            )
+            .limit(1)
+        )
+        newer_customer_message = await db.scalar(
+            select(Message.id)
+            .where(
+                Message.organization_id == user.organization_id,
+                Message.conversation_id == conversation_id,
+                Message.sender_type == "customer",
+                (Message.created_at > source.created_at)
+                | ((Message.created_at == source.created_at) & (Message.id > source.id)),
+            )
+            .limit(1)
+        )
+        if teammate_activity or newer_customer_message:
+            return None
     return WidgetAIReplyStatusOut(
         status=execution.reply_status,
         delivery_mode=execution.delivery_mode,

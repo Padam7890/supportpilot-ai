@@ -83,7 +83,7 @@ async def serialize_action(db: AsyncSession, action: CommerceAction) -> Commerce
     row = await db.execute(
         select(requester.full_name, reviewer.full_name)
         .select_from(CommerceAction)
-        .join(
+        .outerjoin(
             requester,
             (requester.organization_id == CommerceAction.organization_id)
             & (requester.id == CommerceAction.requested_by_user_id),
@@ -99,7 +99,7 @@ async def serialize_action(db: AsyncSession, action: CommerceAction) -> Commerce
         )
     )
     names = row.one()
-    return action_out(action, names[0], names[1])
+    return action_out(action, names[0] or "Customer via storefront chat", names[1])
 
 
 def add_audit(
@@ -291,7 +291,9 @@ async def list_commerce_actions(
     reviewer = aliased(User)
     results = await db.execute(
         select(CommerceAction, requester.full_name, reviewer.full_name)
-        .join(
+        # Widget-submitted requests have no workspace user requester. Keep
+        # those rows in the queue and label them as storefront customers.
+        .outerjoin(
             requester,
             (requester.organization_id == CommerceAction.organization_id)
             & (requester.id == CommerceAction.requested_by_user_id),
@@ -307,7 +309,10 @@ async def list_commerce_actions(
         .offset(offset)
     )
     return CommerceActionPage(
-        items=[action_out(action, requester_name, reviewer_name) for action, requester_name, reviewer_name in results.all()],
+        items=[
+            action_out(action, requester_name or "Customer via storefront chat", reviewer_name)
+            for action, requester_name, reviewer_name in results.all()
+        ],
         total=total,
         limit=limit,
         offset=offset,

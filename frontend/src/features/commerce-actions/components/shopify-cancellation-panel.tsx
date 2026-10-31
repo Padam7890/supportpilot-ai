@@ -21,7 +21,7 @@ import {
   type CommerceAction,
 } from "../api/commerce-actions-api";
 
-export function ShopifyCancellationPanel({ ticketId }: { ticketId: string }) {
+export function ShopifyCancellationPanel({ ticketId, compact = false }: { ticketId: string; compact?: boolean }) {
   const client = useQueryClient();
   const me = useQuery({ queryKey: currentUserQueryKey, queryFn: getCurrentUser });
   const status = useQuery({ queryKey: shopifyQueryKeys.status, queryFn: getShopifyStatus });
@@ -38,11 +38,13 @@ export function ShopifyCancellationPanel({ ticketId }: { ticketId: string }) {
   const actions = useQuery({
     queryKey: commerceActionKeys.list(undefined, 0, ticketId),
     queryFn: () => listCommerceActions(undefined, 0, ticketId),
-    refetchInterval: (query) => query.state.data?.items.some((action) => action.execution_status === "queued" || action.execution_status === "running") && typeof document !== "undefined" && document.visibilityState === "visible" ? 2500 : false,
+    refetchInterval: () => typeof document !== "undefined" && document.visibilityState === "visible" ? 10_000 : false,
     refetchIntervalInBackground: false,
   });
   const rows = actions.data?.items.filter((action) => action.provider === "shopify") ?? [];
-  const selected = rows.find((action) => action.id === selectedId) ?? rows[0];
+  const pendingRows = rows.filter((action) => action.approval_status === "pending");
+  const historyRows = rows.filter((action) => action.approval_status !== "pending");
+  const selected = historyRows.find((action) => action.id === selectedId) ?? historyRows[0];
   const audit = useQuery({ queryKey: commerceActionKeys.audit(selected?.id ?? ""), queryFn: () => getCommerceActionAudit(selected!.id), enabled: Boolean(selected) });
   const refresh = async (action?: CommerceAction) => {
     await Promise.all([
@@ -94,14 +96,43 @@ export function ShopifyCancellationPanel({ ticketId }: { ticketId: string }) {
     if (window.confirm(`Shopify cancellation is irreversible. Approve cancellation of ${action.order_number} with these consequences: ${consequences}?`)) approve.mutate(action.id);
   }
 
+  if (compact) {
+    if (actions.isPending) return <div role="status" className="h-9 animate-pulse rounded-lg bg-amber-50"/>;
+    if (actions.isError) return <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">Could not load order approvals for this ticket.</p>;
+    if (pendingRows.length === 0) return null;
+
+    return <section aria-label="Order approvals" className="max-h-40 overflow-y-auto rounded-xl border border-amber-200 bg-[#fffaf0] p-2.5 shadow-[0_4px_16px_rgba(11,9,7,.05)]">
+      {pendingRows.length > 0 && <div className="space-y-2">
+        <div className="flex items-center justify-between gap-2 px-1"><p className="text-xs font-bold text-[#704a29]">Needs approval <span className="ml-1 rounded-full bg-amber-200 px-1.5 py-0.5">{pendingRows.length}</span></p><p className="text-[10px] text-[#95693f]">Owner/Admin</p></div>
+        {pendingRows.map((action) => <article key={action.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-amber-100 bg-white px-3 py-2">
+          <div className="min-w-32 flex-1"><p className="text-xs font-bold text-slate-900">Cancel {action.order_number}</p><p className="truncate text-[11px] text-slate-600">{action.reason}</p><p className="text-[10px] text-slate-400">{action.cancel_refund ? "Refund" : "No refund"} · {action.cancel_restock ? "Restock" : "No restock"} · {action.cancel_notify_customer ? "Notify" : "No notification"}</p></div>
+          {canReview ? <div className="flex shrink-0 gap-1.5"><Button size="sm" className="h-8 px-2.5 text-xs" onClick={() => approveSelected(action)} disabled={actionBusy}><BadgeCheck size={13}/>{approve.isPending ? "Approving…" : "Approve"}</Button><Button size="sm" variant="danger" className="h-8 px-2.5 text-xs" onClick={() => reject.mutate(action.id)} disabled={actionBusy}><XCircle size={13}/>{reject.isPending ? "Rejecting…" : "Reject"}</Button></div> : <span className="text-[10px] text-slate-500">Owner/Admin approval required</span>}
+        </article>)}
+      </div>}
+      {(approve.isError || reject.isError) && <p role="alert" className="px-1 pt-1 text-xs text-red-700">{approve.error instanceof ApiError ? approve.error.message : reject.error instanceof ApiError ? reject.error.message : "The cancellation review could not be completed."}</p>}
+    </section>;
+  }
+
   return <Panel>
-    <PanelHeader title="Shopify cancellation" description="Customer-verified requests require Owner/Admin approval before Shopify is changed." action={<ShieldCheck size={16} className="text-blue-700"/>}/>
+    <PanelHeader title="Order requests" description="Cancellation review and history." action={<ShieldCheck size={16} className="text-blue-700"/>}/>
     <PanelBody className="space-y-4">
       {status.isPending && <p role="status" className="text-xs text-slate-500">Checking Shopify connection…</p>}
       {status.isError && <p role="alert" className="text-xs text-red-700">Shopify connection status could not be checked.</p>}
       {!status.isPending && !status.isError && !connected && <p className="rounded-lg bg-amber-50 p-3 text-xs text-amber-900">Connect a Shopify store before requesting a cancellation.</p>}
       {connected && !hasWriteOrders && <p className="rounded-lg bg-amber-50 p-3 text-xs text-amber-900">This store connection does not have the Shopify write_orders permission required for cancellations.</p>}
-      {canRequest && connected && hasWriteOrders && <form onSubmit={submit} className="space-y-3 rounded-xl border border-slate-200 p-3">
+      {pendingRows.length > 0 && <section aria-label="Cancellation requests awaiting review" className="space-y-3 rounded-xl border border-amber-300 bg-amber-50 p-3">
+        <div className="flex items-center gap-2"><span className="grid size-8 shrink-0 place-items-center rounded-lg bg-white text-amber-700"><AlertTriangle size={16}/></span><div className="min-w-0"><p className="text-sm font-semibold text-amber-950">Needs review <span className="ml-1 rounded-full bg-amber-200 px-1.5 py-0.5 text-[10px]">{pendingRows.length}</span></p><p className="text-[11px] text-amber-900">Owner/Admin approval required</p></div></div>
+        {pendingRows.map((action) => <article key={action.id} className="rounded-lg border border-amber-200 bg-white p-3">
+          <div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="truncate text-sm font-bold text-slate-900">Cancel {action.order_number}</p><p className="mt-0.5 text-xs text-slate-500">{action.order_total} {action.currency} · {formatDateTime(action.created_at)}</p></div><span className="shrink-0 rounded-full bg-amber-100 px-2 py-1 text-[10px] font-bold text-amber-900">Pending</span></div>
+          <p className="mt-2 line-clamp-3 break-words text-xs leading-5 text-slate-700">{action.reason}</p>
+          <div className="mt-2 rounded-md bg-slate-50 p-2 text-[10px] leading-4 text-slate-600">{action.cancel_refund ? "Refund" : "No refund"} · {action.cancel_restock ? "Restock" : "No restock"} · {action.cancel_notify_customer ? "Notify" : "No notification"}</div>
+          {canReview ? <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2"><Button size="sm" className="w-full whitespace-normal" onClick={() => approveSelected(action)} disabled={actionBusy}><BadgeCheck size={14}/>{approve.isPending ? "Approving…" : "Approve & execute"}</Button><Button size="sm" variant="danger" className="w-full" onClick={() => reject.mutate(action.id)} disabled={actionBusy}><XCircle size={14}/>{reject.isPending ? "Rejecting…" : "Reject"}</Button></div> : <p className="mt-3 text-xs font-medium text-amber-900">Only an Owner or Admin can review this request.</p>}
+        </article>)}
+        {(approve.isError || reject.isError) && <p role="alert" className="text-xs font-medium text-red-700">{approve.error instanceof ApiError ? approve.error.message : reject.error instanceof ApiError ? reject.error.message : "The cancellation review could not be completed."}</p>}
+      </section>}
+      {canRequest && connected && hasWriteOrders && <details className="rounded-xl border border-slate-200 bg-white">
+        <summary className="cursor-pointer list-none px-3 py-3 text-xs font-semibold text-slate-700 marker:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">+ Create a cancellation request</summary>
+        <form onSubmit={submit} className="space-y-3 border-t border-slate-100 p-3">
         <label className="block space-y-1 text-xs font-semibold text-slate-700"><span>Shopify order number</span><Input aria-label="Cancellation order number" placeholder="#1001" value={orderNumber} onChange={(event) => setOrderNumber(event.target.value)}/></label>
         <label className="block space-y-1 text-xs font-semibold text-slate-700"><span>Reason</span><Textarea aria-label="Cancellation reason" rows={2} maxLength={500} placeholder="Why is cancellation requested?" value={reason} onChange={(event) => setReason(event.target.value)}/></label>
         <fieldset className="space-y-2 rounded-lg bg-slate-50 p-3"><legend className="px-1 text-xs font-semibold text-slate-700">Requested consequences — approver must confirm these</legend>
@@ -113,13 +144,14 @@ export function ShopifyCancellationPanel({ ticketId }: { ticketId: string }) {
         {create.error && <p role="alert" className="text-xs text-red-700">{create.error instanceof ApiError ? create.error.message : "Cancellation request could not be submitted."}</p>}
         <p className="flex items-start gap-2 text-[11px] leading-4 text-amber-900"><AlertTriangle size={14} className="mt-0.5 shrink-0"/>Cancellation cannot be undone. Refunds, restocking, and customer notifications default off.</p>
         <Button type="submit" size="sm" className="w-full" disabled={!canRequest || create.isPending}>{create.isPending ? <><RefreshCw size={14} className="animate-spin"/>Submitting…</> : "Submit for approval"}</Button>
-      </form>}
+        </form>
+      </details>}
       {actions.isPending && <div role="status" className="h-12 animate-pulse rounded-lg bg-slate-100"/>}
       {actions.isError && <p role="alert" className="text-xs text-red-700">Cancellation requests for this ticket could not be loaded.</p>}
-      {rows.length === 0 && !actions.isPending && !actions.isError && <p className="text-xs text-slate-500">No Shopify cancellation requests for this ticket.</p>}
-      {rows.length > 0 && <div className="space-y-2">
-        <ul aria-label="Shopify cancellation requests" className="space-y-2">{rows.map((action) => <li key={action.id}><button type="button" aria-pressed={selected?.id === action.id} onClick={() => setSelectedId(action.id)} className={`w-full rounded-lg border p-3 text-left ${selected?.id === action.id ? "border-blue-300 bg-blue-50" : "border-slate-200 hover:bg-slate-50"}`}><span className="flex flex-wrap items-center justify-between gap-1"><strong className="text-xs">{action.order_number} · {action.approval_status}</strong><span className="text-[10px] capitalize text-slate-500">{action.execution_status === "running" ? "executing" : action.execution_status}</span></span><span className="mt-1 block text-[11px] text-slate-500">Requested by {action.requested_by_name} · {formatDateTime(action.created_at)}</span></button></li>)}</ul>
-        {selected && <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs">
+      {!actions.isPending && !actions.isError && rows.length === 0 && !canRequest && <p className="text-xs text-slate-500">No Shopify cancellation requests for this ticket.</p>}
+      {historyRows.length > 0 && <details className="rounded-xl border border-slate-200 bg-white"><summary className="cursor-pointer list-none px-3 py-3 text-xs font-semibold text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">Completed request history <span className="ml-1 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px]">{historyRows.length}</span></summary><div className="space-y-2 border-t border-slate-100 p-3">
+        <ul aria-label="Completed Shopify cancellation requests" className="space-y-2">{historyRows.map((action) => <li key={action.id}><button type="button" aria-pressed={selected?.id === action.id} onClick={() => setSelectedId(action.id)} className={`w-full rounded-lg border p-3 text-left ${selected?.id === action.id ? "border-blue-300 bg-blue-50" : "border-slate-200 hover:bg-slate-50"}`}><span className="flex flex-wrap items-center justify-between gap-1"><strong className="text-xs">{action.order_number} · {titleCase(action.approval_status)}</strong><span className="text-[10px] capitalize text-slate-500">{action.execution_status === "running" ? "executing" : action.execution_status.replaceAll("_", " ")}</span></span><span className="mt-1 block text-[11px] text-slate-500">{formatDateTime(action.created_at)}</span></button></li>)}</ul>
+        {selected && <div className="rounded-lg bg-slate-50 p-3 text-xs">
           <p className="font-semibold text-slate-900">{selected.order_number} · {selected.order_total} {selected.currency}</p>
           <p className="mt-1 text-slate-600">{selected.reason}</p>
           <dl className="mt-2 grid grid-cols-1 gap-1 text-[11px] text-slate-600"><Fact label="Refund" value={selected.cancel_refund ? "Original payment method" : "No refund"}/><Fact label="Inventory" value={selected.cancel_restock ? "Restock" : "Do not restock"}/><Fact label="Customer" value={selected.cancel_notify_customer ? "Notify" : "Do not notify"}/></dl>
@@ -128,7 +160,7 @@ export function ShopifyCancellationPanel({ ticketId }: { ticketId: string }) {
           {selected.approval_status === "pending" && <div className="mt-3 flex gap-2">{canReview && <><Button size="sm" onClick={() => approveSelected(selected)} disabled={actionBusy}><BadgeCheck size={13}/>Approve & execute</Button><Button size="sm" variant="danger" onClick={() => reject.mutate(selected.id)} disabled={actionBusy}><XCircle size={13}/>Reject</Button></>}{(canReview || selected.requested_by_user_id === me.data?.id) && <Button size="sm" variant="secondary" onClick={() => cancel.mutate(selected.id)} disabled={actionBusy}><Ban size={13}/>Withdraw</Button>}</div>}
           {audit.data?.items.map((entry) => <p key={entry.id} className="mt-2 text-[10px] text-slate-500">{entry.event_type.replaceAll("_", " ")} · {entry.actor_name ?? "System"} · {formatDateTime(entry.created_at)}</p>)}
         </div>}
-      </div>}
+      </div></details>}
     </PanelBody>
   </Panel>;
 }
@@ -139,4 +171,8 @@ function Check({ label, checked, onChange }: { label: string; checked: boolean; 
 
 function Fact({ label, value }: { label: string; value: string }) {
   return <div className="flex justify-between gap-2"><dt>{label}</dt><dd className="font-medium">{value}</dd></div>;
+}
+
+function titleCase(value: string) {
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }

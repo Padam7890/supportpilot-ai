@@ -59,6 +59,12 @@ async def test_openapi_documents_versioned_inbox_and_problem_contract(client):
     assert "/api/v1/inbox" in spec["paths"]
     assert "ProblemDetails" in spec["components"]["schemas"]
     assert "InboxPage" in spec["components"]["schemas"]
+    inbox_parameters = {
+        parameter["name"]: parameter
+        for parameter in spec["paths"]["/api/v1/inbox"]["get"]["parameters"]
+    }
+    assert inbox_parameters["needs_approval"]["schema"]["type"] == "boolean"
+    assert inbox_parameters["unread_only"]["schema"]["type"] == "boolean"
     problem_response = spec["paths"]["/api/v1/inbox"]["get"]["responses"]["401"]
     assert problem_response["content"]["application/problem+json"]["schema"]["$ref"] == (
         "#/components/schemas/ProblemDetails"

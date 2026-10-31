@@ -17,6 +17,7 @@ export function StorefrontWidgetCard() {
   const [aiModeDraft, setAiModeDraft] = useState<"draft_only" | "auto_reply">();
   const [copied, setCopied] = useState(false);
   const appBase = (process.env.NEXT_PUBLIC_SUPPORTPILOT_APP_URL || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
+  const widgetScriptVersion = "2026-10-31-otp-flow-v3";
   const originsText = originsDraft ?? config.data?.allowed_origins.join("\n") ?? "";
   const enabled = enabledDraft ?? config.data?.enabled ?? true;
   const aiEnabled = aiEnabledDraft ?? config.data?.ai_enabled ?? false;
@@ -36,7 +37,7 @@ export function StorefrontWidgetCard() {
     },
   });
   const embed = config.data && appBase
-    ? `<script async src="${appBase}/supportpilot-widget.js" data-widget-id="${config.data.public_id}" data-api-base="${appBase}/api"></script>`
+    ? `<script async src="${appBase}/supportpilot-widget.js?v=${widgetScriptVersion}" data-widget-id="${config.data.public_id}" data-api-base="${appBase}/api"></script>`
     : "";
 
   async function copySnippet() {
@@ -57,15 +58,15 @@ export function StorefrontWidgetCard() {
       <section className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4" aria-labelledby="widget-ai-title">
         <div><h3 id="widget-ai-title" className="text-sm font-semibold text-slate-900">AI replies</h3><p className="mt-1 text-xs leading-5 text-slate-600">AI uses your published knowledge articles. Order, refund, cancellation, account, and unsupported questions go to a teammate.</p></div>
         <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={aiEnabled} onChange={(event) => setAiEnabledDraft(event.target.checked)}/>Enable AI replies</label>
-        <label className="block space-y-1 text-sm text-slate-700"><span>Reply mode</span><select aria-label="AI reply mode" value={aiReplyMode} disabled={!aiEnabled} onChange={(event) => setAiModeDraft(event.target.value as "draft_only" | "auto_reply")} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2"><option value="draft_only">Draft only · teammate reviews and sends</option><option value="auto_reply">Auto reply · send grounded FAQ answers</option></select></label>
+        <label className="block space-y-1 text-sm text-slate-700"><span>Reply mode</span><select aria-label="AI reply mode" value={aiReplyMode} disabled={!aiEnabled} onChange={(event) => setAiModeDraft(event.target.value as "draft_only" | "auto_reply")} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2"><option value="draft_only">Draft only · teammate reviews and sends</option><option value="auto_reply">Auto reply · send safe replies and grounded answers</option></select></label>
         {!aiEnabled && <p className="text-xs text-slate-500">Disabled by default. Turn this on to start processing new widget messages.</p>}
         {aiEnabled && aiReplyMode === "draft_only" && <p className="text-xs text-slate-500">AI drafts appear in the inbox. Nothing is sent automatically.</p>}
-        {aiEnabled && aiReplyMode === "auto_reply" && <p className="text-xs font-medium text-amber-800">Auto mode sends only when matching knowledge exists. Sensitive or unsupported requests receive a handoff message.</p>}
+        {aiEnabled && aiReplyMode === "auto_reply" && <p className="text-xs font-medium text-amber-800">Greetings and safe next steps can be answered automatically. Store-specific answers require published knowledge; order details require shopper verification, and order changes require human review.</p>}
       </section>
       {save.isError && <p role="alert" className="text-sm text-red-700">{save.error instanceof ApiError ? save.error.message : "Widget settings could not be saved."}</p>}
       <Button type="button" disabled={config.isPending || config.isError || save.isPending || origins.length === 0} onClick={() => save.mutate()}>{save.isPending ? "Saving…" : config.data ? "Save widget settings" : "Create storefront widget"}</Button>
       {save.isSuccess && <p role="status" className="text-sm text-emerald-700">Widget settings saved.</p>}
-      {config.data && <div className="space-y-2 border-t border-slate-100 pt-4"><div className="flex items-center justify-between gap-3"><h3 className="text-sm font-semibold">Shopify theme embed</h3><Button size="sm" variant="secondary" onClick={copySnippet}>{copied ? <Check size={14}/> : <Copy size={14}/>} {copied ? "Copied" : "Copy snippet"}</Button></div><pre className="overflow-x-auto rounded-xl bg-slate-950 p-3 text-xs leading-5 text-slate-100"><code>{embed || "Set NEXT_PUBLIC_SUPPORTPILOT_APP_URL to the public app URL before installing outside localhost."}</code></pre><p className="text-xs leading-5 text-slate-500">In Shopify Admin, open **Online Store → Themes → Edit code**, paste this before <code>&lt;/body&gt;</code> in <code>layout/theme.liquid</code>, and save. For a local app, use an HTTPS tunnel URL in <code>NEXT_PUBLIC_SUPPORTPILOT_APP_URL</code>; localhost is not reachable from Shopify shoppers.</p><p className="text-xs text-slate-500">Widget ID: <code>{config.data.public_id}</code></p></div>}
+      {config.data && <div className="space-y-2 border-t border-slate-100 pt-4"><div className="flex items-center justify-between gap-3"><h3 className="text-sm font-semibold">Shopify theme embed</h3><Button size="sm" variant="secondary" onClick={copySnippet}>{copied ? <Check size={14}/> : <Copy size={14}/>} {copied ? "Copied" : "Copy snippet"}</Button></div><pre className="overflow-x-auto rounded-xl bg-slate-950 p-3 text-xs leading-5 text-slate-100"><code>{embed || "Set NEXT_PUBLIC_SUPPORTPILOT_APP_URL to the public app URL before installing outside localhost."}</code></pre><p className="text-xs leading-5 text-slate-500">In Shopify Admin, open **Online Store → Themes → Edit code**, paste this before <code>&lt;/body&gt;</code> in <code>layout/theme.liquid</code>, and save. Replace any older SupportPilot script tag with this versioned snippet so the browser loads the latest widget. For a local app, use an HTTPS tunnel URL in <code>NEXT_PUBLIC_SUPPORTPILOT_APP_URL</code>; localhost is not reachable from Shopify shoppers.</p><p className="text-xs text-slate-500">Widget ID: <code>{config.data.public_id}</code></p></div>}
     </PanelBody>
   </Panel>;
 }

@@ -35,6 +35,8 @@ class WidgetConfigOut(BaseModel):
 class PublicWidgetConfigOut(BaseModel):
     store_name: str
     collect_contact: bool
+    ai_enabled: bool = False
+    assistant_name: str = "SupportPilot AI"
     welcome_message: str = "Hi! How can we help?"
 
 
@@ -99,12 +101,15 @@ class WidgetMessageOut(BaseModel):
 class WidgetConversationOut(BaseModel):
     conversation_id: UUID
     messages: list[WidgetMessageOut]
+    order_verified: bool = False
+    ai_mode: str = "human"
 
 
 class WidgetOrderVerificationStart(BaseModel):
     model_config = ConfigDict(extra="forbid")
     order_number: str = Field(min_length=1, max_length=60, pattern=r"^#?[A-Za-z0-9-]+$")
     email: EmailStr
+    consent: bool
 
 
 class WidgetOrderVerificationCode(BaseModel):
@@ -119,4 +124,17 @@ class WidgetOrderVerificationOut(BaseModel):
     financial_status: str | None = None
     fulfillment_status: str | None = None
     tracking: list[dict[str, str | None]] = Field(default_factory=list)
+
+
+class WidgetCancellationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(min_length=5, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def clean_reason(cls, value: str) -> str:
+        cleaned = " ".join(value.split())
+        if len(cleaned) < 5:
+            raise ValueError("Please provide a short reason for the cancellation request")
+        return cleaned
 

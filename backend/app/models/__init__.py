@@ -43,10 +43,10 @@ __all__ = [
     "ShopifyInstallation",
     "ShopifyOAuthState",
     "SupportWidget",
-    "WidgetOrderVerification",
     "TeamInvitation",
     "Ticket",
     "TicketActivity",
     "User",
+    "WidgetOrderVerification",
     "WidgetSubmission",
 ]

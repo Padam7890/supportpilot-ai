@@ -34,7 +34,7 @@ class CommerceActionCreate(BaseModel):
 class CommerceActionOut(BaseModel):
     id: UUID
     ticket_id: UUID
-    requested_by_user_id: UUID
+    requested_by_user_id: UUID | None
     requested_by_name: str
     action_type: Literal["refund", "cancel"]
     provider: Literal["mock", "shopify"]

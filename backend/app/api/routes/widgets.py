@@ -3,26 +3,35 @@
 import hashlib
 import hmac
 import json
+import logging
 import re
 import secrets
-import string
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from typing import Annotated
 from urllib.parse import urlsplit
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import jwt
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, Request, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import limit_auth_attempts, require_roles
+from app.api.routes.integrations import (
+    ShopifyAPIError,
+    installation_for,
+    map_order,
+    valid_access_token,
+)
 from app.core.config import settings
 from app.core.security import create_widget_visitor_token, decode_widget_visitor_token
 from app.db.session import get_db, set_tenant_context
 from app.models import (
+    CommerceAction,
+    CommerceActionAudit,
     Conversation,
     Customer,
     Message,
@@ -31,12 +40,12 @@ from app.models import (
     Ticket,
     TicketActivity,
     User,
-    ShopifyAccessAudit,
     WidgetOrderVerification,
     WidgetSubmission,
 )
 from app.schemas.widget import (
     PublicWidgetConfigOut,
+    WidgetCancellationRequest,
     WidgetConfigCreate,
     WidgetConfigOut,
     WidgetConfigUpdate,
@@ -49,24 +58,32 @@ from app.schemas.widget import (
     WidgetOrderVerificationStart,
     WidgetStartOut,
 )
-from app.services.widget_ai import enqueue_widget_reply
-from app.api.routes.integrations import (
-    installation_for,
-    map_order,
-    shopify_query_fingerprint,
-    valid_access_token,
-)
 from app.services.email_delivery import send_order_verification_code, smtp_is_configured
+from app.services.shopify_actions import (
+    ShopifyOrderActionError,
+    check_cancellation_eligibility,
+    check_cancellation_scope,
+)
 from app.services.shopify_orders import lookup_authorized_order
 from app.services.shopify_security import decrypt_credential, encrypt_credential
+from app.services.widget_ai import enqueue_widget_reply, format_verified_order_status
 
 management_router = APIRouter(
     prefix="/integrations/widget", tags=["Storefront chat widget"]
 )
 public_router = APIRouter(prefix="/widget", tags=["Public storefront chat"])
+logger = logging.getLogger(__name__)
 VISITOR_SESSION_TTL = timedelta(hours=24)
 IDEMPOTENCY_PATTERN = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
 MAX_HISTORY = 100
+
+
+def _log_order_verification(level: int, event: str, **fields: object) -> None:
+    """Emit structured diagnostics in the message so default console logs show them.
+
+    Never pass customer email, order number, OTP, visitor token, or provider payloads.
+    """
+    logger.log(level, "widget_order_verification %s", json.dumps({"event": event, **fields}, sort_keys=True))
 
 
 def normalize_origin(value: str) -> str:
@@ -312,7 +329,12 @@ async def public_widget_config(
 ) -> PublicWidgetConfigOut:
     await rate_limit_widget(request, public_id)
     widget, organization = await require_allowed_widget_origin(request, public_id, db)
-    return PublicWidgetConfigOut(store_name=organization.name, collect_contact=widget.collect_contact)
+    return PublicWidgetConfigOut(
+        store_name=organization.name,
+        collect_contact=widget.collect_contact,
+        ai_enabled=widget.ai_enabled,
+        assistant_name="SupportPilot AI",
+    )
 
 
 @public_router.post(
@@ -398,6 +420,7 @@ async def start_widget_conversation(
         ticket_id=ticket.id,
         channel="shopify_widget",
         status="active",
+        ai_mode="ai" if widget.ai_enabled else "human",
     )
     db.add(conversation)
     await db.flush()
@@ -438,7 +461,7 @@ async def get_widget_conversation(
     authorization: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> WidgetConversationOut:
-    _widget, conversation, _ticket = await require_visitor_conversation(
+    widget, conversation, _ticket = await require_visitor_conversation(
         request, conversation_id, authorization, db
     )
     messages = await db.scalars(
@@ -451,8 +474,22 @@ async def get_widget_conversation(
         .order_by(Message.created_at.asc(), Message.id.asc())
         .limit(MAX_HISTORY)
     )
+    active_verification_id = await db.scalar(
+        select(WidgetOrderVerification.id)
+        .where(
+            WidgetOrderVerification.organization_id == widget.organization_id,
+            WidgetOrderVerification.widget_id == widget.id,
+            WidgetOrderVerification.conversation_id == conversation.id,
+            WidgetOrderVerification.status == "verified",
+            WidgetOrderVerification.expires_at > datetime.now(UTC),
+        )
+        .order_by(WidgetOrderVerification.verified_at.desc())
+        .limit(1)
+    )
     return WidgetConversationOut(
         conversation_id=conversation.id,
+        order_verified=active_verification_id is not None,
+        ai_mode=conversation.ai_mode,
         messages=[
             WidgetMessageOut(
                 id=message.id,
@@ -547,15 +584,67 @@ async def start_widget_order_verification(
     authorization: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> WidgetOrderVerificationOut:
-    widget, conversation, _ticket = await require_visitor_conversation(
-        request, conversation_id, authorization, db
+    _log_order_verification(
+        logging.INFO, "request_received", conversation_id=str(conversation_id),
     )
+    try:
+        widget, conversation, _ticket = await require_visitor_conversation(
+            request, conversation_id, authorization, db
+        )
+    except HTTPException as exc:
+        _log_order_verification(
+            logging.WARNING, "request_rejected", conversation_id=str(conversation_id),
+            http_status=exc.status_code, reason="visitor_authorization_or_origin_rejected",
+        )
+        raise
     if not widget.ai_enabled:
+        _log_order_verification(
+            logging.INFO, "request_blocked", organization_id=str(widget.organization_id),
+            conversation_id=str(conversation.id), reason="widget_ai_disabled",
+        )
         raise HTTPException(status_code=409, detail="AI support is not enabled for this store")
+    if not payload.consent:
+        _log_order_verification(
+            logging.INFO, "request_blocked", organization_id=str(widget.organization_id),
+            conversation_id=str(conversation.id), reason="consent_missing",
+        )
+        raise HTTPException(status_code=422, detail="Consent is required to verify an order by email")
     if not smtp_is_configured():
+        _log_order_verification(
+            logging.ERROR, "email_blocked", organization_id=str(widget.organization_id),
+            conversation_id=str(conversation.id), reason="smtp_not_configured",
+        )
         raise HTTPException(status_code=503, detail="Order verification email is not configured")
 
-    from app.api.routes.integrations import ShopifyAPIError
+    _log_order_verification(
+        logging.INFO, "request_started", organization_id=str(widget.organization_id),
+        conversation_id=str(conversation.id),
+    )
+
+    now = datetime.now(UTC)
+    locked_conversation = await db.scalar(
+        select(Conversation)
+        .where(
+            Conversation.id == conversation.id,
+            Conversation.organization_id == widget.organization_id,
+        )
+        .with_for_update()
+    )
+    if locked_conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    recent_requests = await db.scalar(
+        select(func.count(WidgetOrderVerification.id)).where(
+            WidgetOrderVerification.organization_id == widget.organization_id,
+            WidgetOrderVerification.conversation_id == conversation.id,
+            WidgetOrderVerification.created_at >= now - timedelta(minutes=10),
+        )
+    )
+    if (recent_requests or 0) >= 3:
+        _log_order_verification(
+            logging.WARNING, "request_rate_limited", organization_id=str(widget.organization_id),
+            conversation_id=str(conversation.id), request_count=recent_requests or 0,
+        )
+        raise HTTPException(status_code=429, detail="Too many verification requests. Try again later.")
 
     try:
         installation = await installation_for(db, widget.organization_id)
@@ -567,29 +656,30 @@ async def start_widget_order_verification(
             customer_email=str(payload.email).strip().casefold(),
         )
     except ShopifyAPIError as exc:
+        _log_order_verification(
+            logging.WARNING, "shopify_lookup_failed", organization_id=str(widget.organization_id),
+            conversation_id=str(conversation.id), provider_status_code=exc.status_code,
+            error_code=exc.code,
+        )
         raise HTTPException(status_code=503, detail="Shopify order lookup is temporarily unavailable") from exc
     if order is None:
         # Do not reveal whether an email or order number exists in the store.
+        _log_order_verification(
+            logging.INFO, "no_shopify_match", organization_id=str(widget.organization_id),
+            conversation_id=str(conversation.id),
+        )
         return WidgetOrderVerificationOut(
             message="If the details match a recent order, a verification code has been sent to its checkout email."
         )
 
-    now = datetime.now(UTC)
-    await db.execute(
+    pending = list(await db.scalars(
         select(WidgetOrderVerification)
         .where(
             WidgetOrderVerification.organization_id == widget.organization_id,
             WidgetOrderVerification.conversation_id == conversation.id,
-            WidgetOrderVerification.status == "pending",
+            WidgetOrderVerification.status.in_(("pending", "verified")),
         )
         .with_for_update()
-    )
-    pending = list(await db.scalars(
-        select(WidgetOrderVerification).where(
-            WidgetOrderVerification.organization_id == widget.organization_id,
-            WidgetOrderVerification.conversation_id == conversation.id,
-            WidgetOrderVerification.status == "pending",
-        )
     ))
     for previous in pending:
         previous.status = "expired"
@@ -599,6 +689,10 @@ async def start_widget_order_verification(
     try:
         encrypted_email = encrypt_credential(str(payload.email).strip().casefold())
     except RuntimeError as exc:
+        _log_order_verification(
+            logging.ERROR, "email_address_encryption_failed", organization_id=str(widget.organization_id),
+            conversation_id=str(conversation.id), error_type=type(exc).__name__,
+        )
         raise HTTPException(status_code=503, detail="Order verification is not configured") from exc
     verification = WidgetOrderVerification(
         id=verification_id,
@@ -612,16 +706,34 @@ async def start_widget_order_verification(
         status="pending",
         attempt_count=0,
         expires_at=now + timedelta(minutes=10),
+        consented_at=now,
         created_at=now,
     )
     db.add(verification)
     await db.commit()
+    _log_order_verification(
+        logging.INFO, "verification_created", organization_id=str(widget.organization_id),
+        conversation_id=str(conversation.id), verification_id=str(verification_id),
+        expires_in_seconds=600,
+    )
     try:
         await send_order_verification_code(str(payload.email), code)
     except Exception as exc:  # SMTP errors must not leak addresses or provider details.
+        # COMMIT clears PostgreSQL's transaction-local tenant setting. Restore it
+        # before updating this row so RLS doesn't silently match zero rows.
+        await set_tenant_context(db, widget.organization_id)
         verification.status = "expired"
         await db.commit()
+        _log_order_verification(
+            logging.ERROR, "email_failed", organization_id=str(widget.organization_id),
+            conversation_id=str(conversation.id), verification_id=str(verification_id),
+            error_type=type(exc).__name__,
+        )
         raise HTTPException(status_code=503, detail="Could not send the verification email") from exc
+    _log_order_verification(
+        logging.INFO, "email_sent", organization_id=str(widget.organization_id),
+        conversation_id=str(conversation.id), verification_id=str(verification_id),
+    )
     return WidgetOrderVerificationOut(
         message="If the details match a recent order, a verification code has been sent to its checkout email."
     )
@@ -657,6 +769,10 @@ async def confirm_widget_order_verification(
         if verification is not None:
             verification.status = "expired"
             await db.commit()
+        _log_order_verification(
+            logging.WARNING, "code_rejected", organization_id=str(widget.organization_id),
+            conversation_id=str(conversation.id), reason="missing_or_expired",
+        )
         raise HTTPException(status_code=400, detail="Code is invalid or expired. Request a new code.")
     supplied = _verification_digest(verification.id, payload.code)
     if not hmac.compare_digest(verification.code_digest, supplied):
@@ -664,9 +780,13 @@ async def confirm_widget_order_verification(
         if verification.attempt_count >= 5:
             verification.status = "locked"
         await db.commit()
+        _log_order_verification(
+            logging.WARNING, "code_rejected", organization_id=str(widget.organization_id),
+            conversation_id=str(conversation.id), verification_id=str(verification.id),
+            attempt_count=verification.attempt_count, locked=verification.status == "locked",
+            reason="invalid_code",
+        )
         raise HTTPException(status_code=400, detail="Code is invalid or expired. Request a new code.")
-
-    from app.api.routes.integrations import ShopifyAPIError, map_order
 
     try:
         email = decrypt_credential(verification.customer_email_encrypted)
@@ -679,29 +799,25 @@ async def confirm_widget_order_verification(
             customer_email=email,
         )
     except (RuntimeError, ShopifyAPIError) as exc:
+        _log_order_verification(
+            logging.WARNING, "confirm_lookup_failed", organization_id=str(widget.organization_id),
+            conversation_id=str(conversation.id), verification_id=str(verification.id),
+            error_type=type(exc).__name__,
+            provider_status_code=exc.status_code if isinstance(exc, ShopifyAPIError) else None,
+            error_code=exc.code if isinstance(exc, ShopifyAPIError) else "credential_error",
+        )
         raise HTTPException(status_code=503, detail="Shopify order lookup is temporarily unavailable") from exc
     if order is None or order.get("id") != verification.shopify_order_id:
         verification.status = "expired"
         await db.commit()
+        _log_order_verification(
+            logging.WARNING, "confirm_order_changed", organization_id=str(widget.organization_id),
+            conversation_id=str(conversation.id), verification_id=str(verification.id),
+        )
         raise HTTPException(status_code=409, detail="Order details changed. Please verify the order again.")
 
     mapped = map_order(order)
-    parts = [f"I verified order {mapped.order_number}."]
-    if mapped.fulfillment_status:
-        parts.append(f"Fulfillment status: {mapped.fulfillment_status.replace('_', ' ').lower()}.")
-    else:
-        parts.append("This order has not been marked as fulfilled yet.")
-    if mapped.tracking:
-        tracking = mapped.tracking[0]
-        if tracking.company:
-            parts.append(f"Carrier: {tracking.company}.")
-        if tracking.number:
-            parts.append(f"Tracking number: {tracking.number}.")
-        if tracking.url:
-            parts.append(f"Tracking link: {tracking.url}")
-    else:
-        parts.append("The store has not provided tracking information for this order.")
-    answer = " ".join(parts)
+    answer = format_verified_order_status(mapped, opening="I verified order")
     verification.status = "verified"
     verification.verified_at = now
     if widget.ai_reply_mode == "auto_reply":
@@ -717,7 +833,33 @@ async def confirm_widget_order_verification(
         )
         conversation.updated_at = now
         ticket.updated_at = now
+    else:
+        private_summary = answer
+        if mapped.financial_status:
+            private_summary += f" Financial status: {mapped.financial_status.replace('_', ' ').lower()}."
+        db.add(
+            Message(
+                organization_id=widget.organization_id,
+                conversation_id=conversation.id,
+                sender_type="internal_note",
+                sender_user_id=None,
+                content=f"Shopper verified order {mapped.order_number}. Private order lookup: {private_summary}",
+                content_type="text",
+            )
+        )
+        conversation.updated_at = now
+        ticket.updated_at = now
     await db.commit()
+    _log_order_verification(
+        logging.INFO, "verification_succeeded", organization_id=str(widget.organization_id),
+        conversation_id=str(conversation.id), verification_id=str(verification.id),
+        delivery_mode=widget.ai_reply_mode,
+    )
+    if widget.ai_reply_mode != "auto_reply":
+        return WidgetOrderVerificationOut(
+            message="Your order is verified. A support teammate will follow up here shortly.",
+            verified=True,
+        )
     return WidgetOrderVerificationOut(
         message=answer,
         verified=True,
@@ -726,4 +868,191 @@ async def confirm_widget_order_verification(
         fulfillment_status=mapped.fulfillment_status,
         tracking=[item.model_dump() for item in mapped.tracking],
     )
+
+
+@public_router.post(
+    "/conversations/{conversation_id}/cancellation-request",
+    response_model=WidgetOrderVerificationOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def request_widget_order_cancellation(
+    conversation_id: UUID,
+    payload: WidgetCancellationRequest,
+    request: Request,
+    authorization: str | None = Header(default=None),
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=16, max_length=128),
+    db: AsyncSession = Depends(get_db),
+) -> WidgetOrderVerificationOut:
+    if not IDEMPOTENCY_PATTERN.fullmatch(idempotency_key):
+        raise HTTPException(status_code=422, detail="A valid idempotency key is required")
+    widget, conversation, ticket = await require_visitor_conversation(
+        request, conversation_id, authorization, db
+    )
+    now = datetime.now(UTC)
+    verification = await db.scalar(
+        select(WidgetOrderVerification)
+        .where(
+            WidgetOrderVerification.organization_id == widget.organization_id,
+            WidgetOrderVerification.widget_id == widget.id,
+            WidgetOrderVerification.conversation_id == conversation.id,
+            WidgetOrderVerification.status == "verified",
+            WidgetOrderVerification.expires_at > now,
+        )
+        .order_by(WidgetOrderVerification.verified_at.desc())
+        .with_for_update()
+    )
+    if verification is None:
+        raise HTTPException(status_code=403, detail="Verify the order by email code before requesting cancellation")
+
+    key_digest = hashlib.sha256(
+        f"widget-cancel:{conversation.id}:{idempotency_key.strip()}".encode()
+    ).hexdigest()
+    canonical = json.dumps(
+        {
+            "conversation_id": str(conversation.id),
+            "order_id": verification.shopify_order_id,
+            "reason": payload.reason,
+            "action_type": "cancel",
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    request_fingerprint = hashlib.sha256(canonical.encode()).hexdigest()
+    existing = await db.scalar(
+        select(CommerceAction).where(
+            CommerceAction.organization_id == widget.organization_id,
+            CommerceAction.idempotency_key_hash == key_digest,
+        )
+    )
+    if existing is not None:
+        if existing.request_fingerprint != request_fingerprint:
+            raise HTTPException(status_code=409, detail="Idempotency-Key was already used for a different request")
+        return WidgetOrderVerificationOut(
+            message="Your cancellation request is with the support team for review.",
+            verified=True,
+        )
+    already_pending = await db.scalar(
+        select(CommerceAction).where(
+            CommerceAction.organization_id == widget.organization_id,
+            CommerceAction.provider == "shopify",
+            CommerceAction.action_type == "cancel",
+            CommerceAction.shopify_order_id == verification.shopify_order_id,
+            CommerceAction.approval_status == "pending",
+        )
+    )
+    if already_pending is not None:
+        return WidgetOrderVerificationOut(
+            message="A cancellation request for this order is already with the support team for review.",
+            verified=True,
+        )
+
+    try:
+        installation = await installation_for(db, widget.organization_id)
+        check_cancellation_scope(installation.granted_scopes)
+        email = decrypt_credential(verification.customer_email_encrypted)
+        token = await valid_access_token(db, installation)
+        order = await lookup_authorized_order(
+            shop_domain=installation.shop_domain,
+            access_token=token,
+            order_number=verification.order_number,
+            customer_email=email,
+        )
+        if order is None or order.get("id") != verification.shopify_order_id:
+            raise HTTPException(status_code=409, detail="Order could not be reverified. Please check its status.")
+        check_cancellation_eligibility(order)
+    except ShopifyOrderActionError as exc:
+        details = {
+            "shopify_cancel_permission_denied": "The store has not granted cancellation permission.",
+            "shopify_order_already_cancelled": "This order has already been cancelled.",
+            "shopify_order_not_cancelable": "This order can no longer be cancelled.",
+            "shopify_order_has_active_return": "This order has an active return and cannot be cancelled.",
+        }
+        raise HTTPException(status_code=409, detail=details.get(exc.code, "This order cannot be cancelled.")) from exc
+    except ShopifyAPIError as exc:
+        raise HTTPException(status_code=503, detail="Shopify order lookup is temporarily unavailable") from exc
+
+    price = (order.get("currentTotalPriceSet") or {}).get("shopMoney") or {}
+    try:
+        order_total = Decimal(str(price.get("amount", "")))
+    except (InvalidOperation, ValueError) as exc:
+        raise HTTPException(status_code=502, detail="Shopify returned an invalid order total") from exc
+    if order_total < 0:
+        raise HTTPException(status_code=502, detail="Shopify returned an invalid order total")
+    organization_id = widget.organization_id
+    verified_order_id = verification.shopify_order_id
+
+    action = CommerceAction(
+        organization_id=widget.organization_id,
+        ticket_id=ticket.id,
+        requested_by_user_id=None,
+        action_type="cancel",
+        provider="shopify",
+        shopify_order_id=verification.shopify_order_id,
+        order_number=verification.order_number,
+        order_total=order_total,
+        currency=str(price.get("currencyCode", "USD"))[:3],
+        refund_amount=None,
+        cancel_refund=False,
+        cancel_restock=False,
+        cancel_notify_customer=False,
+        cancellation_reason="CUSTOMER",
+        reason=f"Customer requested cancellation: {payload.reason}"[:500],
+        idempotency_key_hash=key_digest,
+        request_fingerprint=request_fingerprint,
+        approval_status="pending",
+        expires_at=now + timedelta(days=7),
+        execution_status="not_started",
+    )
+    db.add(action)
+    try:
+        await db.flush()
+    except IntegrityError:
+        await db.rollback()
+        await set_tenant_context(db, organization_id)
+        canonical_action = await db.scalar(
+            select(CommerceAction).where(
+                CommerceAction.organization_id == organization_id,
+                CommerceAction.provider == "shopify",
+                CommerceAction.action_type == "cancel",
+                CommerceAction.shopify_order_id == verified_order_id,
+                CommerceAction.approval_status == "pending",
+            )
+        )
+        if canonical_action is None:
+            raise HTTPException(status_code=503, detail="Cancellation request could not be saved")
+        return WidgetOrderVerificationOut(
+            message="A cancellation request for this order is already with the support team for review.",
+            verified=True,
+        )
+    db.add(
+        CommerceActionAudit(
+            organization_id=widget.organization_id,
+            commerce_action_id=action.id,
+            actor_user_id=None,
+            event_type="requested",
+            details={
+                "source": "shopify_widget",
+                "order_number": verification.order_number,
+                "action_type": "cancel",
+                "approval_required": True,
+            },
+        )
+    )
+    confirmation = (
+        "I sent your cancellation request to the support team. They must review it before any changes are made."
+    )
+    db.add(
+        Message(
+            organization_id=widget.organization_id,
+            conversation_id=conversation.id,
+            sender_type="assistant",
+            sender_user_id=None,
+            content=confirmation,
+            content_type="text",
+        )
+    )
+    conversation.updated_at = now
+    ticket.updated_at = now
+    await db.commit()
+    return WidgetOrderVerificationOut(message=confirmation, verified=True)
 

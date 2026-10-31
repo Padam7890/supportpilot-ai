@@ -160,8 +160,14 @@ async def readiness() -> dict[str, object]:
         await check_database()
         redis_client: Redis = app.state.redis
         await redis_client.ping()
-    except DatabaseSchemaOutOfDate:
-        logger.warning("Database schema migrations are not current")
+    except DatabaseSchemaOutOfDate as exc:
+        applied = sorted(exc.applied_heads) or ["unavailable"]
+        expected = sorted(exc.expected_heads) or ["unknown"]
+        logger.warning(
+            "Database schema migrations are not current; applied=%s expected=%s",
+            applied,
+            expected,
+        )
         raise HTTPException(
             status_code=503,
             detail="Database schema migrations are not current. Apply the latest Alembic migrations.",

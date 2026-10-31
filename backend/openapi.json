@@ -898,9 +898,16 @@
             "type": "string"
           },
           "requested_by_user_id": {
-            "format": "uuid",
-            "title": "Requested By User Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By User Id"
           },
           "reviewed_at": {
             "anyOf": [
@@ -1019,6 +1026,23 @@
         "title": "CommerceActionPage",
         "type": "object"
       },
+      "ConversationAIModeUpdate": {
+        "properties": {
+          "mode": {
+            "enum": [
+              "ai",
+              "human"
+            ],
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "title": "ConversationAIModeUpdate",
+        "type": "object"
+      },
       "ConversationCreate": {
         "properties": {
           "channel": {
@@ -1033,6 +1057,14 @@
       },
       "ConversationOut": {
         "properties": {
+          "ai_mode": {
+            "enum": [
+              "ai",
+              "human"
+            ],
+            "title": "Ai Mode",
+            "type": "string"
+          },
           "channel": {
             "title": "Channel",
             "type": "string"
@@ -1074,7 +1106,8 @@
           "organization_id",
           "ticket_id",
           "channel",
-          "status"
+          "status",
+          "ai_mode"
         ],
         "title": "ConversationOut",
         "type": "object"
@@ -2530,6 +2563,16 @@
       },
       "PublicWidgetConfigOut": {
         "properties": {
+          "ai_enabled": {
+            "default": false,
+            "title": "Ai Enabled",
+            "type": "boolean"
+          },
+          "assistant_name": {
+            "default": "SupportPilot AI",
+            "title": "Assistant Name",
+            "type": "string"
+          },
           "collect_contact": {
             "title": "Collect Contact",
             "type": "boolean"
@@ -3729,6 +3772,22 @@
         "title": "WidgetAIReplyStatusOut",
         "type": "object"
       },
+      "WidgetCancellationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 500,
+            "minLength": 5,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "WidgetCancellationRequest",
+        "type": "object"
+      },
       "WidgetConfigCreate": {
         "additionalProperties": false,
         "properties": {
@@ -3863,6 +3922,11 @@
       },
       "WidgetConversationOut": {
         "properties": {
+          "ai_mode": {
+            "default": "human",
+            "title": "Ai Mode",
+            "type": "string"
+          },
           "conversation_id": {
             "format": "uuid",
             "title": "Conversation Id",
@@ -3874,6 +3938,11 @@
             },
             "title": "Messages",
             "type": "array"
+          },
+          "order_verified": {
+            "default": false,
+            "title": "Order Verified",
+            "type": "boolean"
           }
         },
         "required": [
@@ -3996,6 +4065,119 @@
           "created_at"
         ],
         "title": "WidgetMessageOut",
+        "type": "object"
+      },
+      "WidgetOrderVerificationCode": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "maxLength": 6,
+            "minLength": 6,
+            "pattern": "^[0-9]{6}$",
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "WidgetOrderVerificationCode",
+        "type": "object"
+      },
+      "WidgetOrderVerificationOut": {
+        "properties": {
+          "financial_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Financial Status"
+          },
+          "fulfillment_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fulfillment Status"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "order_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Number"
+          },
+          "tracking": {
+            "items": {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            "title": "Tracking",
+            "type": "array"
+          },
+          "verified": {
+            "default": false,
+            "title": "Verified",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "WidgetOrderVerificationOut",
+        "type": "object"
+      },
+      "WidgetOrderVerificationStart": {
+        "additionalProperties": false,
+        "properties": {
+          "consent": {
+            "title": "Consent",
+            "type": "boolean"
+          },
+          "email": {
+            "format": "email",
+            "title": "Email",
+            "type": "string"
+          },
+          "order_number": {
+            "maxLength": 60,
+            "minLength": 1,
+            "pattern": "^#?[A-Za-z0-9-]+$",
+            "title": "Order Number",
+            "type": "string"
+          }
+        },
+        "required": [
+          "order_number",
+          "email",
+          "consent"
+        ],
+        "title": "WidgetOrderVerificationStart",
         "type": "object"
       },
       "WidgetStartOut": {
@@ -7486,6 +7668,154 @@
         ]
       }
     },
+    "/api/v1/conversations/{conversation_id}/ai-mode": {
+      "patch": {
+        "operationId": "update_conversation_ai_mode_api_v1_conversations__conversation_id__ai_mode_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationAIModeUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 Problem Details response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 Problem Details response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 Problem Details response"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 Problem Details response"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 Problem Details response"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 Problem Details response"
+          },
+          "415": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 Problem Details response"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 Problem Details response"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 Problem Details response"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 Problem Details response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Conversation Ai Mode",
+        "tags": [
+          "conversations"
+        ]
+      }
+    },
     "/api/v1/conversations/{conversation_id}/messages": {
       "get": {
         "operationId": "list_messages_api_v1_conversations__conversation_id__messages_get",
@@ -9155,6 +9485,26 @@
                 }
               ],
               "title": "Priority"
+            }
+          },
+          {
+            "in": "query",
+            "name": "needs_approval",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Needs Approval",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "unread_only",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Unread Only",
+              "type": "boolean"
             }
           },
           {
@@ -15130,6 +15480,86 @@
         ]
       }
     },
+    "/api/v1/widget/conversations/{conversation_id}/cancellation-request": {
+      "post": {
+        "operationId": "request_widget_order_cancellation_api_v1_widget_conversations__conversation_id__cancellation_request_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WidgetCancellationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WidgetOrderVerificationOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Request Widget Order Cancellation",
+        "tags": [
+          "Public storefront chat"
+        ]
+      }
+    },
     "/api/v1/widget/conversations/{conversation_id}/messages": {
       "post": {
         "operationId": "continue_widget_conversation_api_v1_widget_conversations__conversation_id__messages_post",
@@ -15205,6 +15635,144 @@
           }
         },
         "summary": "Continue Widget Conversation",
+        "tags": [
+          "Public storefront chat"
+        ]
+      }
+    },
+    "/api/v1/widget/conversations/{conversation_id}/order-verification": {
+      "post": {
+        "operationId": "start_widget_order_verification_api_v1_widget_conversations__conversation_id__order_verification_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WidgetOrderVerificationStart"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WidgetOrderVerificationOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Widget Order Verification",
+        "tags": [
+          "Public storefront chat"
+        ]
+      }
+    },
+    "/api/v1/widget/conversations/{conversation_id}/order-verification/confirm": {
+      "post": {
+        "operationId": "confirm_widget_order_verification_api_v1_widget_conversations__conversation_id__order_verification_confirm_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WidgetOrderVerificationCode"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WidgetOrderVerificationOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Confirm Widget Order Verification",
         "tags": [
           "Public storefront chat"
         ]

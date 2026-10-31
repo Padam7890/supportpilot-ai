@@ -17,6 +17,7 @@ from app.models import (
     Message,
     PlatformOwner,
     Ticket,
+    WidgetOrderVerification,
     WidgetSubmission,
 )
 from app.services.ai_worker import claim_ai_execution, process_ai_execution
@@ -200,6 +201,85 @@ async def test_widget_ai_setting_enqueues_one_execution_per_new_message(client):
         assert all(row.reply_status == "processing" for row in executions)
 
 
+@pytest.mark.anyio
+async def test_widget_ai_mode_can_be_overridden_per_conversation(client):
+    auth, organization_id, public_id = await setup_widget(
+        client,
+        "widget-ai-mode",
+        "https://store-ai-mode.example",
+        ai_enabled=True,
+        ai_reply_mode="auto_reply",
+    )
+    origin = "https://store-ai-mode.example"
+    first = await client.post(
+        f"/api/v1/widget/{public_id}/messages",
+        headers={"Origin": origin, "Idempotency-Key": "widget-ai-mode-first-message"},
+        json={"content": "Hello"},
+    )
+    assert first.status_code == 201, first.text
+    conversation_id = first.json()["conversation_id"]
+    headers = bearer(auth["access_token"])
+
+    paused = await client.patch(
+        f"/api/v1/conversations/{conversation_id}/ai-mode",
+        headers=headers,
+        json={"mode": "human"},
+    )
+    assert paused.status_code == 200, paused.text
+    assert paused.json()["ai_mode"] == "human"
+
+    followup = await client.post(
+        f"/api/v1/widget/conversations/{conversation_id}/messages",
+        headers={
+            "Origin": origin,
+            "Authorization": f"Bearer {first.json()['visitor_token']}",
+            "Idempotency-Key": "widget-ai-mode-human-followup",
+        },
+        json={"content": "I need a person"},
+    )
+    assert followup.status_code == 200, followup.text
+    async with SessionLocal() as db:
+        await set_tenant_context(db, organization_id)
+        executions = list(
+            await db.scalars(
+                select(AIExecution).where(
+                    AIExecution.organization_id == organization_id,
+                    AIExecution.kind == "widget_reply",
+                )
+            )
+        )
+        assert len(executions) == 1
+
+    resumed = await client.patch(
+        f"/api/v1/conversations/{conversation_id}/ai-mode",
+        headers=headers,
+        json={"mode": "ai"},
+    )
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["ai_mode"] == "ai"
+    resumed_message = await client.post(
+        f"/api/v1/widget/conversations/{conversation_id}/messages",
+        headers={
+            "Origin": origin,
+            "Authorization": f"Bearer {first.json()['visitor_token']}",
+            "Idempotency-Key": "widget-ai-mode-resumed-followup",
+        },
+        json={"content": "One more question"},
+    )
+    assert resumed_message.status_code == 200, resumed_message.text
+    async with SessionLocal() as db:
+        await set_tenant_context(db, organization_id)
+        executions = list(
+            await db.scalars(
+                select(AIExecution).where(
+                    AIExecution.organization_id == organization_id,
+                    AIExecution.kind == "widget_reply",
+                )
+            )
+        )
+        assert len(executions) == 2
+
+
 class WidgetMockProviderResponse:
     is_error = False
 
@@ -318,7 +398,7 @@ async def test_widget_sensitive_auto_reply_escalates_without_model_call(client, 
         headers={"Origin": origin, "Authorization": f"Bearer {started.json()['visitor_token']}"},
     )
     assert [message["sender_type"] for message in history.json()["messages"]] == ["customer", "assistant"]
-    assert "teammate" in history.json()["messages"][-1]["content"]
+    assert "one-time code" in history.json()["messages"][-1]["content"]
 
 
 @pytest.mark.anyio
@@ -357,7 +437,10 @@ async def test_widget_auto_reply_answers_standalone_greeting_without_knowledge_o
         headers={"Origin": origin, "Authorization": f"Bearer {started.json()['visitor_token']}"},
     )
     assert [message["sender_type"] for message in history.json()["messages"]] == ["customer", "assistant"]
-    assert history.json()["messages"][-1]["content"] == "Hi! How can I help you today?"
+    assert history.json()["messages"][-1]["content"] == (
+        "Hi there! I’m your store’s support assistant. I can help with order updates, product questions, "
+        "and store policies. What can I help you with?"
+    )
 
 
 @pytest.mark.anyio
@@ -404,3 +487,176 @@ async def test_widget_visitor_token_cannot_access_another_tenant_conversation(cl
         headers={**origin, "Authorization": f"Bearer {first_a.json()['visitor_token']}"},
     )
     assert denied.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_widget_order_lookup_requires_email_code_and_returns_only_verified_tracking(client, monkeypatch):
+    _auth, organization_id, public_id = await setup_widget(
+        client,
+        "widget-order-otp",
+        "https://store-order-otp.example",
+        ai_enabled=True,
+        ai_reply_mode="auto_reply",
+    )
+    monkeypatch.setattr("app.api.routes.widgets.smtp_is_configured", lambda: True)
+    monkeypatch.setattr("app.api.routes.widgets.encrypt_credential", lambda value: f"encrypted:{value}")
+    monkeypatch.setattr("app.api.routes.widgets.decrypt_credential", lambda value: value.removeprefix("encrypted:"))
+    async def get_installation(db, org_id):
+        return _installation()
+
+    monkeypatch.setattr("app.api.routes.widgets.installation_for", get_installation)
+    monkeypatch.setattr("app.api.routes.widgets.valid_access_token", lambda db, installation: _token())
+    captured = {}
+
+    async def send_code(email, code):
+        captured.update(email=email, code=code)
+
+    async def find_order(*, shop_domain, access_token, order_number, customer_email):
+        assert shop_domain == "verified-store.myshopify.com"
+        assert access_token == "mock-token"
+        assert order_number == "#1001"
+        assert customer_email == "shopper@example.com"
+        return {
+            "id": "gid://shopify/Order/1001",
+            "name": "#1001",
+            "createdAt": "2026-10-30T12:00:00Z",
+            "displayFinancialStatus": "PAID",
+            "displayFulfillmentStatus": "FULFILLED",
+            "currentTotalPriceSet": {"shopMoney": {"amount": "42.50", "currencyCode": "USD"}},
+            "fulfillments": [{"trackingInfo": [{"company": "Parcel Co", "number": "TRACK-1001", "url": "https://tracking.example/1001"}]}],
+        }
+
+    async def _send(email, code):
+        return await send_code(email, code)
+
+    monkeypatch.setattr("app.api.routes.widgets.send_order_verification_code", _send)
+    monkeypatch.setattr("app.api.routes.widgets.lookup_authorized_order", find_order)
+    origin = "https://store-order-otp.example"
+    started = await client.post(
+        f"/api/v1/widget/{public_id}/messages",
+        headers={"Origin": origin, "Idempotency-Key": "widget-order-otp-message-1"},
+        json={"content": "Where is my order?"},
+    )
+    assert started.status_code == 201, started.text
+    visitor_headers = {"Origin": origin, "Authorization": f"Bearer {started.json()['visitor_token']}"}
+    initial_execution = await claim_ai_execution(organization_id)
+    assert initial_execution is not None
+    await process_ai_execution(organization_id, initial_execution)
+    request_code = await client.post(
+        f"/api/v1/widget/conversations/{started.json()['conversation_id']}/order-verification",
+        headers=visitor_headers,
+        json={"order_number": "#1001", "email": "shopper@example.com", "consent": True},
+    )
+    assert request_code.status_code == 202, request_code.text
+    assert "sent to its checkout email" in request_code.json()["message"]
+    assert captured["email"] == "shopper@example.com"
+    confirmed = await client.post(
+        f"/api/v1/widget/conversations/{started.json()['conversation_id']}/order-verification/confirm",
+        headers=visitor_headers,
+        json={"code": captured["code"]},
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    assert confirmed.json()["verified"] is True
+    assert confirmed.json()["tracking"][0]["number"] == "TRACK-1001"
+    assert "https://tracking.example/1001" in confirmed.json()["message"]
+    monkeypatch.setattr("app.api.routes.integrations.installation_for", get_installation)
+    monkeypatch.setattr("app.api.routes.integrations.valid_access_token", lambda db, installation: _token())
+    monkeypatch.setattr("app.services.shopify_orders.lookup_authorized_order", find_order)
+    followup = await client.post(
+        f"/api/v1/widget/conversations/{started.json()['conversation_id']}/messages",
+        headers={**visitor_headers, "Idempotency-Key": "widget-order-followup-status-1"},
+        json={"content": "What is my order status?"},
+    )
+    assert followup.status_code == 201, followup.text
+    followup_execution = await claim_ai_execution(organization_id)
+    assert followup_execution is not None
+    await process_ai_execution(organization_id, followup_execution)
+    history_after_followup = await client.get(
+        f"/api/v1/widget/conversations/{started.json()['conversation_id']}",
+        headers=visitor_headers,
+    )
+    assert history_after_followup.status_code == 200
+    assert history_after_followup.json()["messages"][-1]["content"].startswith("I checked your verified order #1001.")
+    conversation_after_verification = await client.get(
+        f"/api/v1/widget/conversations/{started.json()['conversation_id']}",
+        headers=visitor_headers,
+    )
+    assert conversation_after_verification.status_code == 200
+    assert conversation_after_verification.json()["order_verified"] is True
+    cancellation = await client.post(
+        f"/api/v1/widget/conversations/{started.json()['conversation_id']}/cancellation-request",
+        headers={**visitor_headers, "Idempotency-Key": "widget-cancel-order-0001"},
+        json={"reason": "I no longer need this order"},
+    )
+    assert cancellation.status_code == 202, cancellation.text
+    assert "must review" in cancellation.json()["message"]
+    actions = await client.get("/api/v1/commerce/actions", headers=bearer(_auth["access_token"]))
+    assert actions.status_code == 200, actions.text
+    assert actions.json()["total"] == 1
+    assert actions.json()["items"][0]["approval_status"] == "pending"
+    assert actions.json()["items"][0]["execution_status"] == "not_started"
+    assert actions.json()["items"][0]["requested_by_name"] == "Customer via storefront chat"
+
+
+@pytest.mark.anyio
+async def test_widget_email_failure_expires_otp_without_losing_tenant_context(client, monkeypatch):
+    _auth, organization_id, public_id = await setup_widget(
+        client, "widget-otp-email-failure", "https://store-otp-failure.example", ai_enabled=True
+    )
+    monkeypatch.setattr("app.api.routes.widgets.smtp_is_configured", lambda: True)
+    monkeypatch.setattr("app.api.routes.widgets.encrypt_credential", lambda value: f"encrypted:{value}")
+
+    async def get_installation(db, org_id):
+        return _installation()
+
+    async def find_order(**kwargs):
+        return {"id": "gid://shopify/Order/2002", "name": "#2002"}
+
+    async def fail_email(email, code):
+        raise OSError("mock SMTP failure")
+
+    monkeypatch.setattr("app.api.routes.widgets.installation_for", get_installation)
+    monkeypatch.setattr("app.api.routes.widgets.valid_access_token", lambda db, installation: _token())
+    monkeypatch.setattr("app.api.routes.widgets.lookup_authorized_order", find_order)
+    monkeypatch.setattr("app.api.routes.widgets.send_order_verification_code", fail_email)
+
+    origin = "https://store-otp-failure.example"
+    started = await client.post(
+        f"/api/v1/widget/{public_id}/messages",
+        headers={"Origin": origin, "Idempotency-Key": "widget-otp-failure-message-1"},
+        json={"content": "Where is my order?"},
+    )
+    assert started.status_code == 201, started.text
+    response = await client.post(
+        f"/api/v1/widget/conversations/{started.json()['conversation_id']}/order-verification",
+        headers={
+            "Origin": origin,
+            "Authorization": f"Bearer {started.json()['visitor_token']}",
+        },
+        json={"order_number": "#2002", "email": "shopper@example.com", "consent": True},
+    )
+    assert response.status_code == 503
+
+    async with SessionLocal() as db:
+        await set_tenant_context(db, organization_id)
+        verification = await db.scalar(
+            select(WidgetOrderVerification).where(
+                WidgetOrderVerification.organization_id == organization_id,
+                WidgetOrderVerification.conversation_id == UUID(started.json()["conversation_id"]),
+            )
+        )
+        assert verification is not None
+        assert verification.status == "expired"
+
+
+def _installation():
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        shop_domain="verified-store.myshopify.com",
+        granted_scopes=["read_orders", "read_customers", "write_orders"],
+    )
+
+
+async def _token():
+    return "mock-token"

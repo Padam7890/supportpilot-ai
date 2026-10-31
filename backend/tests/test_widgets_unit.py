@@ -3,12 +3,25 @@ from pydantic import ValidationError
 
 from app.api.routes.widgets import normalize_origin
 from app.core.security import create_widget_visitor_token, decode_widget_visitor_token
-from app.schemas.widget import WidgetFirstMessage
+from app.schemas.widget import (
+    WidgetFirstMessage,
+    WidgetOrderVerificationCode,
+    WidgetOrderVerificationStart,
+)
+from app.services.ai_worker import _question_order_number
 from app.services.widget_ai import (
+    ACCOUNT_HELP_REPLY,
+    CAPABILITIES_REPLY,
     GREETING_REPLY,
     HANDOFF_MESSAGE,
+    ORDER_ACTION_REPLY,
+    ORDER_VERIFICATION_MESSAGE,
+    REFUND_ACTION_REPLY,
+    THANKS_REPLY,
     widget_greeting_reply,
+    widget_missing_knowledge_reply,
     widget_request_needs_human,
+    widget_sensitive_reply,
 )
 
 
@@ -96,8 +109,63 @@ def test_widget_ai_handles_standalone_greetings_without_knowledge(message):
 
 
 @pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("Thanks so much!", THANKS_REPLY),
+        ("What can you do?", CAPABILITIES_REPLY),
+    ],
+)
+def test_widget_ai_handles_simple_conversation_without_model_call(message, expected):
+    assert widget_greeting_reply(message) == expected
+
+
+@pytest.mark.parametrize(
     "message",
     ["hello, where is my order?", "hey can I get a refund?", "hello there! can you help with an order?"],
 )
 def test_widget_ai_does_not_treat_requests_as_standalone_greetings(message):
     assert widget_greeting_reply(message) is None
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("Where is my order #1001?", ORDER_VERIFICATION_MESSAGE),
+        ("Please cancel my order", ORDER_ACTION_REPLY),
+        ("I want a refund", REFUND_ACTION_REPLY),
+        ("Can you change my account address?", ACCOUNT_HELP_REPLY),
+    ],
+)
+def test_widget_sensitive_requests_get_contextual_safe_next_steps(message, expected):
+    result = widget_sensitive_reply(message)
+    assert result is not None
+    assert result[0] == expected
+
+
+def test_widget_missing_knowledge_replies_are_specific_to_the_question_type():
+    product = widget_missing_knowledge_reply("Is this product available in blue?")
+    policy = widget_missing_knowledge_reply("What is your return policy?")
+    general = widget_missing_knowledge_reply("Can you help me with something?")
+    assert "Which item" in product
+    assert "exact policy" in policy
+    assert "more detail" in general
+    assert len({product, policy, general}) == 3
+
+
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        ("What is my order status?", None),
+        ("Where is order #1004?", "1004"),
+        ("Can you check order number 1004?", "1004"),
+    ],
+)
+def test_verified_order_followups_only_select_an_explicit_order_number(question, expected):
+    assert _question_order_number(question) == expected
+
+
+def test_widget_order_verification_requires_order_email_and_six_digit_code():
+    assert WidgetOrderVerificationStart(order_number="#1001", email="shopper@example.com", consent=True)
+    assert WidgetOrderVerificationCode(code="042681").code == "042681"
+    with pytest.raises(ValidationError):
+        WidgetOrderVerificationCode(code="123")

@@ -7,11 +7,12 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import and_, func, or_, select, tuple_
+from sqlalchemy import and_, exists, func, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models import (
+    CommerceAction,
     Conversation,
     ConversationReadState,
     Customer,
@@ -79,6 +80,8 @@ class InboxRepository:
         scope: str,
         status: str | None,
         priority: str | None,
+        needs_approval: bool,
+        unread_only: bool,
         search: str | None,
         limit: int,
         cursor: str | None,
@@ -87,6 +90,8 @@ class InboxRepository:
             "scope": scope,
             "status": status,
             "priority": priority,
+            "needs_approval": str(needs_approval),
+            "unread_only": str(unread_only),
             "search": search.strip().casefold() if search else None,
         }
         fingerprint = _filter_fingerprint(filters)
@@ -181,6 +186,18 @@ class InboxRepository:
             conditions.append(Ticket.status == status)
         if priority:
             conditions.append(Ticket.priority == priority)
+        if needs_approval:
+            conditions.append(
+                exists(
+                    select(CommerceAction.id).where(
+                        CommerceAction.organization_id == organization_id,
+                        CommerceAction.ticket_id == Ticket.id,
+                        CommerceAction.approval_status == "pending",
+                    )
+                )
+            )
+        if unread_only:
+            conditions.append(func.coalesce(unread_counts.c.unread_count, 0) > 0)
         if search:
             term = f"%{search.strip()}%"
             conditions.append(

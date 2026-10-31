@@ -16,6 +16,11 @@ class ConversationOut(TimestampedOut):
     ticket_id: uuid.UUID
     channel: str
     status: str
+    ai_mode: Literal["ai", "human"]
+
+
+class ConversationAIModeUpdate(BaseModel):
+    mode: Literal["ai", "human"]
 
 
 class MessageCreate(BaseModel):

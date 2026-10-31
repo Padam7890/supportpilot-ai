@@ -90,6 +90,11 @@ test("register, create customer and ticket, assign an agent, and exchange a mess
   await page.getByRole("button", { name: /Taylor Customer.*Where is my order\?/ }).click();
   await page.getByRole("button", { name: "Assign to me" }).click();
   await expect(page.getByRole("button", { name: "Assign to me" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Unread", exact: true }).click();
+  await expect(page.getByText("No tickets match")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Select a ticket" })).toBeVisible();
+  await page.getByRole("button", { name: "All", exact: true }).click();
+  await page.getByRole("button", { name: /Taylor Customer.*Where is my order\?/ }).click();
   await page.getByRole("link", { name: "Tickets" }).click();
   await page.getByRole("link", { name: "Where is my order?" }).click();
   await page.getByRole("button", { name: "Search workspace" }).click();

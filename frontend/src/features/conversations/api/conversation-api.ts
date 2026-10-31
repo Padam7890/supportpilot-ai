@@ -16,3 +16,5 @@ export const sendMessage = (conversationId: string, values: SendMessageValues) =
   api<Message>(`/conversations/${conversationId}/messages`, { method: "POST", body: JSON.stringify(values) });
 export const sendInternalNote = (conversationId: string, content: string) =>
   api<Message>(`/conversations/${conversationId}/notes`, { method: "POST", body: JSON.stringify({ content }) });
+export const updateConversationAIMode = (conversationId: string, mode: "ai" | "human") =>
+  api<Conversation>(`/conversations/${conversationId}/ai-mode`, { method: "PATCH", body: JSON.stringify({ mode }) });

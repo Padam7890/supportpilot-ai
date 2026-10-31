@@ -397,6 +397,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/conversations/{conversation_id}/ai-mode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Conversation Ai Mode */
+        patch: operations["update_conversation_ai_mode_api_v1_conversations__conversation_id__ai_mode_patch"];
+        trace?: never;
+    };
     "/api/v1/conversations/{conversation_id}/messages": {
         parameters: {
             query?: never;
@@ -1130,6 +1147,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/widget/conversations/{conversation_id}/cancellation-request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Request Widget Order Cancellation */
+        post: operations["request_widget_order_cancellation_api_v1_widget_conversations__conversation_id__cancellation_request_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/widget/conversations/{conversation_id}/messages": {
         parameters: {
             query?: never;
@@ -1141,6 +1175,40 @@ export interface paths {
         put?: never;
         /** Continue Widget Conversation */
         post: operations["continue_widget_conversation_api_v1_widget_conversations__conversation_id__messages_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/widget/conversations/{conversation_id}/order-verification": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Widget Order Verification */
+        post: operations["start_widget_order_verification_api_v1_widget_conversations__conversation_id__order_verification_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/widget/conversations/{conversation_id}/order-verification/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Confirm Widget Order Verification */
+        post: operations["confirm_widget_order_verification_api_v1_widget_conversations__conversation_id__order_verification_confirm_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1576,11 +1644,8 @@ export interface components {
             refund_amount: string | null;
             /** Requested By Name */
             requested_by_name: string;
-            /**
-             * Requested By User Id
-             * Format: uuid
-             */
-            requested_by_user_id: string;
+            /** Requested By User Id */
+            requested_by_user_id: string | null;
             /** Reviewed At */
             reviewed_at: string | null;
             /** Reviewed By Name */
@@ -1611,6 +1676,14 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** ConversationAIModeUpdate */
+        ConversationAIModeUpdate: {
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "ai" | "human";
+        };
         /** ConversationCreate */
         ConversationCreate: {
             /**
@@ -1621,6 +1694,11 @@ export interface components {
         };
         /** ConversationOut */
         ConversationOut: {
+            /**
+             * Ai Mode
+             * @enum {string}
+             */
+            ai_mode: "ai" | "human";
             /** Channel */
             channel: string;
             /**
@@ -2259,6 +2337,16 @@ export interface components {
         };
         /** PublicWidgetConfigOut */
         PublicWidgetConfigOut: {
+            /**
+             * Ai Enabled
+             * @default false
+             */
+            ai_enabled: boolean;
+            /**
+             * Assistant Name
+             * @default SupportPilot AI
+             */
+            assistant_name: string;
             /** Collect Contact */
             collect_contact: boolean;
             /** Store Name */
@@ -2713,6 +2801,11 @@ export interface components {
              */
             updated_at: string;
         };
+        /** WidgetCancellationRequest */
+        WidgetCancellationRequest: {
+            /** Reason */
+            reason: string;
+        };
         /** WidgetConfigCreate */
         WidgetConfigCreate: {
             /**
@@ -2790,12 +2883,22 @@ export interface components {
         /** WidgetConversationOut */
         WidgetConversationOut: {
             /**
+             * Ai Mode
+             * @default human
+             */
+            ai_mode: string;
+            /**
              * Conversation Id
              * Format: uuid
              */
             conversation_id: string;
             /** Messages */
             messages: components["schemas"]["WidgetMessageOut"][];
+            /**
+             * Order Verified
+             * @default false
+             */
+            order_verified: boolean;
         };
         /** WidgetFirstMessage */
         WidgetFirstMessage: {
@@ -2836,6 +2939,43 @@ export interface components {
             id: string;
             /** Sender Type */
             sender_type: string;
+        };
+        /** WidgetOrderVerificationCode */
+        WidgetOrderVerificationCode: {
+            /** Code */
+            code: string;
+        };
+        /** WidgetOrderVerificationOut */
+        WidgetOrderVerificationOut: {
+            /** Financial Status */
+            financial_status?: string | null;
+            /** Fulfillment Status */
+            fulfillment_status?: string | null;
+            /** Message */
+            message: string;
+            /** Order Number */
+            order_number?: string | null;
+            /** Tracking */
+            tracking?: {
+                [key: string]: string | null;
+            }[];
+            /**
+             * Verified
+             * @default false
+             */
+            verified: boolean;
+        };
+        /** WidgetOrderVerificationStart */
+        WidgetOrderVerificationStart: {
+            /** Consent */
+            consent: boolean;
+            /**
+             * Email
+             * Format: email
+             */
+            email: string;
+            /** Order Number */
+            order_number: string;
         };
         /** WidgetStartOut */
         WidgetStartOut: {
@@ -5603,6 +5743,122 @@ export interface operations {
             };
         };
     };
+    update_conversation_ai_mode_api_v1_conversations__conversation_id__ai_mode_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConversationAIModeUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationOut"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
     list_messages_api_v1_conversations__conversation_id__messages_get: {
         parameters: {
             query?: never;
@@ -6863,6 +7119,8 @@ export interface operations {
                 scope?: string;
                 status?: string | null;
                 priority?: string | null;
+                needs_approval?: boolean;
+                unread_only?: boolean;
                 search?: string | null;
                 limit?: number;
                 cursor?: string | null;
@@ -11494,6 +11752,44 @@ export interface operations {
             };
         };
     };
+    request_widget_order_cancellation_api_v1_widget_conversations__conversation_id__cancellation_request_post: {
+        parameters: {
+            query?: never;
+            header: {
+                authorization?: string | null;
+                "Idempotency-Key": string;
+            };
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WidgetCancellationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WidgetOrderVerificationOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     continue_widget_conversation_api_v1_widget_conversations__conversation_id__messages_post: {
         parameters: {
             query?: never;
@@ -11519,6 +11815,80 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WidgetMessageOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_widget_order_verification_api_v1_widget_conversations__conversation_id__order_verification_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WidgetOrderVerificationStart"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WidgetOrderVerificationOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirm_widget_order_verification_api_v1_widget_conversations__conversation_id__order_verification_confirm_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WidgetOrderVerificationCode"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WidgetOrderVerificationOut"];
                 };
             };
             /** @description Validation Error */

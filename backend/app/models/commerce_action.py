@@ -15,6 +15,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     Uuid,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -103,13 +104,20 @@ class CommerceAction(TimestampMixin, UUIDPrimaryKey, Base):
             "created_at",
             "id",
         ),
+        Index(
+            "uq_commerce_actions_pending_shopify_cancel_order",
+            "organization_id",
+            "shopify_order_id",
+            unique=True,
+            postgresql_where=text("provider = 'shopify' AND action_type = 'cancel' AND approval_status = 'pending'"),
+        ),
     )
 
     organization_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
     )
     ticket_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
-    requested_by_user_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    requested_by_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
     action_type: Mapped[str] = mapped_column(String(16), nullable=False)
     provider: Mapped[str] = mapped_column(String(16), default="mock", nullable=False)
     shopify_order_id: Mapped[str] = mapped_column(String(120), nullable=False)

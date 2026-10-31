@@ -84,9 +84,19 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const links = canManage ? [...navigation, { href: "/dashboard/settings", label: "Settings & team", icon: Building2 }] : navigation;
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
+    <div className={isInbox ? "flex h-dvh overflow-hidden bg-[#f5f6f8] text-slate-900" : "min-h-screen bg-slate-50 text-slate-900"}>
       {mobileOpen && <button aria-label="Close navigation" className="fixed inset-0 z-30 bg-slate-950/40 lg:hidden" onClick={() => setMobileOpen(false)} />}
-      <aside className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-slate-200 bg-white transition-transform lg:translate-x-0 ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}>
+      {isInbox ? <aside aria-label="Workspace navigation" className="z-30 flex h-full w-[58px] shrink-0 flex-col items-center bg-[#171922] py-3 text-slate-400 shadow-lg sm:w-16">
+        <Link href="/dashboard/inbox" title="SupportPilot Inbox" aria-label="SupportPilot Inbox" className="mb-5 grid size-10 place-items-center rounded-xl bg-indigo-500 text-lg font-black text-white shadow-md">S</Link>
+        <nav aria-label="Main navigation" className="flex flex-1 flex-col items-center gap-1.5">
+          {links.map(({ href, label, icon: Icon, exact }) => {
+            const active = exact ? pathname === href : pathname.startsWith(href);
+            return <Link key={href} href={href} title={label} aria-label={label} aria-current={active ? "page" : undefined} className={`relative grid size-10 place-items-center rounded-xl transition ${active ? "bg-[#292c39] text-white" : "text-slate-400 hover:bg-[#222530] hover:text-white"}`}><Icon size={19}/>{active && <span className="absolute -left-3 h-5 w-1 rounded-r-full bg-indigo-400"/>}</Link>;
+          })}
+        </nav>
+        <button onClick={toggleTheme} title={dark ? "Switch to light theme" : "Switch to dark theme"} aria-label={dark ? "Switch to light theme" : "Switch to dark theme"} className="mb-1 grid size-10 place-items-center rounded-xl text-slate-400 hover:bg-[#222530] hover:text-white">{dark ? <Sun size={18}/> : <Moon size={18}/>}</button>
+        <button title={`Sign out ${user.email}`} aria-label="Sign out" onClick={() => logout.mutate()} className="grid size-10 place-items-center rounded-xl text-slate-400 hover:bg-[#222530] hover:text-white"><LogOut size={18}/></button>
+      </aside> : <aside className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-slate-200 bg-white transition-transform lg:translate-x-0 ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}>
         <div className="flex h-20 items-center gap-3 px-6">
           <span className="flex size-10 items-center justify-center rounded-2xl bg-blue-700 font-black text-white">S</span>
           <span><span className="block font-bold tracking-tight">SupportPilot</span><span className="text-xs text-slate-500">Support workspace</span></span>
@@ -112,9 +122,9 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             <button title="Sign out" onClick={() => logout.mutate()} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100" aria-label="Sign out"><LogOut size={17}/></button>
           </div>
         </div>
-      </aside>
-      <div className="lg:pl-64">
-        <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-slate-200 bg-white/90 px-4 backdrop-blur sm:px-8">
+      </aside>}
+      <div className={isInbox ? "min-w-0 flex-1" : "lg:pl-64"}>
+        {!isInbox && <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-slate-200 bg-white/90 px-4 backdrop-blur sm:px-8">
           <button aria-label="Open navigation" onClick={() => setMobileOpen(true)} className="rounded-xl p-2 text-slate-600 hover:bg-slate-100 lg:hidden"><Menu size={20}/></button>
           <div role="status" aria-live="polite" className="hidden items-center gap-2 text-sm text-slate-500 sm:flex">
             <Activity size={16} className={readiness.isSuccess ? "text-emerald-500" : readiness.isError ? "text-amber-500" : "animate-pulse text-slate-400"}/>
@@ -122,8 +132,8 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           </div>
           <div className="ml-3"><CommandSearch/></div>
           <div className="ml-auto flex items-center gap-2 sm:gap-3"><span className="hidden text-sm text-slate-500 md:block">{user.email}</span><button onClick={toggleTheme} aria-label={dark ? "Switch to light theme" : "Switch to dark theme"} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100">{dark ? <Sun size={18}/> : <Moon size={18}/>}</button><Button size="sm" variant="ghost" onClick={() => logout.mutate()}>Sign out</Button></div>
-        </header>
-        <main className={isInbox ? "w-full p-0" : "mx-auto max-w-7xl p-4 sm:p-7 lg:p-9"}>{children}</main>
+        </header>}
+        <main className={isInbox ? "h-dvh w-full overflow-hidden p-0" : "mx-auto max-w-7xl p-4 sm:p-7 lg:p-9"}>{children}</main>
       </div>
     </div>
   );

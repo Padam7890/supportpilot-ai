@@ -1,14 +1,16 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_roles
 from app.db.session import get_db
-from app.models import User
+from app.models import Conversation, SupportWidget, User
 from app.repositories.conversation import ConversationRepository
 from app.repositories.ticket import TicketRepository
 from app.schemas.conversation import (
+    ConversationAIModeUpdate,
     ConversationCreate,
     ConversationOut,
     InternalNoteCreate,
@@ -19,6 +21,38 @@ from app.schemas.errors import COMMON_ERROR_RESPONSES
 from app.services.conversation import ConversationService
 
 router = APIRouter(tags=["conversations"], responses=COMMON_ERROR_RESPONSES)
+
+
+@router.patch("/conversations/{conversation_id}/ai-mode", response_model=ConversationOut)
+async def update_conversation_ai_mode(
+    conversation_id: UUID,
+    data: ConversationAIModeUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_roles("owner", "admin", "agent")),
+) -> ConversationOut:
+    conversation = await db.scalar(
+        select(Conversation)
+        .where(
+            Conversation.id == conversation_id,
+            Conversation.organization_id == user.organization_id,
+            Conversation.channel == "shopify_widget",
+        )
+        .with_for_update()
+    )
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Widget conversation not found")
+    if data.mode == "ai":
+        widget = await db.scalar(
+            select(SupportWidget).where(SupportWidget.organization_id == user.organization_id)
+        )
+        if widget is None or not widget.enabled or not widget.ai_enabled:
+            raise HTTPException(
+                status_code=409,
+                detail="Enable widget AI in Settings before switching this conversation to AI mode",
+            )
+    conversation.ai_mode = data.mode
+    await db.flush()
+    return ConversationOut.model_validate(conversation)
 
 
 def service(db: AsyncSession) -> ConversationService:

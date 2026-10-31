@@ -2,7 +2,7 @@ import { api } from "@/lib/api/client";
 import type { components } from "@/lib/api/generated";
 import { mapInboxItem, type InboxScope, type InboxWirePage } from "../types/inbox.types";
 
-export type InboxFilters = { scope: InboxScope; status: string; priority: string; search: string };
+export type InboxFilters = { scope: InboxScope; status: string; priority: string; search: string; needsApproval: boolean; unreadOnly: boolean };
 export type InboxPage = { items: ReturnType<typeof mapInboxItem>[]; limit: number; nextCursor: string | null };
 
 export const inboxQueryKeys = {
@@ -15,6 +15,8 @@ export async function getInbox(filters: InboxFilters, cursor?: string): Promise<
   const params = new URLSearchParams({ scope: filters.scope, limit: "30" });
   if (filters.status) params.set("status", filters.status);
   if (filters.priority) params.set("priority", filters.priority);
+  if (filters.needsApproval) params.set("needs_approval", "true");
+  if (filters.unreadOnly) params.set("unread_only", "true");
   if (filters.search.trim()) params.set("search", filters.search.trim());
   if (cursor) params.set("cursor", cursor);
   const page = await api<InboxWirePage>(`/inbox?${params.toString()}`);

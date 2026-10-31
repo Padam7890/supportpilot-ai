@@ -31,6 +31,31 @@ def has_read_only_migration_ledger_privileges(
     return can_select and not any((can_insert, can_update, can_delete, can_truncate))
 
 
+def has_safe_widget_policies(policies: list[dict[str, str | None]]) -> bool:
+    """Validate the public widget lookup policy and tenant-scoped write policies."""
+    by_name = {policy["policyname"]: policy for policy in policies}
+    public_read = by_name.get("support_widgets_public_read", {}).get("qual") or ""
+    public_read_normalized = re.sub(r"\s+", " ", public_read).lower()
+    if not (
+        "enabled = true" in public_read_normalized
+        and " or " in public_read_normalized
+        and "current_setting('app.current_tenant'" in public_read_normalized
+        and "organization_id" in public_read_normalized
+    ):
+        return False
+
+    insert_policy = by_name.get("support_widgets_tenant_insert", {})
+    update_policy = by_name.get("support_widgets_tenant_update", {})
+    delete_policy = by_name.get("support_widgets_tenant_delete", {})
+    return (
+        insert_policy.get("qual") is None
+        and is_tenant_scoped_policy(insert_policy.get("with_check"))
+        and is_tenant_scoped_policy(update_policy.get("qual"))
+        and is_tenant_scoped_policy(update_policy.get("with_check"))
+        and is_tenant_scoped_policy(delete_policy.get("qual"))
+    )
+
+
 async def main() -> None:
     database_url = os.environ.get("DATABASE_URL")
     if not database_url:
@@ -110,19 +135,40 @@ async def main() -> None:
                 "document_ingestion_jobs", "ai_executions", "ai_evaluations",
                 "shopify_installations", "shopify_oauth_states", "shopify_access_audit",
                 "commerce_actions", "commerce_action_audits",
+                "support_widgets", "widget_order_verifications", "widget_submissions",
             }
             actual_tables = {row.relname for row in rls_tables}
             if actual_tables != expected_tables:
                 raise RuntimeError(
                     f"Expected tenant tables {sorted(expected_tables)}, found {sorted(actual_tables)}"
                 )
+            widget_policies = (
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT policyname, qual, with_check FROM pg_policies "
+                            "WHERE schemaname = 'public' AND tablename = 'support_widgets'"
+                        )
+                    )
+                ).mappings().all()
+            )
+            if not has_safe_widget_policies([dict(policy) for policy in widget_policies]):
+                raise RuntimeError(
+                    "Support widget RLS policies must limit public reads to enabled widgets "
+                    "and tenant-scope all write policies"
+                )
             unsafe_tables = [
                 row.relname
                 for row in rls_tables
                 if not row.relrowsecurity
                 or not row.relforcerowsecurity
-                or not is_tenant_scoped_policy(row.tenant_using)
-                or not is_tenant_scoped_policy(row.tenant_with_check)
+                or (
+                    row.relname != "support_widgets"
+                    and (
+                        not is_tenant_scoped_policy(row.tenant_using)
+                        or not is_tenant_scoped_policy(row.tenant_with_check)
+                    )
+                )
             ]
             if unsafe_tables:
                 raise RuntimeError(

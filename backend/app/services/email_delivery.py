@@ -1,10 +1,18 @@
 """Minimal SMTP delivery for transactional verification messages."""
 
 import asyncio
+import json
+import logging
 import smtplib
 from email.message import EmailMessage
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
+
+
+def _log_email_event(level: int, event: str, **fields: object) -> None:
+    logger.log(level, "transactional_email %s", json.dumps({"event": event, **fields}, sort_keys=True))
 
 
 def smtp_is_configured() -> bool:
@@ -15,28 +23,64 @@ def _send_sync(message: EmailMessage) -> None:
     host = settings.email_smtp_host
     if not host:
         raise RuntimeError("SMTP is not configured")
-    if settings.email_use_ssl:
-        with smtplib.SMTP_SSL(host, settings.email_smtp_port, timeout=15) as client:
+    stage = "connect"
+    _log_email_event(
+        logging.INFO,
+        "smtp_connecting",
+        email_kind="shopify_order_verification",
+        smtp_host=host,
+        smtp_port=settings.email_smtp_port,
+        smtp_tls_mode="implicit_tls" if settings.email_use_ssl else "starttls",
+    )
+    try:
+        smtp_class = smtplib.SMTP_SSL if settings.email_use_ssl else smtplib.SMTP
+        with smtp_class(host, settings.email_smtp_port, timeout=15) as client:
+            if not settings.email_use_ssl:
+                stage = "starttls"
+                client.starttls()
             if settings.email_smtp_username:
+                stage = "authentication"
                 client.login(
                     settings.email_smtp_username,
                     settings.email_smtp_password.get_secret_value() if settings.email_smtp_password else "",
                 )
+            stage = "send_message"
             client.send_message(message)
-    else:
-        with smtplib.SMTP(host, settings.email_smtp_port, timeout=15) as client:
-            client.starttls()
-            if settings.email_smtp_username:
-                client.login(
-                    settings.email_smtp_username,
-                    settings.email_smtp_password.get_secret_value() if settings.email_smtp_password else "",
-                )
-            client.send_message(message)
+        _log_email_event(
+            logging.INFO,
+            "smtp_accepted",
+            email_kind="shopify_order_verification",
+            smtp_host=host,
+            smtp_port=settings.email_smtp_port,
+        )
+    except Exception as exc:  # Do not log SMTP response text, addresses, or credentials.
+        _log_email_event(
+            logging.ERROR,
+            "smtp_failed",
+            email_kind="shopify_order_verification",
+            smtp_host=host,
+            smtp_port=settings.email_smtp_port,
+            smtp_stage=stage,
+            error_type=type(exc).__name__,
+        )
+        raise
 
 
 async def send_order_verification_code(email: str, code: str) -> None:
     if not smtp_is_configured():
+        _log_email_event(
+            logging.ERROR,
+            "smtp_not_configured",
+            email_kind="shopify_order_verification",
+            smtp_host_present=bool(settings.email_smtp_host),
+            from_address_present=bool(settings.email_from_address),
+            smtp_username_present=bool(settings.email_smtp_username),
+            smtp_password_present=bool(settings.email_smtp_password),
+            smtp_port=settings.email_smtp_port,
+            smtp_ssl=settings.email_use_ssl,
+        )
         raise RuntimeError("Transactional email is not configured")
+    _log_email_event(logging.INFO, "send_requested", email_kind="shopify_order_verification")
     message = EmailMessage()
     message["Subject"] = "Your SupportPilot order verification code"
     message["From"] = settings.email_from_address
