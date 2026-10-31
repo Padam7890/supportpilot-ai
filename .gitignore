@@ -1,0 +1,39 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+*.egg-info/
+
+# Node
+node_modules/
+.next/
+out/
+dist/
+npm-debug.log*
+
+# Docker
+*.log
+
+# IDE
+.idea/
+.vscode/
+.DS_Store
+
+# Testing
+.coverage
+htmlcov/
+
+# Temporary files
+*.tmp
+*.swp
