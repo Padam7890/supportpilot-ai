@@ -4,15 +4,21 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, BarChart3, BookOpen, Building2, CircleHelp, Inbox, LogOut, Menu, Moon, Sun, Users, X } from "lucide-react";
+import { Activity, BarChart3, BookOpen, Building2, CircleHelp, Inbox, LogOut, Menu, Moon, PackageSearch, ShieldCheck, Sparkles, Sun, Users, X } from "lucide-react";
 import { getCurrentUser, currentUserQueryKey, logout as logoutRequest } from "@/features/auth/api/auth-api";
 import { getSystemReadiness } from "@/features/dashboard/api/system-status-api";
 import { Button } from "@/components/ui/button";
+import { CommandSearch } from "@/features/search/components/command-search";
 
 const navigation = [
   { href: "/dashboard", label: "Overview", icon: BarChart3, exact: true },
   { href: "/dashboard/inbox", label: "Inbox", icon: Inbox },
   { href: "/dashboard/knowledge", label: "Knowledge", icon: BookOpen },
+  { href: "/dashboard/ai", label: "AI Playground", icon: Sparkles },
+  { href: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },
+  { href: "/dashboard/operations", label: "Operations", icon: Activity },
+  { href: "/dashboard/security", label: "Security", icon: ShieldCheck },
+  { href: "/dashboard/orders", label: "Shopify orders", icon: PackageSearch },
   { href: "/dashboard/tickets", label: "Tickets", icon: Inbox },
   { href: "/dashboard/customers", label: "Customers", icon: Users },
 ];
@@ -114,6 +120,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             <Activity size={16} className={readiness.isSuccess ? "text-emerald-500" : readiness.isError ? "text-amber-500" : "animate-pulse text-slate-400"}/>
             {readiness.isSuccess ? "Core services ready" : readiness.isError ? "System status unavailable" : "Checking system status…"}
           </div>
+          <div className="ml-3"><CommandSearch/></div>
           <div className="ml-auto flex items-center gap-2 sm:gap-3"><span className="hidden text-sm text-slate-500 md:block">{user.email}</span><button onClick={toggleTheme} aria-label={dark ? "Switch to light theme" : "Switch to dark theme"} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100">{dark ? <Sun size={18}/> : <Moon size={18}/>}</button><Button size="sm" variant="ghost" onClick={() => logout.mutate()}>Sign out</Button></div>
         </header>
         <main className={isInbox ? "w-full p-0" : "mx-auto max-w-7xl p-4 sm:p-7 lg:p-9"}>{children}</main>

@@ -18,7 +18,7 @@ From the repository root, the local Compose migration job uses the privileged
 migration role:
 
 ```bash
-docker compose run --rm migrate
+docker compose run --build --rm migrate
 ```
 
 The migration validates tenant relationships before creating composite foreign

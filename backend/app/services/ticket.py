@@ -61,7 +61,7 @@ class TicketService:
                     User.id == changes["assignee_id"],
                     User.organization_id == organization_id,
                     User.is_active.is_(True),
-                    User.role.in_(("admin", "agent")),
+                    User.role.in_(("owner", "admin", "agent")),
                 )
             )
             if result.scalar_one_or_none() is None:

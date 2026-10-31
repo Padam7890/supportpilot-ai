@@ -2,12 +2,14 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class IngestionJobOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: uuid.UUID
-    status: Literal["queued", "running", "succeeded", "failed"]
+    status: Literal["queued", "running", "succeeded", "failed", "cancelled"]
     attempt_count: int
     max_attempts: int
     next_attempt_at: datetime
@@ -25,6 +27,7 @@ class KnowledgeDocumentOut(BaseModel):
     status: Literal["queued", "processing", "ready", "failed"]
     created_at: datetime
     updated_at: datetime
+    deleted_at: datetime | None = None
     jobs: list[IngestionJobOut]
 
 

@@ -30,6 +30,21 @@ class RefreshRequest(BaseModel):
     refresh_token: str = Field(min_length=20, max_length=4096)
 
 
+class SessionOut(BaseModel):
+    id: uuid.UUID
+    created_at: datetime
+    expires_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SessionPage(BaseModel):
+    items: list[SessionOut]
+    total: int
+    limit: int
+    offset: int
+
+
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID

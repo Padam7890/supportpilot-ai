@@ -13,7 +13,7 @@ import { formatDate } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
-import { getCustomer, listCustomerTickets, updateCustomer } from "../api/customer-api";
+import { getCustomer, getCustomerMessageHistory, listCustomerTickets, updateCustomer } from "../api/customer-api";
 import { updateCustomerSchema } from "../schemas/customer.schema";
 
 export default function CustomerDetailPage() {
@@ -22,6 +22,7 @@ export default function CustomerDetailPage() {
   const queryClient = useQueryClient();
   const customer = useQuery({ queryKey: ["customer", id], queryFn: () => getCustomer(id) });
   const tickets = useQuery({ queryKey: ["customer-tickets", id], queryFn: () => listCustomerTickets(id) });
+  const history = useQuery({ queryKey: ["customer-message-history", id], queryFn: () => getCustomerMessageHistory(id) });
   const form = useForm<z.infer<typeof updateCustomerSchema>>({ resolver: zodResolver(updateCustomerSchema) });
   useEffect(() => {
     if (customer.data) form.reset({ name: customer.data.name, email: customer.data.email, phone: customer.data.phone ?? "", external_reference: customer.data.external_reference ?? "" });
@@ -51,6 +52,10 @@ export default function CustomerDetailPage() {
           {tickets.isPending ? <div className="h-40 animate-pulse rounded-xl bg-slate-100"/> : tickets.isError ? <p role="alert" className="text-sm text-red-700">Unable to load ticket history.</p> : tickets.data?.items.length ? <div className="divide-y divide-slate-100">{tickets.data.items.map((ticket) => <Link key={ticket.id} href={`/dashboard/tickets/${ticket.id}`} className="flex items-center gap-3 py-4 first:pt-0 last:pb-0"><span className="grid size-10 place-items-center rounded-xl bg-blue-50 text-blue-700"><TicketIcon size={18}/></span><span className="min-w-0 flex-1"><span className="block truncate font-semibold text-slate-900">{ticket.subject}</span><span className="mt-1 block text-xs capitalize text-slate-500">{ticket.status} · {ticket.priority} priority · {formatDate(ticket.created_at)}</span></span><span className="text-blue-700">→</span></Link>)}</div> : <div className="rounded-xl bg-slate-50 p-7 text-center"><TicketIcon size={25} className="mx-auto text-slate-300"/><p className="mt-2 text-sm font-medium text-slate-700">No tickets yet</p></div>}
         </PanelBody></Panel>
       </div>
+      <Panel><PanelHeader title="Recent message history" description="Earlier customer and teammate messages across this customer’s conversations."/><PanelBody>
+        {history.isPending ? <div className="h-28 animate-pulse rounded-xl bg-slate-100"/> : history.isError ? <p role="alert" className="text-sm text-red-700">Message history could not be loaded.</p> : history.data?.items.length ? <div className="divide-y divide-slate-100">{history.data.items.map((message) => <article key={message.id} className="py-4 first:pt-0 last:pb-0"><div className="flex flex-wrap items-center justify-between gap-2"><Link href={`/dashboard/tickets/${message.ticket_id}`} className="text-sm font-semibold text-blue-700 hover:underline">{message.ticket_subject}</Link><time className="text-xs text-slate-400">{formatDate(message.created_at)}</time></div><p className="mt-1 text-xs text-slate-500">{message.sender_name ?? (message.sender_type === "customer" ? customer.data.name : "SupportPilot")} · {message.sender_type === "customer" ? "Customer" : "Team reply"}</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">{message.content}</p></article>)}</div> : <p className="rounded-xl bg-slate-50 p-6 text-center text-sm text-slate-500">No earlier conversation messages yet.</p>}
+        {history.data && history.data.total > history.data.items.length && <p className="mt-4 text-center text-xs text-slate-500">Showing the latest {history.data.items.length} of {history.data.total} messages.</p>}
+      </PanelBody></Panel>
       <div className="flex flex-wrap gap-3 text-xs text-slate-500"><span className="inline-flex items-center gap-1.5"><Mail size={14}/>{customer.data.email}</span>{customer.data.phone && <span className="inline-flex items-center gap-1.5"><Phone size={14}/>{customer.data.phone}</span>}</div>
     </div>
   );

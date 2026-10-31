@@ -2,8 +2,8 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select, update
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +26,8 @@ from app.schemas.auth import (
     RefreshRequest,
     RegisterRequest,
     RegistrationPendingOut,
+    SessionOut,
+    SessionPage,
     TokenOut,
     UserOut,
 )
@@ -115,7 +117,7 @@ async def login(data: LoginRequest, request: Request, db: AsyncSession = Depends
     await limit_auth_attempts(
         request,
         f"{data.organization_slug}:{data.email}",
-        limit=10,
+        limit=20,
         window_seconds=900,
     )
     org_result = await db.execute(
@@ -219,3 +221,54 @@ async def current_user(user: User = Depends(get_current_user)) -> CurrentUserOut
             id=organization.id, name=organization.name, slug=organization.slug
         ),
     )
+
+
+@router.get("/sessions", response_model=SessionPage)
+async def list_sessions(
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> SessionPage:
+    now = datetime.now(UTC)
+    predicate = (
+        RefreshSession.organization_id == user.organization_id,
+        RefreshSession.user_id == user.id,
+        RefreshSession.revoked_at.is_(None),
+        RefreshSession.expires_at > now,
+    )
+    total = await db.scalar(select(func.count()).select_from(RefreshSession).where(*predicate)) or 0
+    rows = await db.scalars(
+        select(RefreshSession)
+        .where(*predicate)
+        .order_by(RefreshSession.created_at.desc(), RefreshSession.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    return SessionPage(
+        items=[SessionOut.model_validate(row) for row in rows],
+        total=int(total),
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_session(
+    session_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> None:
+    session = await db.scalar(
+        select(RefreshSession)
+        .where(
+            RefreshSession.id == session_id,
+            RefreshSession.organization_id == user.organization_id,
+            RefreshSession.user_id == user.id,
+            RefreshSession.revoked_at.is_(None),
+        )
+        .with_for_update()
+    )
+    if session is None:
+        raise HTTPException(status_code=404, detail="Active session not found")
+    session.revoked_at = datetime.now(UTC)

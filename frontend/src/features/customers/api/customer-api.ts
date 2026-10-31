@@ -1,5 +1,5 @@
 import { api } from "@/lib/api/client";
-import type { Customer } from "../types/customer.types";
+import type { Customer, CustomerMessageHistoryItem } from "../types/customer.types";
 import type { Ticket } from "@/features/tickets/types/ticket.types";
 import type { Page } from "@/types/pagination";
 import type { z } from "zod";
@@ -18,5 +18,7 @@ export const createCustomer = (values: z.infer<typeof createCustomerSchema>) =>
 export const getCustomer = (id: string) => api<Customer>(`/customers/${id}`);
 export const listCustomerTickets = (id: string) =>
   api<Page<Ticket>>(`/customers/${id}/tickets?limit=100`);
+export const getCustomerMessageHistory = (id: string) =>
+  api<Page<CustomerMessageHistoryItem>>(`/customers/${id}/history?limit=20`);
 export const updateCustomer = (id: string, values: z.infer<typeof updateCustomerSchema>) =>
   api<Customer>(`/customers/${id}`, { method: "PATCH", body: JSON.stringify(values) });

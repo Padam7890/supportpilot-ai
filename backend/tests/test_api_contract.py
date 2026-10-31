@@ -9,6 +9,28 @@ async def test_liveness(client):
 
 
 @pytest.mark.anyio
+async def test_readiness_reports_database_migration_drift(client, monkeypatch):
+    from app.core.database import DatabaseSchemaOutOfDate
+    from app.main import app
+
+    class RedisStub:
+        async def ping(self):
+            return True
+
+    async def stale_schema():
+        raise DatabaseSchemaOutOfDate("stale")
+
+    monkeypatch.setattr("app.main.check_database", stale_schema)
+    app.state.redis = RedisStub()
+    try:
+        response = await client.get("/health/ready")
+    finally:
+        del app.state.redis
+    assert response.status_code == 503
+    assert "Apply the latest Alembic migrations" in response.json()["detail"]
+
+
+@pytest.mark.anyio
 async def test_customer_api_requires_auth(client):
     response = await client.get("/api/v1/customers")
     assert response.status_code == 403 or response.status_code == 401

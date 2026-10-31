@@ -25,10 +25,13 @@ export default function TicketDetailPage() {
   const { id } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
   const [feedback, setFeedback] = useState("");
+  const [selectedConversationId, setSelectedConversationId] = useState("");
   const me = useQuery({ queryKey: ["me"], queryFn: getCurrentUser });
   const ticketQuery = useQuery({ queryKey: ["ticket", id], queryFn: () => getTicket(id) });
   const conversations = useQuery({ queryKey: ["conversations", id], queryFn: () => listConversations(id) });
-  const activeConversation = conversations.data?.[0];
+  const activeConversation = conversations.data?.length === 1
+    ? conversations.data[0]
+    : conversations.data?.find((conversation) => conversation.id === selectedConversationId);
   const messages = useQuery({
     queryKey: ["messages", activeConversation?.id],
     queryFn: () => listMessages(activeConversation!.id),
@@ -47,9 +50,10 @@ export default function TicketDetailPage() {
   });
   const startConversation = useMutation({
     mutationFn: () => startConversationRequest(id),
-    onSuccess: async () => { setFeedback("Conversation started."); await queryClient.invalidateQueries({ queryKey: ["conversations", id] }); },
+    onSuccess: async (conversation) => { setSelectedConversationId(conversation.id); setFeedback("Conversation started."); await queryClient.invalidateQueries({ queryKey: ["conversations", id] }); },
     onError: (error) => setFeedback(error instanceof ApiError ? error.message : "Could not start a conversation."),
   });
+
   const sendMessage = useMutation({
     mutationFn: (values: z.infer<typeof sendMessageSchema>) => sendMessageRequest(activeConversation!.id, values),
     onSuccess: async () => { form.reset(); await queryClient.invalidateQueries({ queryKey: ["messages", activeConversation?.id] }); },
@@ -68,7 +72,9 @@ export default function TicketDetailPage() {
       <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1.55fr)_minmax(300px,0.75fr)]">
         <div className="space-y-5">
           <Panel><PanelHeader title="Conversation" description="Messages exchanged about this support request" action={activeConversation ? <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">Active</span> : undefined}/><PanelBody>
-            {!activeConversation ? <div className="py-8 text-center"><MessageSquare size={27} className="mx-auto text-slate-300"/><p className="mt-3 font-semibold">No conversation yet</p><p className="mt-1 text-sm text-slate-500">Start the thread to begin replying to this customer.</p>{canWrite && <Button className="mt-4" onClick={() => startConversation.mutate()} disabled={startConversation.isPending}>{startConversation.isPending ? "Starting…" : "Start conversation"}</Button>}</div> : <>
+            {!activeConversation && conversations.data?.length === 0 ? <div className="py-8 text-center"><MessageSquare size={27} className="mx-auto text-slate-300"/><p className="mt-3 font-semibold">No conversation yet</p><p className="mt-1 text-sm text-slate-500">Start the thread to begin replying to this customer.</p>{canWrite && <Button className="mt-4" onClick={() => startConversation.mutate()} disabled={startConversation.isPending}>{startConversation.isPending ? "Starting…" : "Start conversation"}</Button>}</div> : null}
+            {!activeConversation && (conversations.data?.length ?? 0) > 1 && <div className="py-6"><p className="font-semibold">Choose a conversation</p><p className="mt-1 text-sm text-slate-500">Each conversation has its own message history.</p><div className="mt-4 space-y-2">{conversations.data?.map((conversation, index) => <button key={conversation.id} type="button" onClick={() => setSelectedConversationId(conversation.id)} className="flex w-full items-center justify-between rounded-xl border border-slate-200 p-3 text-left hover:border-blue-300 hover:bg-blue-50"><span><span className="block text-sm font-semibold">Conversation {conversations.data.length - index}</span><span className="text-xs text-slate-500">{conversation.channel} · {formatDateTime(conversation.updated_at)}</span></span><span className="text-blue-700">Open →</span></button>)}</div></div>}
+            {activeConversation && <>
               <div className="max-h-[440px] space-y-4 overflow-y-auto pr-1">
                 {messages.isPending && <div className="h-28 animate-pulse rounded-xl bg-slate-100"/>}
                 {messages.data?.map((message) => <div key={message.id} className={`flex ${message.sender_type === "agent" ? "justify-end" : "justify-start"}`}><div className={`max-w-[85%] rounded-2xl px-4 py-3 ${message.sender_type === "agent" ? "rounded-br-md bg-blue-700 text-white" : "rounded-bl-md bg-slate-100 text-slate-900"}`}><div className={`mb-1.5 flex items-center gap-2 text-xs ${message.sender_type === "agent" ? "text-blue-100" : "text-slate-500"}`}><span className="font-semibold">{message.sender_name ?? message.sender_type}</span><span>·</span><time>{formatDateTime(message.created_at)}</time></div><p className="whitespace-pre-wrap text-sm leading-6">{message.content}</p></div></div>)}
@@ -81,7 +87,7 @@ export default function TicketDetailPage() {
           <Panel><PanelHeader title="Description" description="The customer’s original request"/><PanelBody><p className="whitespace-pre-wrap text-sm leading-7 text-slate-700">{ticket.description || "No description provided."}</p></PanelBody></Panel>
         </div>
         <div className="space-y-5">
-          <Panel><PanelHeader title="Ticket details"/><PanelBody className="space-y-4"><Info label="Customer" value={ticket.customer_name ?? "Customer"}/><Info label="Created" value={formatDateTime(ticket.created_at)}/><Info label="Last updated" value={formatDateTime(ticket.updated_at)}/><div><label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-400" htmlFor="assignee">Assignee</label><Select id="assignee" value={ticket.assignee_id ?? ""} disabled={!canAssign || update.isPending} onChange={(event) => update.mutate({ assignee_id: event.target.value || null })}><option value="">Unassigned</option>{members.data?.filter((member) => member.is_active && ["admin", "agent"].includes(member.role)).map((member) => <option key={member.id} value={member.id}>{member.full_name} · {member.role}</option>)}</Select>{!canAssign && <p className="mt-1 text-xs text-slate-400">Only owners and admins can assign tickets.</p>}</div></PanelBody></Panel>
+          <Panel><PanelHeader title="Ticket details"/><PanelBody className="space-y-4"><Info label="Customer" value={ticket.customer_name ?? "Customer"}/><Info label="Created" value={formatDateTime(ticket.created_at)}/><Info label="Last updated" value={formatDateTime(ticket.updated_at)}/><div><label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-400" htmlFor="assignee">Assignee</label><Select id="assignee" value={ticket.assignee_id ?? ""} disabled={!canAssign || update.isPending} onChange={(event) => update.mutate({ assignee_id: event.target.value || null })}><option value="">Unassigned</option>{members.data?.filter((member) => member.is_active && ["owner", "admin", "agent"].includes(member.role)).map((member) => <option key={member.id} value={member.id}>{member.full_name} · {member.role}</option>)}</Select>{!canAssign && <p className="mt-1 text-xs text-slate-400">Only owners and admins can assign tickets.</p>}</div></PanelBody></Panel>
           <Panel><PanelHeader title="Activity" description="Ticket changes and ownership"/><PanelBody className="space-y-4">{activity.isPending ? <div className="h-28 animate-pulse rounded-xl bg-slate-100"/> : activity.isError ? <p className="text-sm text-red-700">Unable to load activity.</p> : activity.data?.length ? activity.data.map((entry) => <div key={entry.id} className="flex gap-3"><span className="mt-1 grid size-8 shrink-0 place-items-center rounded-full bg-blue-50 text-blue-700"><Sparkles size={14}/></span><div><p className="text-sm font-medium text-slate-800">{activityLabel(entry.activity_type, entry.details)}</p><p className="mt-1 text-xs text-slate-500">{entry.actor_name ?? "System"} · {formatDateTime(entry.created_at)}</p></div></div>) : <p className="text-sm text-slate-500">No activity recorded.</p>}</PanelBody></Panel>
           <Panel><PanelHeader title="Customer"/><PanelBody><Link href={`/dashboard/customers/${ticket.customer_id}`} className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-full bg-slate-100 text-slate-500"><UserRound size={18}/></span><span className="font-semibold text-blue-700 hover:underline">{ticket.customer_name ?? "View customer"}</span></Link></PanelBody></Panel>
         </div>

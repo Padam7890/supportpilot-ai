@@ -25,6 +25,12 @@ class Message(UUIDPrimaryKey, TimestampMixin, Base):
             "created_at",
         ),
         UniqueConstraint("organization_id", "id", name="uq_messages_org_id"),
+        UniqueConstraint(
+            "organization_id",
+            "conversation_id",
+            "widget_idempotency_hash",
+            name="uq_messages_widget_idempotency",
+        ),
         ForeignKeyConstraint(
             ["organization_id", "conversation_id"],
             ["conversations.organization_id", "conversations.id"],
@@ -45,9 +51,10 @@ class Message(UUIDPrimaryKey, TimestampMixin, Base):
     conversation_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     sender_type: Mapped[str] = mapped_column(
         String(20), nullable=False
-    )  # customer, agent, assistant, system
+    )  # customer, agent, assistant, system, internal_note
     sender_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
     content: Mapped[str] = mapped_column(Text, nullable=False)
     content_type: Mapped[str] = mapped_column(String(30), default="text", nullable=False)
+    widget_idempotency_hash: Mapped[str | None] = mapped_column(String(64))
 
     conversation = relationship("Conversation", back_populates="messages")

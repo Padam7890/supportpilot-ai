@@ -47,14 +47,24 @@ Start the application:
 
 ```bash
 docker compose up --build -d
-docker compose run --rm migrate
 docker compose exec api python -m app.cli create-platform-owner
 ```
 
+Compose runs the one-shot migration job with the privileged migration role and
+waits for it to finish before starting the API and worker. Rebuild and start again
+after pulling or adding a migration. To apply migrations while the stack is already
+running, use `docker compose run --build --rm --no-deps migrate`; it does not restart
+the API or database.
+
 The first database initialization creates a restricted runtime role and a
 separate migration role. If your existing `postgres_data` volume predates that
-setup, run `docker compose exec postgres /docker-entrypoint-initdb.d/002-app-roles.sh`
-once before applying migrations.
+setup, run these commands before the full stack:
+
+```bash
+docker compose up -d postgres redis
+docker compose exec postgres /docker-entrypoint-initdb.d/002-app-roles.sh
+docker compose up --build -d
+```
 
 The platform-owner bootstrap prompts for an email and password and can run only
 while no platform owner exists. Sign in at http://localhost:3000/platform/login

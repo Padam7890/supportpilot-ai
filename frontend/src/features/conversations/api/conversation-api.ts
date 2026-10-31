@@ -11,5 +11,8 @@ export const listConversations = (ticketId: string) => api<Conversation[]>(`/tic
 export const startConversation = (ticketId: string) =>
   api<Conversation>(`/tickets/${ticketId}/conversations`, { method: "POST", body: JSON.stringify({ channel: "web" }) });
 export const listMessages = (conversationId: string) => api<Message[]>(`/conversations/${conversationId}/messages`);
+export const listInternalNotes = (conversationId: string) => api<Message[]>(`/conversations/${conversationId}/notes`);
 export const sendMessage = (conversationId: string, values: SendMessageValues) =>
   api<Message>(`/conversations/${conversationId}/messages`, { method: "POST", body: JSON.stringify(values) });
+export const sendInternalNote = (conversationId: string, content: string) =>
+  api<Message>(`/conversations/${conversationId}/notes`, { method: "POST", body: JSON.stringify({ content }) });

@@ -1,14 +1,17 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_roles
 from app.db.session import get_db
-from app.models import User
+from app.models import Conversation, Message, Ticket, User
 from app.repositories.customer import CustomerRepository
 from app.schemas.customer import (
     CustomerCreate,
+    CustomerMessageHistoryItem,
+    CustomerMessageHistoryPage,
     CustomerOut,
     CustomerPage,
     CustomerUpdate,
@@ -80,3 +83,86 @@ async def customer_tickets(
         user.organization_id, customer_id, limit=limit, offset=offset
     )
     return TicketPage(items=items, total=total, limit=limit, offset=offset)
+
+
+@router.get("/{customer_id}/history", response_model=CustomerMessageHistoryPage)
+async def customer_message_history(
+    customer_id: UUID,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> CustomerMessageHistoryPage:
+    await service(db).get(user.organization_id, customer_id)
+    conditions = (
+        Ticket.organization_id == user.organization_id,
+        Ticket.customer_id == customer_id,
+        Conversation.organization_id == user.organization_id,
+        Message.organization_id == user.organization_id,
+        Message.sender_type != "internal_note",
+    )
+    total = int(
+        await db.scalar(
+            select(func.count(Message.id))
+            .select_from(Message)
+            .join(
+                Conversation,
+                and_(
+                    Conversation.organization_id == Message.organization_id,
+                    Conversation.id == Message.conversation_id,
+                ),
+            )
+            .join(
+                Ticket,
+                and_(
+                    Ticket.organization_id == Conversation.organization_id,
+                    Ticket.id == Conversation.ticket_id,
+                ),
+            )
+            .where(*conditions)
+        )
+        or 0
+    )
+    result = await db.execute(
+        select(Message, Ticket.id, Ticket.subject, Conversation.id, User.full_name)
+        .join(
+            Conversation,
+            and_(
+                Conversation.organization_id == Message.organization_id,
+                Conversation.id == Message.conversation_id,
+            ),
+        )
+        .join(
+            Ticket,
+            and_(
+                Ticket.organization_id == Conversation.organization_id,
+                Ticket.id == Conversation.ticket_id,
+            ),
+        )
+        .outerjoin(
+            User,
+            and_(User.organization_id == Message.organization_id, User.id == Message.sender_user_id),
+        )
+        .where(*conditions)
+        .order_by(Message.created_at.desc(), Message.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    return CustomerMessageHistoryPage(
+        items=[
+            CustomerMessageHistoryItem(
+                id=message.id,
+                ticket_id=ticket_id,
+                ticket_subject=subject,
+                conversation_id=conversation_id,
+                sender_type=message.sender_type,
+                sender_name=sender_name,
+                content=message.content,
+                created_at=message.created_at,
+            )
+            for message, ticket_id, subject, conversation_id, sender_name in result.all()
+        ],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )

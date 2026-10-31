@@ -30,14 +30,8 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres_test_password
           POSTGRES_DB: supportpilot
-          APP_DB_USER: supportpilot_app
-          APP_DB_PASSWORD: app_test_password
-          MIGRATION_DB_USER: supportpilot_migrator
-          MIGRATION_DB_PASSWORD: migrator_test_password
         ports:
           - 5432:5432
-        volumes:
-          - ${{ github.workspace }}/infrastructure/docker/postgres/init:/docker-entrypoint-initdb.d:ro
         options: >-
           --health-cmd "pg_isready -U postgres -d supportpilot"
           --health-interval 10s
@@ -59,6 +53,7 @@ jobs:
         working-directory: backend
 
     env:
+      CI: "true"
       APP_ENV: test
       DEBUG: "false"
       DATABASE_URL: postgresql+asyncpg://supportpilot_app:app_test_password@localhost:5432/supportpilot
@@ -69,6 +64,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Validate local Compose configuration
+        run: docker compose -f ../compose.yaml config --quiet
+        env:
+          POSTGRES_DB: supportpilot
+          POSTGRES_USER: supportpilot
+          POSTGRES_PASSWORD: ci-compose-validation-only
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -82,8 +84,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Provision isolated database roles
+        run: python scripts/provision_ci_database_roles.py
+        env:
+          CI_SUPERUSER_DATABASE_URL: postgresql://postgres:postgres_test_password@localhost:5432/supportpilot
+          POSTGRES_DB: supportpilot
+          APP_DB_USER: supportpilot_app
+          APP_DB_PASSWORD: app_test_password
+          MIGRATION_DB_USER: supportpilot_migrator
+          MIGRATION_DB_PASSWORD: migrator_test_password
+
       - name: Ruff lint
-        run: ruff check app tests migrations
+        run: ruff check app tests migrations scripts
 
       - name: Check committed OpenAPI contract
         run: python scripts/export_openapi.py --check
@@ -92,6 +104,9 @@ jobs:
         run: alembic upgrade head
         env:
           DATABASE_URL: postgresql+asyncpg://supportpilot_migrator:migrator_test_password@localhost:5432/supportpilot
+
+      - name: Verify restricted runtime database role and forced RLS
+        run: python scripts/assert_runtime_db_role.py
 
       - name: Run tests
         run: pytest -q
@@ -128,6 +143,9 @@ jobs:
       - name: TypeScript check
         run: npx tsc --noEmit
 
+      - name: Unit tests
+        run: npm test -- --run
+
       - name: Check generated API types
         run: npm run api:types:check
 
@@ -148,14 +166,8 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres_test_password
           POSTGRES_DB: supportpilot
-          APP_DB_USER: supportpilot_app
-          APP_DB_PASSWORD: app_test_password
-          MIGRATION_DB_USER: supportpilot_migrator
-          MIGRATION_DB_PASSWORD: migrator_test_password
         ports:
           - 5432:5432
-        volumes:
-          - ${{ github.workspace }}/infrastructure/docker/postgres/init:/docker-entrypoint-initdb.d:ro
         options: >-
           --health-cmd "pg_isready -U postgres -d supportpilot"
           --health-interval 10s
@@ -184,6 +196,10 @@ jobs:
       PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
       E2E_PLATFORM_OWNER_EMAIL: platform-owner@example.test
       E2E_PLATFORM_OWNER_PASSWORD: ci-platform-owner-password-only
+      SHOPIFY_CLIENT_ID: ci-shopify-client
+      SHOPIFY_CLIENT_SECRET: ci-shopify-secret-not-a-real-credential
+      SHOPIFY_REDIRECT_URI: https://supportpilot.example/api/integrations/shopify/callback
+      SHOPIFY_API_VERSION: "2026-10"
 
     steps:
       - name: Checkout
@@ -200,11 +216,34 @@ jobs:
         working-directory: backend
         run: python -m pip install --upgrade pip && pip install -r requirements.txt
 
+      - name: Generate disposable Shopify encryption key
+        working-directory: backend
+        run: |
+          python - <<'PY' >> "$GITHUB_ENV"
+          from cryptography.fernet import Fernet
+          print(f"SHOPIFY_ENCRYPTION_KEY={Fernet.generate_key().decode('ascii')}")
+          PY
+
+      - name: Provision isolated database roles
+        working-directory: backend
+        run: python scripts/provision_ci_database_roles.py
+        env:
+          CI_SUPERUSER_DATABASE_URL: postgresql://postgres:postgres_test_password@localhost:5432/supportpilot
+          POSTGRES_DB: supportpilot
+          APP_DB_USER: supportpilot_app
+          APP_DB_PASSWORD: app_test_password
+          MIGRATION_DB_USER: supportpilot_migrator
+          MIGRATION_DB_PASSWORD: migrator_test_password
+
       - name: Apply migrations with migrator role
         working-directory: backend
         run: alembic upgrade head
         env:
           DATABASE_URL: postgresql+asyncpg://supportpilot_migrator:migrator_test_password@localhost:5432/supportpilot
+
+      - name: Verify restricted runtime database role and forced RLS
+        working-directory: backend
+        run: python scripts/assert_runtime_db_role.py
 
       - name: Create disposable platform owner
         working-directory: backend
@@ -260,3 +299,12 @@ jobs:
       - name: Run browser workflows
         working-directory: frontend
         run: npm run test:e2e
+
+      - name: Preserve Playwright failure artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results-${{ github.run_id }}
+          path: frontend/test-results/
+          if-no-files-found: ignore
+          retention-days: 7

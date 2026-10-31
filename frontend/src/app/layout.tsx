@@ -5,7 +5,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "SupportPilot AI",
-  description: "AI-powered customer support platform",
+  description: "Keep customer support tickets, knowledge, and verified order context in one human-led workspace.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

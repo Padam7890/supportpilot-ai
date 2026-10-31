@@ -36,6 +36,7 @@ class KnowledgeDocument(UUIDPrimaryKey, TimestampMixin, Base):
             name="fk_knowledge_documents_org_uploader",
         ),
         Index("ix_knowledge_documents_org_status", "organization_id", "status"),
+        Index("ix_knowledge_documents_org_deleted", "organization_id", "deleted_at"),
     )
 
     organization_id: Mapped[uuid.UUID] = mapped_column(
@@ -48,6 +49,7 @@ class KnowledgeDocument(UUIDPrimaryKey, TimestampMixin, Base):
     uploaded_by_user_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), nullable=False
     )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class KnowledgeDocumentSource(Base):
@@ -103,7 +105,7 @@ class DocumentIngestionJob(UUIDPrimaryKey, TimestampMixin, Base):
     __tablename__ = "document_ingestion_jobs"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('queued', 'running', 'succeeded', 'failed')",
+            "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
             name="ck_document_ingestion_jobs_status",
         ),
         CheckConstraint("max_attempts > 0", name="ck_document_ingestion_jobs_max_attempts"),

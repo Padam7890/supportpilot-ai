@@ -27,7 +27,15 @@ export function KnowledgeLibrary() {
   });
   const results = useQuery({ queryKey: knowledgeKeys.search(searchTerm), queryFn: () => searchKnowledge(searchTerm), enabled: searchTerm.length >= 2 });
   const upload = useMutation({ mutationFn: uploadKnowledgeDocument, onSuccess: async () => { if (fileInput.current) fileInput.current.value = ""; await client.invalidateQueries({ queryKey: knowledgeKeys.documents }); } });
-  const reprocess = useMutation({ mutationFn: reprocessKnowledgeDocument, onSuccess: () => client.invalidateQueries({ queryKey: knowledgeKeys.documents }) });
+  const reprocess = useMutation({
+    mutationFn: reprocessKnowledgeDocument,
+    onSuccess: async (_document, documentId) => {
+      await Promise.all([
+        client.invalidateQueries({ queryKey: knowledgeKeys.documents }),
+        client.invalidateQueries({ queryKey: ["knowledge-document", documentId] }),
+      ]);
+    },
+  });
   const remove = useMutation({ mutationFn: deleteKnowledgeDocument, onSuccess: () => client.invalidateQueries({ queryKey: knowledgeKeys.documents }) });
   const writeError = upload.error ?? reprocess.error ?? remove.error;
 

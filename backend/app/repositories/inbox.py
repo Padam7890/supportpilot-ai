@@ -131,7 +131,10 @@ class InboxRepository:
                     Conversation.organization_id == Message.organization_id,
                 ),
             )
-            .where(Message.organization_id == organization_id)
+            .where(
+                Message.organization_id == organization_id,
+                Message.sender_type != "internal_note",
+            )
             .subquery()
         )
         read_state_join = and_(

@@ -23,7 +23,24 @@ class ConversationRepository(TenantRepository[Conversation]):
             .where(
                 Message.organization_id == organization_id,
                 Message.conversation_id == conversation_id,
+                Message.sender_type != "internal_note",
             )
             .order_by(Message.created_at.asc())
+        )
+        return list(result.all())
+
+    async def list_internal_notes(self, organization_id, conversation_id):
+        result = await self.session.execute(
+            select(Message, User.full_name)
+            .outerjoin(
+                User,
+                (User.id == Message.sender_user_id) & (User.organization_id == organization_id),
+            )
+            .where(
+                Message.organization_id == organization_id,
+                Message.conversation_id == conversation_id,
+                Message.sender_type == "internal_note",
+            )
+            .order_by(Message.created_at.asc(), Message.id.asc())
         )
         return list(result.all())

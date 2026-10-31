@@ -110,6 +110,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
     healthcheck:
       test:
@@ -143,6 +145,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     networks:
       - supportpilot_network
 
@@ -151,7 +155,6 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    profiles: ["tools"]
     environment:
       APP_NAME: "SupportPilot AI"
       APP_ENV: development
@@ -202,6 +205,8 @@ services:
     profiles: ["test"]
     environment:
       APP_NAME: "SupportPilot AI Test"
+      APP_DB_USER: supportpilot_test_app
+      MIGRATION_DB_USER: supportpilot_test_migrator
       DATABASE_URL: postgresql+asyncpg://supportpilot_test_migrator:supportpilot_test_migrator_password@test-postgres:5432/supportpilot_test
       REDIS_URL: redis://localhost:6379/0
       JWT_SECRET: test-only-secret-that-is-long-enough
@@ -250,6 +255,7 @@ services:
       NODE_ENV: development
       NEXT_TELEMETRY_DISABLED: "1"
       BACKEND_API_URL: http://api:8000
+      NEXT_PUBLIC_SUPPORTPILOT_APP_URL: ${NEXT_PUBLIC_SUPPORTPILOT_APP_URL:-}
       OPENAPI_SCHEMA: /app/backend-openapi.json
 
     command: ["sh", "/app/docker-entrypoint.sh"]

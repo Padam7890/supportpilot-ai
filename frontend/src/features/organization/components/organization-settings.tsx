@@ -14,6 +14,8 @@ import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
 import { createInvitation, getOrganization, listInvitations, listMembers, revokeInvitation, updateMember as patchMember, updateOrganization } from "../api/organization-api";
 import { getCurrentUser } from "@/features/auth/api/auth-api";
 import { inviteSchema, organizationSchema } from "../schemas/organization.schema";
+import { ShopifyIntegrationCard } from "@/features/integrations/components/shopify-integration-card";
+import { StorefrontWidgetCard } from "@/features/integrations/components/storefront-widget-card";
 
 export default function SettingsPage() {
   const queryClient = useQueryClient();
@@ -50,6 +52,7 @@ export default function SettingsPage() {
   return (
     <div className="space-y-6">
       <div><p className="text-sm font-semibold text-blue-700">Workspace preferences</p><h1 className="mt-1 text-3xl font-bold tracking-tight">Settings & team</h1><p className="mt-2 text-sm text-slate-500">Manage your workspace profile and team access.</p></div>
+      <section id="integrations" aria-label="Workspace integrations" className="space-y-5"><ShopifyIntegrationCard/><StorefrontWidgetCard/></section>
       <Panel><PanelHeader title="Organization" description="Workspace details shown to your support team." action={<span className="grid size-9 place-items-center rounded-xl bg-blue-50 text-blue-700"><Building2 size={18}/></span>}/><PanelBody><form className="grid gap-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end" onSubmit={orgForm.handleSubmit((values) => updateOrg.mutate(values))}><Field label="Organization name" error={orgForm.formState.errors.name?.message}><Input defaultValue={organization.data?.name} key={organization.data?.name} {...orgForm.register("name")}/></Field><Field label="Organization slug"><Input value={organization.data?.slug ?? ""} disabled readOnly/></Field><Button type="submit" disabled={updateOrg.isPending}>{updateOrg.isPending ? "Saving…" : "Save changes"}</Button></form>{updateOrg.isError && <p role="alert" className="mt-3 text-sm text-red-700">{updateOrg.error instanceof ApiError ? updateOrg.error.message : "Workspace could not be updated."}</p>}{updateOrg.isSuccess && <p role="status" className="mt-3 text-sm text-emerald-700">Workspace updated.</p>}</PanelBody></Panel>
       <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.8fr)]">
         <Panel><PanelHeader title="Team members" description="Active teammates and workspace roles" action={<span className="grid size-9 place-items-center rounded-xl bg-violet-50 text-violet-700"><Users size={18}/></span>}/><PanelBody>

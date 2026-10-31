@@ -1,9 +1,10 @@
 import re
+from datetime import UTC, datetime
 from pathlib import PurePath
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
-from sqlalchemy import func, literal_column, select
+from sqlalchemy import delete, func, literal_column, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_roles
@@ -47,6 +48,7 @@ async def document_out(db: AsyncSession, document: KnowledgeDocument) -> Knowled
         status=document.status,
         created_at=document.created_at,
         updated_at=document.updated_at,
+        deleted_at=document.deleted_at,
         jobs=[IngestionJobOut.model_validate(job) for job in jobs],
     )
 
@@ -122,12 +124,16 @@ async def list_documents(
 ) -> KnowledgeDocumentPage:
     total = await db.scalar(
         select(func.count()).select_from(KnowledgeDocument).where(
-            KnowledgeDocument.organization_id == user.organization_id
+            KnowledgeDocument.organization_id == user.organization_id,
+            KnowledgeDocument.deleted_at.is_(None),
         )
     ) or 0
     documents = await db.scalars(
         select(KnowledgeDocument)
-        .where(KnowledgeDocument.organization_id == user.organization_id)
+        .where(
+            KnowledgeDocument.organization_id == user.organization_id,
+            KnowledgeDocument.deleted_at.is_(None),
+        )
         .order_by(KnowledgeDocument.created_at.desc(), KnowledgeDocument.id.desc())
         .limit(limit)
         .offset(offset)
@@ -160,6 +166,7 @@ async def search_documents(
         .where(
             DocumentChunk.organization_id == user.organization_id,
             KnowledgeDocument.status == "ready",
+            KnowledgeDocument.deleted_at.is_(None),
             func.to_tsvector(simple_config, DocumentChunk.content).op("@@")(ts_query),
         )
     )
@@ -215,32 +222,74 @@ async def reprocess_document(
         select(KnowledgeDocument).where(
             KnowledgeDocument.id == document_id,
             KnowledgeDocument.organization_id == user.organization_id,
-        )
+            KnowledgeDocument.deleted_at.is_(None),
+        ).with_for_update()
     )
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found")
     source = await db.get(KnowledgeDocumentSource, (user.organization_id, document.id))
     if source is None:
         raise HTTPException(status_code=409, detail="Source artifact was cleaned up; upload the document again")
+    active_job = await db.scalar(
+        select(DocumentIngestionJob.id)
+        .where(
+            DocumentIngestionJob.organization_id == user.organization_id,
+            DocumentIngestionJob.document_id == document.id,
+            DocumentIngestionJob.status.in_(("queued", "running")),
+        )
+        .with_for_update()
+    )
+    if active_job is not None:
+        raise HTTPException(status_code=409, detail="Document ingestion is already queued or running")
     db.add(DocumentIngestionJob(organization_id=user.organization_id, document_id=document.id))
     document.status = "queued"
     await db.flush()
     return await document_out(db, document)
 
 
-@router.delete("/{document_id}", status_code=204, responses={204: {"description": "Document and its processing history deleted"}})
+@router.delete("/{document_id}", status_code=204, responses={204: {"description": "Searchable content removed; document metadata and ingestion history retained"}})
 async def delete_document(
     document_id: UUID,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_roles("owner", "admin")),
 ) -> Response:
     document = await db.scalar(
-        select(KnowledgeDocument).where(
+        select(KnowledgeDocument)
+        .where(
             KnowledgeDocument.id == document_id,
             KnowledgeDocument.organization_id == user.organization_id,
         )
+        .with_for_update()
     )
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found")
-    await db.delete(document)
+    if document.deleted_at is not None:
+        return Response(status_code=204)
+    now = datetime.now(UTC)
+    document.deleted_at = now
+    await db.execute(
+        update(DocumentIngestionJob)
+        .where(
+            DocumentIngestionJob.organization_id == user.organization_id,
+            DocumentIngestionJob.document_id == document_id,
+            DocumentIngestionJob.status.in_(("queued", "running")),
+        )
+        .values(
+            status="cancelled",
+            completed_at=now,
+            last_error="Document removed by a workspace administrator",
+        )
+    )
+    await db.execute(
+        delete(KnowledgeDocumentSource).where(
+            KnowledgeDocumentSource.organization_id == user.organization_id,
+            KnowledgeDocumentSource.document_id == document_id,
+        )
+    )
+    await db.execute(
+        delete(DocumentChunk).where(
+            DocumentChunk.organization_id == user.organization_id,
+            DocumentChunk.document_id == document_id,
+        )
+    )
     return Response(status_code=204)

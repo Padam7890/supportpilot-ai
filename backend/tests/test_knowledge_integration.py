@@ -7,7 +7,12 @@ from sqlalchemy import select, update
 
 from app.core.security import hash_password
 from app.db.session import SessionLocal, set_tenant_context
-from app.models import DocumentIngestionJob, PlatformOwner
+from app.models import (
+    DocumentChunk,
+    DocumentIngestionJob,
+    KnowledgeDocumentSource,
+    PlatformOwner,
+)
 from app.worker import claim_one, process_job
 
 pytestmark = pytest.mark.skipif(
@@ -114,6 +119,62 @@ async def test_document_processing_search_reprocess_and_tenant_isolation(client)
     assert reprocessed.status_code == 202
     assert len(reprocessed.json()["jobs"]) == 2
 
+    # Removing a document must clean searchable/source data without cascading
+    # away its durable document and ingestion audit history.
+    removed = await client.delete(
+        f"/api/v1/knowledge/documents/{document['id']}",
+        headers=bearer(owner["access_token"]),
+    )
+    assert removed.status_code == 204
+    assert await claim_one(organization_id) is None
+    removed_detail = await client.get(
+        f"/api/v1/knowledge/documents/{document['id']}",
+        headers=bearer(owner["access_token"]),
+    )
+    assert removed_detail.status_code == 200
+    assert removed_detail.json()["deleted_at"] is not None
+    assert [job["status"] for job in removed_detail.json()["jobs"]] == [
+        "cancelled",
+        "succeeded",
+    ]
+    removed_list = await client.get(
+        "/api/v1/knowledge/documents", headers=bearer(owner["access_token"])
+    )
+    assert removed_list.json()["total"] == 0
+    removed_search = await client.get(
+        "/api/v1/knowledge/documents/search?q=thirty+days",
+        headers=bearer(owner["access_token"]),
+    )
+    assert removed_search.status_code == 200
+    assert removed_search.json()["total"] == 0
+    refused_reprocess = await client.post(
+        f"/api/v1/knowledge/documents/{document['id']}/reprocess",
+        headers=bearer(owner["access_token"]),
+    )
+    assert refused_reprocess.status_code == 404
+    async with SessionLocal() as session:
+        await set_tenant_context(session, organization_id)
+        assert await session.get(
+            KnowledgeDocumentSource, (organization_id, UUID(document["id"]))
+        ) is None
+        chunk_count = await session.scalar(
+            select(DocumentChunk.id).where(
+                DocumentChunk.organization_id == organization_id,
+                DocumentChunk.document_id == UUID(document["id"]),
+            )
+        )
+        assert chunk_count is None
+        retained_jobs = list(
+            await session.scalars(
+                select(DocumentIngestionJob).where(
+                    DocumentIngestionJob.organization_id == organization_id,
+                    DocumentIngestionJob.document_id == UUID(document["id"]),
+                )
+            )
+        )
+        assert len(retained_jobs) == 2
+        await session.rollback()
+
     other_owner = await approved_workspace(client, "knowledge-other")
     hidden = await client.get(
         f"/api/v1/knowledge/documents/{document['id']}",
@@ -133,6 +194,12 @@ async def test_ingestion_retry_limit_and_reprocess_history(client):
     assert uploaded.status_code == 202
     document_id = UUID(uploaded.json()["id"])
     organization_id = UUID(owner["user"]["organization_id"])
+    duplicate_reprocess = await client.post(
+        f"/api/v1/knowledge/documents/{document_id}/reprocess",
+        headers=bearer(owner["access_token"]),
+    )
+    assert duplicate_reprocess.status_code == 409
+    assert "already queued or running" in duplicate_reprocess.json()["detail"]
 
     for attempt in range(1, 4):
         claimed = await claim_one(organization_id)

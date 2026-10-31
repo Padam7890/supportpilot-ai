@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -29,6 +30,24 @@ class CustomerOut(TimestampedOut):
 
 class CustomerPage(BaseModel):
     items: list[CustomerOut]
+    total: int
+    limit: int
+    offset: int
+
+
+class CustomerMessageHistoryItem(BaseModel):
+    id: uuid.UUID
+    ticket_id: uuid.UUID
+    ticket_subject: str
+    conversation_id: uuid.UUID
+    sender_type: str
+    sender_name: str | None
+    content: str
+    created_at: datetime
+
+
+class CustomerMessageHistoryPage(BaseModel):
+    items: list[CustomerMessageHistoryItem]
     total: int
     limit: int
     offset: int

@@ -11,6 +11,7 @@ from app.repositories.ticket import TicketRepository
 from app.schemas.conversation import (
     ConversationCreate,
     ConversationOut,
+    InternalNoteCreate,
     MessageCreate,
     MessageOut,
 )
@@ -58,6 +59,34 @@ async def add_message(
 ) -> MessageOut:
     message = await service(db).add_message(user.organization_id, user.id, conversation_id, data)
     return MessageOut.model_validate(message).model_copy(update={"sender_name": user.full_name})
+
+
+@router.post(
+    "/conversations/{conversation_id}/notes", response_model=MessageOut, status_code=201
+)
+async def add_internal_note(
+    conversation_id: UUID,
+    data: InternalNoteCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_roles("owner", "admin", "agent")),
+) -> MessageOut:
+    note = await service(db).add_internal_note(
+        user.organization_id, user.id, conversation_id, data
+    )
+    return MessageOut.model_validate(note).model_copy(update={"sender_name": user.full_name})
+
+
+@router.get("/conversations/{conversation_id}/notes", response_model=list[MessageOut])
+async def list_internal_notes(
+    conversation_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[MessageOut]:
+    rows = await service(db).internal_notes(user.organization_id, conversation_id)
+    return [
+        MessageOut.model_validate(note).model_copy(update={"sender_name": sender_name})
+        for note, sender_name in rows
+    ]
 
 
 @router.get("/conversations/{conversation_id}/messages", response_model=list[MessageOut])

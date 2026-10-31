@@ -98,12 +98,15 @@ function hasSameOrigin(request: NextRequest) {
 }
 
 function responseFromUpstream(response: Response, body: string) {
+  const headers = new Headers({
+    "content-type": response.headers.get("content-type") ?? "application/json",
+    "cache-control": "no-store",
+  });
+  const location = response.headers.get("location");
+  if (location) headers.set("location", location);
   return new NextResponse(body || null, {
     status: response.status,
-    headers: {
-      "content-type": response.headers.get("content-type") ?? "application/json",
-      "cache-control": "no-store",
-    },
+    headers,
   });
 }
 
@@ -138,12 +141,15 @@ async function requestBackend(
   if (contentType) headers.set("content-type", contentType);
   else if (body && !["GET", "HEAD"].includes(method)) headers.set("content-type", "application/json");
   headers.set("accept", "application/json");
+  const idempotencyKey = request.headers.get("idempotency-key");
+  if (idempotencyKey) headers.set("idempotency-key", idempotencyKey);
   if (accessToken) headers.set("authorization", `Bearer ${accessToken}`);
   return fetch(upstreamUrl, {
     method,
     headers,
     body: ["GET", "HEAD"].includes(method) ? undefined : body,
     cache: "no-store",
+    redirect: "manual",
   });
 }
 

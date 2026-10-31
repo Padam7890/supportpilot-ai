@@ -5,9 +5,11 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
+    Index,
     String,
     UniqueConstraint,
     Uuid,
+    func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -18,6 +20,7 @@ from app.models.mixins import UUIDPrimaryKey
 class RefreshSession(UUIDPrimaryKey, Base):
     __tablename__ = "refresh_sessions"
     __table_args__ = (
+        Index("ix_refresh_sessions_org_user_created", "organization_id", "user_id", "created_at"),
         UniqueConstraint("organization_id", "id", name="uq_refresh_sessions_org_id"),
         UniqueConstraint("token_hash", name="uq_refresh_sessions_token_hash"),
         ForeignKeyConstraint(
@@ -35,3 +38,6 @@ class RefreshSession(UUIDPrimaryKey, Base):
     token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

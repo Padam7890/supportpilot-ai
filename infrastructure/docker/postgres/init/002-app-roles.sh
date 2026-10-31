@@ -26,6 +26,10 @@ SELECT format('GRANT CONNECT ON DATABASE %I TO %I', :'database_name', :'app_role
 GRANT USAGE ON SCHEMA public TO :"app_role";
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO :"app_role";
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO :"app_role";
+SELECT format('REVOKE ALL PRIVILEGES ON TABLE public.alembic_version FROM %I', :'app_role')
+WHERE to_regclass('public.alembic_version') IS NOT NULL \gexec
+SELECT format('GRANT SELECT ON TABLE public.alembic_version TO %I', :'app_role')
+WHERE to_regclass('public.alembic_version') IS NOT NULL \gexec
 ALTER DEFAULT PRIVILEGES FOR ROLE :"migration_role" IN SCHEMA public
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO :"app_role";
 ALTER DEFAULT PRIVILEGES FOR ROLE :"migration_role" IN SCHEMA public

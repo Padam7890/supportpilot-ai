@@ -17,4 +17,6 @@ export const createTicket = (values: z.infer<typeof createTicketSchema>) =>
   api<Ticket>("/tickets", { method: "POST", body: JSON.stringify(values) });
 export const updateTicket = (id: string, changes: z.infer<typeof updateTicketSchema>) =>
   api<Ticket>(`/tickets/${id}`, { method: "PATCH", body: JSON.stringify(changes) });
+export const assignTicketToMe = (id: string) =>
+  api<Ticket>(`/tickets/${id}/assign-to-me`, { method: "POST" });
 export const getTicketActivity = (id: string) => api<TicketActivity[]>(`/tickets/${id}/activity`);

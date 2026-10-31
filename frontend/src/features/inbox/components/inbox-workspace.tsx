@@ -2,11 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, PanelRight, Search, Send } from "lucide-react";
-import { MotionConfig, motion } from "motion/react";
+import { ArrowLeft, LoaderCircle, PanelRight, Search, Send, Sparkles } from "lucide-react";
+import { motion } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { Select, Textarea } from "@/components/ui/input";
-import { listConversations, listMessages, sendMessage } from "@/features/conversations/api/conversation-api";
+import { listConversations, listInternalNotes, listMessages, sendInternalNote, sendMessage } from "@/features/conversations/api/conversation-api";
 import { sendMessageSchema } from "@/features/conversations/schemas/conversation.schema";
 import { getCurrentUser } from "@/features/auth/api/auth-api";
 import { getInbox, inboxQueryKeys, markConversationRead } from "../api/inbox-api";
@@ -14,6 +14,7 @@ import type { InboxFilters } from "../api/inbox-api";
 import type { InboxItem } from "../types/inbox.types";
 import { formatDateTime } from "@/lib/utils";
 import { CustomerContextPanel } from "./customer-context-panel";
+import { aiQueryKeys, createReplyDraft, getAIExecution, getWidgetAIReplyStatus } from "@/features/ai/api/ai-api";
 
 const initialFilters: InboxFilters = { scope: "all", status: "", priority: "", search: "" };
 
@@ -25,6 +26,9 @@ export function InboxWorkspace() {
   const [selectedConversation, setSelectedConversation] = useState("");
   const [showDetails, setShowDetails] = useState(false);
   const [reply, setReply] = useState("");
+  const [shopifyOrderNumber, setShopifyOrderNumber] = useState("");
+  const [composeMode, setComposeMode] = useState<"reply" | "note">("reply");
+  const [draftExecutionId, setDraftExecutionId] = useState<string>();
   const me = useQuery({ queryKey: ["me"], queryFn: getCurrentUser });
   const inbox = useInfiniteQuery({
     queryKey: inboxQueryKeys.page(filters),
@@ -48,13 +52,45 @@ export function InboxWorkspace() {
     refetchInterval: () => typeof document !== "undefined" && document.visibilityState === "visible" ? 10_000 : false,
     refetchIntervalInBackground: false,
   });
+  const notes = useQuery({
+    queryKey: ["internal-notes", selectedConversation || undefined],
+    queryFn: () => listInternalNotes(selectedConversation),
+    enabled: Boolean(selectedConversation),
+    refetchInterval: () => typeof document !== "undefined" && document.visibilityState === "visible" ? 10_000 : false,
+    refetchIntervalInBackground: false,
+  });
+  const isWidgetConversation = conversations.data?.some((item) => item.id === selectedConversation && item.channel === "shopify_widget") ?? false;
+  const widgetAI = useQuery({
+    queryKey: ["widget-ai-reply", selectedConversation],
+    queryFn: () => getWidgetAIReplyStatus(selectedConversation),
+    enabled: Boolean(selectedConversation && isWidgetConversation),
+    refetchInterval: () => typeof document !== "undefined" && document.visibilityState === "visible" ? 4000 : false,
+    refetchIntervalInBackground: false,
+  });
   const read = useMutation({ mutationFn: markConversationRead, onSuccess: async () => {
     await client.invalidateQueries({ queryKey: ["inbox"] });
   } });
-  const send = useMutation({ mutationFn: () => sendMessage(selectedConversation, sendMessageSchema.parse({ content: reply })), onSuccess: async () => {
+  const send = useMutation({ mutationFn: () => composeMode === "note"
+    ? sendInternalNote(selectedConversation, sendMessageSchema.parse({ content: reply }).content)
+    : sendMessage(selectedConversation, sendMessageSchema.parse({ content: reply })), onSuccess: async () => {
     setReply("");
-    await Promise.all([client.invalidateQueries({ queryKey: inboxQueryKeys.messages(selectedConversation) }), client.invalidateQueries({ queryKey: ["inbox"] })]);
+    setDraftExecutionId(undefined);
+    await Promise.all([client.invalidateQueries({ queryKey: inboxQueryKeys.messages(selectedConversation) }), client.invalidateQueries({ queryKey: ["internal-notes", selectedConversation] }), client.invalidateQueries({ queryKey: ["inbox"] }), client.invalidateQueries({ queryKey: ["widget-ai-reply", selectedConversation] })]);
   } });
+  const createDraft = useMutation({
+    mutationFn: () => createReplyDraft({ conversation_id: selectedConversation, ...(shopifyOrderNumber.trim() ? { shopify_order_number: shopifyOrderNumber.trim() } : {}) }),
+    onSuccess: (execution) => setDraftExecutionId(execution.id),
+  });
+  const draftExecution = useQuery({
+    queryKey: aiQueryKeys.execution(draftExecutionId),
+    queryFn: () => getAIExecution(draftExecutionId!),
+    enabled: Boolean(draftExecutionId),
+    refetchInterval: (query) => {
+      const active = ["queued", "running"].includes(query.state.data?.status ?? "");
+      return active && typeof document !== "undefined" && document.visibilityState === "visible" ? 1500 : false;
+    },
+    refetchIntervalInBackground: false,
+  });
 
   useEffect(() => {
     if (conversations.data?.length === 1 && !selectedConversation) chooseConversation(conversations.data[0].id);
@@ -73,17 +109,23 @@ export function InboxWorkspace() {
 
   function chooseConversation(id: string) {
     setSelectedConversation(id);
+    setComposeMode("reply");
+    setDraftExecutionId(undefined);
+    createDraft.reset();
     read.mutate(id);
   }
   function selectTicket(item: InboxItem) {
     setSelectedTicket(item);
     setSelectedConversation("");
+    setShopifyOrderNumber("");
+    setDraftExecutionId(undefined);
+    createDraft.reset();
     setShowDetails(false);
   }
 
   const canReply = ["owner", "admin", "agent"].includes(me.data?.role ?? "");
 
-  return <MotionConfig reducedMotion="user"><div className="relative">
+  return <div className="relative">
     <div className="relative flex h-[calc(100dvh-4rem)] min-h-[520px] flex-col overflow-hidden bg-white lg:flex-row">
       <section aria-label="Inbox tickets" className={`${activeTicket ? "hidden lg:flex" : "flex"} w-full flex-col border-r border-slate-200 lg:w-[320px] xl:w-[350px]`}>
         <header className="space-y-4 border-b border-slate-200 p-5">
@@ -112,17 +154,48 @@ export function InboxWorkspace() {
             {conversations.data && conversations.data.length > 1 && !selectedConversation && <div className="mx-auto max-w-xl rounded-2xl border border-blue-200 bg-white p-6 shadow-sm"><p className="font-semibold">Choose a conversation</p><p className="mt-1 text-sm text-slate-500">This ticket has separate conversation histories. Select one to view its messages.</p><div className="mt-4 space-y-2">{conversations.data.map((conversation, index) => <button key={conversation.id} onClick={() => chooseConversation(conversation.id)} className="flex w-full items-center justify-between rounded-xl border border-slate-200 p-3 text-left hover:border-blue-300 hover:bg-blue-50"><span><span className="block text-sm font-semibold">Conversation {conversations.data!.length - index}</span><span className="text-xs text-slate-500">{titleCase(conversation.channel)} · updated {formatDateTime(conversation.updated_at)}</span></span><span aria-hidden className="text-blue-700">→</span></button>)}</div></div>}
             {selectedConversation && messages.isPending && <div className="h-32 animate-pulse rounded-2xl bg-slate-200"/>}
             {selectedConversation && messages.isError && <p role="alert" className="text-sm text-red-700">Could not load this conversation.</p>}
-            {messages.data?.map((message) => { const fromAgent = message.sender_type === "agent"; return <motion.div key={message.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18 }} className={`flex ${fromAgent ? "justify-end" : "justify-start"}`}><article className={`max-w-[88%] rounded-2xl px-4 py-3 sm:max-w-[72%] ${fromAgent ? "rounded-br-md bg-blue-700 text-white" : "rounded-bl-md border border-slate-200 bg-white"}`}><div className={`mb-1.5 flex gap-2 text-xs ${fromAgent ? "text-blue-100" : "text-slate-500"}`}><span className="font-semibold">{message.sender_name ?? titleCase(message.sender_type)}</span><time>{formatDateTime(message.created_at)}</time></div><p className="whitespace-pre-wrap text-sm leading-6">{message.content}</p></article></motion.div>; })}
-            {selectedConversation && messages.data?.length === 0 && <p className="py-10 text-center text-sm text-slate-500">No messages in this conversation.</p>}
+            {notes.isError && <p role="alert" className="text-sm text-red-700">Could not load internal notes.</p>}
+            {[...(messages.data ?? []), ...(notes.data ?? [])].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id)).map((message) => {
+              const isNote = message.sender_type === "internal_note";
+              const fromAgent = message.sender_type === "agent" || message.sender_type === "assistant";
+              const senderName = message.sender_type === "assistant" ? "SupportPilot AI" : message.sender_name ?? titleCase(message.sender_type);
+              return <motion.div key={message.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18 }} className={`flex ${isNote || !fromAgent ? "justify-start" : "justify-end"}`}><article aria-label={isNote ? "Internal note" : message.sender_type === "assistant" ? "AI reply" : undefined} className={`max-w-[88%] rounded-2xl px-4 py-3 sm:max-w-[72%] ${isNote ? "border border-amber-200 bg-amber-50 text-amber-950" : fromAgent ? "rounded-br-md bg-blue-700 text-white" : "rounded-bl-md border border-slate-200 bg-white"}`}><div className={`mb-1.5 flex gap-2 text-xs ${isNote ? "text-amber-800" : fromAgent ? "text-blue-100" : "text-slate-500"}`}><span className="font-semibold">{isNote ? `Internal note · ${message.sender_name ?? "Teammate"}` : senderName}</span><time>{formatDateTime(message.created_at)}</time></div><p className="whitespace-pre-wrap text-sm leading-6">{message.content}</p></article></motion.div>;
+            })}
+            {isWidgetConversation && widgetAI.data && <div className={`mx-auto w-full max-w-2xl rounded-xl border p-3 text-sm ${widgetAI.data.status === "failed" ? "border-red-200 bg-red-50 text-red-800" : widgetAI.data.status === "escalated" ? "border-amber-200 bg-amber-50 text-amber-900" : "border-blue-200 bg-blue-50 text-blue-900"}`} role={widgetAI.data.status === "processing" ? "status" : "note"}>
+              <p className="font-semibold">AI reply · {widgetAI.data.status.replace("_", " ")}</p>
+              {widgetAI.data.safe_summary && <p className="mt-1 text-xs">{widgetAI.data.safe_summary}</p>}
+              {widgetAI.data.status === "processing" && <p className="mt-1 text-xs">Preparing a grounded response…</p>}
+              {widgetAI.data.status === "draft_ready" && widgetAI.data.draft && <><p className="mt-2 whitespace-pre-wrap">{widgetAI.data.draft}</p><Button type="button" size="sm" variant="secondary" className="mt-2" onClick={() => { setComposeMode("reply"); setReply(widgetAI.data?.draft ?? ""); }}>Add draft to reply</Button></>}
+              {widgetAI.data.citations.length > 0 && <p className="mt-2 text-xs">Sources: {widgetAI.data.citations.map((citation) => `${citation.document_name} · section ${citation.chunk_index + 1}`).join(", ")}</p>}
+            </div>}
+            {selectedConversation && messages.data?.length === 0 && notes.data?.length === 0 && !notes.isPending && <p className="py-10 text-center text-sm text-slate-500">No messages or notes in this conversation.</p>}
           </div>
-          {selectedConversation && <form onSubmit={(event) => { event.preventDefault(); if (reply.trim()) send.mutate(); }} className="border-t border-slate-200 bg-white p-4 sm:p-5"><Textarea aria-label="Write a reply" placeholder={canReply ? "Reply to the customer…" : "Your role has read-only access"} value={reply} disabled={!canReply || send.isPending} onChange={(event) => setReply(event.target.value)} className="min-h-24"/><div className="mt-3 flex items-center justify-between"><span className="text-xs text-slate-400">Messages are sent as you.</span><Button type="submit" disabled={!canReply || !reply.trim() || send.isPending}>{send.isPending ? "Sending…" : "Send reply"}<Send size={15}/></Button></div>{send.isError && <p role="alert" className="mt-2 text-sm text-red-700">{send.error instanceof Error ? send.error.message : "Message could not be sent."}</p>}</form>}
+          {selectedConversation && <>
+            {composeMode === "reply" && (createDraft.isError || draftExecution.isError) && <p role="alert" className="border-t border-red-100 bg-red-50 px-4 py-2 text-sm text-red-700">{createDraft.error?.message ?? "Draft status could not be refreshed."}</p>}
+            {composeMode === "reply" && draftExecution.data && ["queued", "running"].includes(draftExecution.data.status) && <p role="status" className="flex items-center gap-2 border-t border-blue-100 bg-blue-50 px-4 py-2 text-sm text-blue-800"><LoaderCircle size={15} className="animate-spin"/>Finding sources and preparing an unsent draft…</p>}
+            {composeMode === "reply" && draftExecution.data?.status === "failed" && <p role="alert" className="border-t border-amber-100 bg-amber-50 px-4 py-2 text-sm text-amber-800">The AI draft could not be completed. Your reply was not sent.</p>}
+            {composeMode === "reply" && draftExecution.data?.status === "succeeded" && <div className="border-t border-slate-200 bg-slate-50 px-4 py-3 sm:px-5">
+              <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs font-semibold text-slate-700">AI draft · review before sending</p><Button size="sm" variant="secondary" onClick={() => setReply(draftExecution.data?.draft ?? "")}>Add to reply</Button></div>
+              <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-sm leading-5 text-slate-600">{draftExecution.data.draft}</p>
+              {draftExecution.data.citations.length > 0 && <p className="mt-2 text-xs text-blue-700">Sources: {draftExecution.data.citations.map((citation) => `${citation.document_name} · section ${citation.chunk_index + 1}`).join(", ")}</p>}
+              {draftExecution.data.citations.length === 0 && <p className="mt-2 text-xs text-amber-700">No matching knowledge sources were found. Verify the draft carefully.</p>}
+            </div>}
+            <form onSubmit={(event) => { event.preventDefault(); if (reply.trim()) send.mutate(); }} className={`border-t p-4 sm:p-5 ${composeMode === "note" ? "border-amber-200 bg-amber-50/60" : "border-slate-200 bg-white"}`}>
+              <div className="mb-3 flex gap-2" role="group" aria-label="Message type"><Button type="button" size="sm" variant={composeMode === "reply" ? "primary" : "secondary"} aria-pressed={composeMode === "reply"} onClick={() => setComposeMode("reply")}>Reply</Button><Button type="button" size="sm" variant={composeMode === "note" ? "primary" : "secondary"} aria-pressed={composeMode === "note"} onClick={() => { setComposeMode("note"); setDraftExecutionId(undefined); }}>Internal note</Button></div>
+              {composeMode === "note" && <p className="mb-2 text-xs font-medium text-amber-900">Only workspace teammates can see this note. It will not be sent to the customer.</p>}
+              {composeMode === "reply" && <label className="mb-3 block max-w-xs text-xs font-medium text-slate-600">Add a verified Shopify order to the AI draft <input aria-label="Shopify order number for AI draft" value={shopifyOrderNumber} onChange={(event) => setShopifyOrderNumber(event.target.value)} placeholder="#1001 (optional)" className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"/></label>}
+              <Textarea aria-label={composeMode === "note" ? "Write an internal note" : "Write a reply"} placeholder={!canReply ? "Your role has read-only access" : composeMode === "note" ? "Write a private note for your team…" : "Reply to the customer…"} value={reply} disabled={!canReply || send.isPending} onChange={(event) => setReply(event.target.value)} className="min-h-24"/>
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2"><span className="text-xs text-slate-500">{composeMode === "note" ? "Private to your workspace" : "Messages are sent as you."}</span><div className="flex gap-2">{composeMode === "reply" && <Button type="button" variant="secondary" disabled={!canReply || createDraft.isPending || Boolean(draftExecution.data && ["queued", "running"].includes(draftExecution.data.status))} onClick={() => createDraft.mutate()}><Sparkles size={15}/>{createDraft.isPending ? "Starting…" : "Draft with AI"}</Button>}<Button type="submit" disabled={!canReply || !reply.trim() || send.isPending}>{send.isPending ? composeMode === "note" ? "Saving…" : "Sending…" : composeMode === "note" ? "Add note" : "Send reply"}{composeMode === "reply" && <Send size={15}/>}</Button></div></div>
+              {send.isError && <p role="alert" className="mt-2 text-sm text-red-700">{send.error instanceof Error ? send.error.message : "Message could not be sent."}</p>}
+            </form>
+          </>}
         </>}
       </section>
 
       {activeTicket && <aside aria-label="Customer context" className="hidden w-[320px] shrink-0 border-l border-slate-200 xl:block"><CustomerContextPanel item={activeTicket} role={me.data?.role ?? "viewer"}/></aside>}
       {activeTicket && showDetails && <div role="dialog" aria-modal="true" aria-label="Ticket and customer details" className="absolute inset-0 z-30 bg-slate-950/30 xl:hidden" onClick={() => setShowDetails(false)}><div className="absolute inset-y-0 right-0 flex w-full max-w-md flex-col bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}><header className="flex h-14 items-center justify-between border-b border-slate-200 px-4"><p className="font-semibold">Ticket details</p><button autoFocus onClick={() => setShowDetails(false)} className="rounded-lg px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50">Back to conversation</button></header><div className="min-h-0 flex-1"><CustomerContextPanel item={activeTicket} role={me.data?.role ?? "viewer"}/></div></div></div>}
     </div>
-  </div></MotionConfig>;
+  </div>;
 }
 
 function FilterButton({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) { return <button onClick={onClick} className={`rounded-lg px-2 py-2 text-xs font-semibold ${active ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>{children}</button>; }

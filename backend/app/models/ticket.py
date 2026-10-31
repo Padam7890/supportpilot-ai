@@ -44,6 +44,7 @@ class Ticket(UUIDPrimaryKey, TimestampMixin, Base):
     description: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(30), default="open", nullable=False)
     priority: Mapped[str] = mapped_column(String(20), default="normal", nullable=False)
+    source: Mapped[str] = mapped_column(String(32), default="manual", nullable=False)
 
     organization = relationship("Organization", back_populates="tickets")
     customer = relationship("Customer", back_populates="tickets")

@@ -165,6 +165,42 @@ async def update_ticket(
     )
 
 
+@router.post("/{ticket_id}/assign-to-me", response_model=TicketOut)
+async def assign_ticket_to_me(
+    ticket_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_roles("owner", "admin", "agent")),
+) -> TicketOut:
+    ticket = await db.scalar(
+        select(Ticket)
+        .where(Ticket.organization_id == user.organization_id, Ticket.id == ticket_id)
+        .with_for_update()
+    )
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if ticket.assignee_id not in (None, user.id):
+        raise HTTPException(status_code=409, detail="Ticket is already assigned to another teammate")
+    if ticket.assignee_id is None:
+        ticket.assignee_id = user.id
+        db.add(
+            TicketActivity(
+                organization_id=user.organization_id,
+                ticket_id=ticket.id,
+                actor_user_id=user.id,
+                activity_type="updated",
+                details={"assignee_id": {"from": None, "to": str(user.id)}},
+            )
+        )
+        await db.flush()
+    refreshed = await service(db).get(user.organization_id, ticket_id)
+    return TicketOut.model_validate(refreshed).model_copy(
+        update={
+            "customer_name": refreshed.customer.name if refreshed.customer else None,
+            "assignee_name": refreshed.assignee.full_name if refreshed.assignee else None,
+        }
+    )
+
+
 @router.get("/{ticket_id}/activity", response_model=list[TicketActivityOut])
 async def ticket_activity(
     ticket_id: UUID,

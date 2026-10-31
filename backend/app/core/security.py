@@ -128,3 +128,30 @@ def decode_invitation_token(token: str) -> dict:
     if claims.get("typ") != "invitation":
         raise jwt.InvalidTokenError("Expected invitation token")
     return claims
+
+
+def create_widget_visitor_token(
+    *, organization_id: str, widget_public_id: str, conversation_id: str, expires_at: datetime
+) -> str:
+    """Create a narrowly scoped storefront visitor token, never a workspace token."""
+    issued_at = datetime.now(UTC)
+    # Retries reuse the original expiry and cannot extend a visitor session.
+    return jwt.encode(
+        {
+            "sub": conversation_id,
+            "org": organization_id,
+            "wid": widget_public_id,
+            "typ": "widget_visitor",
+            "iat": issued_at,
+            "exp": expires_at,
+        },
+        settings.jwt_secret,
+        algorithm=ALGORITHM,
+    )
+
+
+def decode_widget_visitor_token(token: str) -> dict:
+    claims = jwt.decode(token, settings.jwt_secret, algorithms=[ALGORITHM])
+    if claims.get("typ") != "widget_visitor":
+        raise jwt.InvalidTokenError("Expected widget visitor token")
+    return claims

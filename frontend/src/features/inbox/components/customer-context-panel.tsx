@@ -2,14 +2,16 @@
 
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, Clock3, Mail, TicketCheck } from "lucide-react";
+import { ArrowUpRight, Clock3, Mail, TicketCheck, UserRoundCheck } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/input";
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
 import { listCustomerTickets } from "@/features/customers/api/customer-api";
 import { listMembers } from "@/features/organization/api/organization-api";
-import { getTicketActivity, updateTicket } from "@/features/tickets/api/ticket-api";
+import { assignTicketToMe, getTicketActivity, updateTicket } from "@/features/tickets/api/ticket-api";
 import type { Ticket, TicketActivity } from "@/features/tickets/types/ticket.types";
 import { formatDateTime } from "@/lib/utils";
+import { ShopifyCancellationPanel } from "@/features/commerce-actions/components/shopify-cancellation-panel";
 import type { InboxItem } from "../types/inbox.types";
 
 const statuses: Ticket["status"][] = ["open", "pending", "resolved", "closed"];
@@ -33,11 +35,22 @@ export function CustomerContextPanel({ item, role }: { item: InboxItem; role: st
       ]);
     },
   });
+  const claim = useMutation({
+    mutationFn: () => assignTicketToMe(item.ticketId),
+    onSuccess: async () => {
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["inbox"] }),
+        client.invalidateQueries({ queryKey: ["ticket", item.ticketId] }),
+        client.invalidateQueries({ queryKey: ["ticket-activity", item.ticketId] }),
+      ]);
+    },
+  });
 
   return <div className="h-full overflow-y-auto bg-slate-50/70">
     <div className="border-b border-slate-200 bg-white p-5">
       <div className="flex items-center gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-full bg-violet-100 text-base font-bold text-violet-800">{item.customer.name.trim().slice(0, 1).toUpperCase()}</span><div className="min-w-0"><h2 className="truncate font-semibold">{item.customer.name}</h2><p className="truncate text-xs text-slate-500">{item.customer.email ?? "No email address"}</p></div></div>
       <Link href={`/dashboard/customers/${item.customer.id}`} className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-blue-700 hover:underline">Customer profile <ArrowUpRight size={13}/></Link>
+      {item.customer.email && <Link href={`/dashboard/orders?email=${encodeURIComponent(item.customer.email)}`} className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-blue-700 hover:underline">Verify Shopify order <ArrowUpRight size={13}/></Link>}
     </div>
 
     <div className="space-y-4 p-4">
@@ -46,10 +59,14 @@ export function CustomerContextPanel({ item, role }: { item: InboxItem; role: st
         <PanelBody className="space-y-4">
           <div><label htmlFor="inbox-ticket-status" className="mb-1.5 block text-xs font-semibold text-slate-500">Status</label><Select id="inbox-ticket-status" value={item.status} disabled={!canEdit || update.isPending} onChange={(event) => update.mutate({ status: event.target.value as Ticket["status"] })}>{statuses.map((status) => <option key={status} value={status}>{titleCase(status)}</option>)}</Select></div>
           <div><label htmlFor="inbox-ticket-priority" className="mb-1.5 block text-xs font-semibold text-slate-500">Priority</label><Select id="inbox-ticket-priority" value={item.priority} disabled={!canEdit || update.isPending} onChange={(event) => update.mutate({ priority: event.target.value as Ticket["priority"] })}>{priorities.map((priority) => <option key={priority} value={priority}>{titleCase(priority)}</option>)}</Select></div>
-          <div><label htmlFor="inbox-ticket-assignee" className="mb-1.5 block text-xs font-semibold text-slate-500">Assignee</label><Select id="inbox-ticket-assignee" value={item.assignee?.id ?? ""} disabled={!canAssign || update.isPending || members.isPending} onChange={(event) => update.mutate({ assignee_id: event.target.value || null })}><option value="">Unassigned</option>{members.data?.filter((member) => member.is_active && ["owner", "admin", "agent"].includes(member.role)).map((member) => <option key={member.id} value={member.id}>{member.full_name} · {member.role}</option>)}</Select>{!canAssign && <p className="mt-1 text-xs text-slate-400">Only Owners and Admins can assign tickets.</p>}</div>
+          <div><label htmlFor="inbox-ticket-assignee" className="mb-1.5 block text-xs font-semibold text-slate-500">Assignee</label><Select id="inbox-ticket-assignee" value={item.assignee?.id ?? ""} disabled={!canAssign || update.isPending || members.isPending} onChange={(event) => update.mutate({ assignee_id: event.target.value || null })}><option value="">Unassigned</option>{members.data?.filter((member) => member.is_active && ["owner", "admin", "agent"].includes(member.role)).map((member) => <option key={member.id} value={member.id}>{member.full_name} · {member.role}</option>)}</Select>{!canAssign && <p className="mt-1 text-xs text-slate-400">Only Owners and Admins can choose another assignee.</p>}</div>
+          {canEdit && !item.assignee && <Button type="button" variant="secondary" className="w-full" disabled={claim.isPending} onClick={() => claim.mutate()}><UserRoundCheck size={15}/>{claim.isPending ? "Claiming…" : "Assign to me"}</Button>}
           {update.isError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-xs text-red-700">{update.error instanceof Error ? update.error.message : "Ticket could not be updated."}</p>}
+          {claim.isError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-xs text-red-700">{claim.error instanceof Error ? claim.error.message : "Ticket could not be claimed."}</p>}
         </PanelBody>
       </Panel>
+
+      <ShopifyCancellationPanel ticketId={item.ticketId}/>
 
       <Panel>
         <PanelHeader title="Recent tickets" action={<TicketCheck size={16} className="text-slate-400" />} />

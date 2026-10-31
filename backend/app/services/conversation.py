@@ -2,11 +2,12 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import HTTPException
+from sqlalchemy import select
 
 from app.models import Conversation, Message
 from app.repositories.conversation import ConversationRepository
 from app.repositories.ticket import TicketRepository
-from app.schemas.conversation import ConversationCreate, MessageCreate
+from app.schemas.conversation import ConversationCreate, InternalNoteCreate, MessageCreate
 
 
 class ConversationService:
@@ -39,7 +40,14 @@ class ConversationService:
     async def add_message(
         self, organization_id: UUID, user_id: UUID, conversation_id: UUID, data: MessageCreate
     ):
-        conversation = await self.repo.get(organization_id, conversation_id)
+        conversation = await self.repo.session.scalar(
+            select(Conversation)
+            .where(
+                Conversation.organization_id == organization_id,
+                Conversation.id == conversation_id,
+            )
+            .with_for_update()
+        )
         if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
         message = Message(
@@ -53,7 +61,40 @@ class ConversationService:
         conversation.updated_at = datetime.now(UTC)
         return await self.repo.add_message(message)
 
+    async def add_internal_note(
+        self,
+        organization_id: UUID,
+        user_id: UUID,
+        conversation_id: UUID,
+        data: InternalNoteCreate,
+    ):
+        conversation = await self.repo.session.scalar(
+            select(Conversation)
+            .where(
+                Conversation.organization_id == organization_id,
+                Conversation.id == conversation_id,
+            )
+            .with_for_update()
+        )
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        note = Message(
+            organization_id=organization_id,
+            conversation_id=conversation_id,
+            sender_type="internal_note",
+            sender_user_id=user_id,
+            content=data.content.strip(),
+            content_type="text",
+        )
+        conversation.updated_at = datetime.now(UTC)
+        return await self.repo.add_message(note)
+
     async def messages(self, organization_id: UUID, conversation_id: UUID):
         if not await self.repo.get(organization_id, conversation_id):
             raise HTTPException(status_code=404, detail="Conversation not found")
         return await self.repo.list_messages(organization_id, conversation_id)
+
+    async def internal_notes(self, organization_id: UUID, conversation_id: UUID):
+        if not await self.repo.get(organization_id, conversation_id):
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        return await self.repo.list_internal_notes(organization_id, conversation_id)

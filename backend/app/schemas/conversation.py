@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.common import TimestampedOut
 
@@ -21,6 +21,12 @@ class ConversationOut(TimestampedOut):
 class MessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=20000)
     content_type: str = Field(default="text", pattern=r"^(text|html|markdown)$")
+
+
+class InternalNoteCreate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    content: str = Field(min_length=1, max_length=20000)
 
 
 class MessageOut(TimestampedOut):

@@ -11,7 +11,7 @@ from redis.asyncio import Redis
 
 from app.api.router import api_router
 from app.core.config import settings
-from app.core.database import check_database, close_database
+from app.core.database import DatabaseSchemaOutOfDate, check_database, close_database
 from app.schemas.errors import ProblemDetails
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,7 @@ def problem_response(
     extra: dict[str, object] | None = None,
 ) -> JSONResponse:
     try:
-        title = HTTPStatus(status_code).phrase
+        title = "Unprocessable Content" if status_code == 422 else HTTPStatus(status_code).phrase
     except ValueError:
         title = "Application error"
     problem = ProblemDetails(
@@ -160,6 +160,12 @@ async def readiness() -> dict[str, object]:
         await check_database()
         redis_client: Redis = app.state.redis
         await redis_client.ping()
+    except DatabaseSchemaOutOfDate:
+        logger.warning("Database schema migrations are not current")
+        raise HTTPException(
+            status_code=503,
+            detail="Database schema migrations are not current. Apply the latest Alembic migrations.",
+        ) from None
     except Exception:
         logger.exception("Readiness check failed")
         raise HTTPException(
