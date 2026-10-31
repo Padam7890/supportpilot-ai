@@ -85,8 +85,21 @@ test("register, create customer and ticket, assign an agent, and exchange a mess
   await page.getByRole("link", { name: "Inbox" }).click();
   await page.getByRole("button", { name: /Taylor Customer.*Where is my order\?/ }).click();
   await expect(page.getByText("I am checking on this for you.")).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Customer context" })).toBeVisible();
+  await expect(page.getByText("Recent tickets", { exact: true })).toBeVisible();
   const inboxA11y = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
   expect(inboxA11y.violations.filter((violation) => ["critical", "serious"].includes(violation.impact ?? ""))).toEqual([]);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Open ticket and customer details" }).click();
+  const detailsDialog = page.getByRole("dialog", { name: "Ticket and customer details" });
+  await expect(detailsDialog).toBeVisible();
+  await expect(detailsDialog.getByLabel("Status")).toBeEnabled();
+  const mobileInboxA11y = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
+  expect(mobileInboxA11y.violations.filter((violation) => ["critical", "serious"].includes(violation.impact ?? ""))).toEqual([]);
+  await page.keyboard.press("Escape");
+  await expect(detailsDialog).toBeHidden();
+  await page.setViewportSize({ width: 1280, height: 800 });
 
   await page.getByRole("link", { name: "Knowledge" }).click();
   await page.getByLabel("Choose a PDF, text, or Markdown document").setInputFiles({
@@ -134,7 +147,11 @@ test("rejected tenant remains blocked from workspace login", async ({ page, brow
   expect((await page.context().cookies()).some((cookie) => cookie.name === "supportpilot_access")).toBe(false);
 });
 
-test("BFF rejects cross-origin mutations with Problem Details", async ({ page }) => {
+test("BFF exposes real readiness and rejects cross-origin mutations with Problem Details", async ({ page }) => {
+  const readiness = await page.request.get("/api/health/ready");
+  expect(readiness.status()).toBe(200);
+  expect((await readiness.json()).status).toBe("ready");
+
   const response = await page.request.post("/api/auth/logout", {
     headers: { origin: "https://untrusted.example" },
   });

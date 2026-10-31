@@ -130,7 +130,9 @@ async function requestBackend(
   body?: BodyInit,
   method = request.method,
 ) {
-  const upstreamUrl = `${backendUrl}/api/v1/${path}${new URL(request.url).search}`;
+  const isHealthCheck = path === "health/ready" || path === "health/live";
+  const upstreamPath = isHealthCheck ? `/${path}` : `/api/v1/${path}`;
+  const upstreamUrl = `${backendUrl}${upstreamPath}${new URL(request.url).search}`;
   const headers = new Headers();
   const contentType = request.headers.get("content-type");
   if (contentType) headers.set("content-type", contentType);

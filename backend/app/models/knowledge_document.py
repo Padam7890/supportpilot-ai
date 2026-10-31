@@ -11,9 +11,9 @@ from sqlalchemy import (
     LargeBinary,
     String,
     Text,
-    text,
     UniqueConstraint,
     Uuid,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 

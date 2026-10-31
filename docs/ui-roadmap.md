@@ -7,12 +7,26 @@ This roadmap tracks product screens separately from infrastructure delivery. A p
 | Phase | Scope | Status | Gate |
 | --- | --- | --- | --- |
 | Sprint 3 | Approval gate, shared UI foundation, inbox | In progress | PostgreSQL integration and Playwright workflows must run in CI. |
-| Sprint 4 | Knowledge documents and durable ingestion | Not started | Job retries, reprocessing, search, citations, tenant tests. |
+| Sprint 4 | Knowledge documents and durable ingestion | In progress | PostgreSQL integration and knowledge Playwright flow must pass. |
 | Sprint 5 | AI playground and grounded reply drafts | Not started | Persisted checkpoints, safe summaries, draft-only sending. |
 | Sprint 6 | Mock commerce and action approvals | Not started | Idempotent transactional state transitions and audit history. |
-| Sprint 7 | Analytics and evaluation | Not started | Real aggregate APIs and bounded time-series queries. |
-| Sprint 8 | Security and operational status | Not started | Tenant-scoped settings and dependency health APIs. |
+| Sprint 7 | Analytics and evaluation | Partial | Ticket counts, status/priority breakdowns, and volume exist; AI usage/costs and evaluation APIs/screens are missing. |
+| Sprint 8 | Security and operational status | Partial | A readiness indicator is backed by `/health/ready`; security settings and a fuller operational view are missing. |
 | Sprints 9–10 | Public pages, search, notifications | Not started | No capability or metric appears without a supporting API. |
+
+## Live sprint tracker
+
+Last verified: **2026-10-31**. Current delivery focus is closing the Sprint 3 and Sprint 4 acceptance gates; Sprint 5 is next.
+
+| Sprint | Implementation evidence | Verification evidence | Remaining work / gate |
+| --- | --- | --- | --- |
+| Sprint 3 | Tenant approval flow, isolated platform sessions, inbox filters/read state, responsive inbox context panel, real readiness status, and CI database/E2E jobs are present. | Backend Ruff passed; 11 backend tests passed and 8 PostgreSQL integration tests skipped locally. Frontend lint, typecheck, unit tests (4), OpenAPI drift check, and production build passed. Three Playwright workflows are discovered; they were not run. | Run the PostgreSQL-backed test suite and Playwright workflows in CI, then verify the run results. |
+| Sprint 4 | Tenant-scoped document upload/search, durable ingestion jobs with retries/reprocessing, and a knowledge UI are present. | The knowledge integration tests are among the 8 skipped because `TEST_DATABASE_URL` is not configured locally. The knowledge Playwright path is included in the discovered full-stack workflow but was not run. | Verify migrations, retry/cleanup behavior, tenant isolation, and the knowledge browser flow against isolated PostgreSQL in CI. |
+| Sprint 5 | No AI execution API, LangGraph checkpoint store, playground, or reply-draft UI is present yet. | Not run. | Implement durable checkpointed executions, safe summaries/citations/usage, provider configuration, and draft-only inbox assistance; add tests before marking started work complete. |
+| Sprint 6 | No mock commerce or refund/cancellation workflows are present yet. | Not run. | Implement separate approval/execution state machines, idempotency, role rules, transaction safety, and audit tests. |
+| Sprint 7 | Dashboard ticket aggregate API and overview exist. AI usage/cost and evaluation capabilities are not present. | Not revalidated in this tracker update. | Add bounded aggregate APIs and real analytics/evaluation screens, then run contract and tenant-isolation coverage. |
+| Sprint 8 | Dashboard readiness status now calls the backend health endpoint through the BFF. | BFF readiness is covered by a Playwright assertion, but that browser test was not run locally. | Add tenant security settings and operational status APIs/screens; run role, accessibility, and browser checks. |
+| Sprints 9–10 | No public marketing pages, command search, or notifications are present yet. | Not run. | Build public pages and only add search/notifications once permission-checked APIs support them. |
 
 ## Acceptance gates for every phase
 
@@ -31,6 +45,7 @@ This roadmap tracks product screens separately from infrastructure delivery. A p
 - Inbox rows are ticket-centered and use server-side filters, signed keyset cursors ordered by `updated_at DESC, ticket_id DESC`, and the generated snake_case wire contract.
 - If a ticket has multiple conversations, the UI requires a conversation choice before loading its transcript.
 - Unread count means customer messages after the current user’s read cursor across that ticket’s conversations. Opening a conversation advances only its cursor.
+- Inbox provides a desktop ticket/thread/customer-context workspace and a mobile single-panel flow; ticket updates, assignment permissions, customer ticket history, activity, and modal keyboard dismissal are covered by the browser workflow.
 - CI migrates with the migrator role, then runs API tests as the restricted runtime role and executes the approval/login Playwright paths.
 
 ### Sprint 4 — Knowledge
