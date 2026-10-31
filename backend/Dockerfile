@@ -16,6 +16,8 @@ RUN groupadd --system app \
     && useradd --system --gid app --create-home app
 
 COPY --chown=app:app app ./app
+COPY --chown=app:app alembic.ini ./alembic.ini
+COPY --chown=app:app migrations ./migrations
 COPY --chown=app:app tests ./tests
 
 USER app

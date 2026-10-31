@@ -17,6 +17,13 @@ class Settings(BaseSettings):
         ...,
         repr=False,
     )
+    jwt_secret: str = Field(
+        ...,
+        repr=False,
+    )
+    access_token_expire_minutes: int = 15
+    refresh_token_expire_days: int = 7
+    invitation_expire_hours: int = 72
     cors_origins: list[str] = [
         "http://localhost:3000",
     ]

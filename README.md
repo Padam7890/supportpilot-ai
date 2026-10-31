@@ -30,7 +30,7 @@ application with an AI orchestration layer.
 Clone the repository:
 
 ```bash
-git clone https://github.com/Padam786/supportpilot-ai
+git clone https://github.com/Padam7890/supportpilot-ai
 cd supportpilot-ai
 ```
 
@@ -47,7 +47,13 @@ Start the application:
 
 ```bash
 docker compose up --build -d
+docker compose run --rm migrate
 ```
+
+The first database initialization creates a restricted runtime role and a
+separate migration role. If your existing `postgres_data` volume predates that
+setup, run `docker compose exec postgres /docker-entrypoint-initdb.d/002-app-roles.sh`
+once before applying migrations.
 
 ## Services
 
@@ -60,27 +66,45 @@ docker compose up --build -d
 
 ## Development
 
-Backend tests:
+Backend unit and isolated PostgreSQL integration tests:
 
 ```bash
-docker compose exec api pytest -q
+docker compose --profile test run --rm backend-tests
 ```
 
 Backend lint:
 
 ```bash
-docker compose exec api ruff check app tests
+docker compose exec api ruff check app tests migrations
 ```
 
-Frontend lint:
+Frontend checks:
 
 ```bash
-docker compose exec frontend npm run lint
+cd frontend
+npm run typecheck
+npm run lint
+npm test
 ```
+
+After starting the local services and applying migrations, run browser workflows
+with `cd frontend && npx playwright install chromium && npm run test:e2e`.
 
 ## Project Status
 
-Sprint 1: Infrastructure and foundation.
+Sprint 3: Tenant-aware authentication, member invitations, customer and ticket
+management, dashboard statistics, conversations, activity history, and
+PostgreSQL row-level security. The UI uses a Next.js BFF with HttpOnly cookies;
+browser code never receives the access or refresh tokens.
+
+The frontend keeps App Router files thin: route groups and pages live in
+`frontend/src/app`, business UI, validation, types, and API functions are grouped
+under `frontend/src/features`, shared UI lives in `frontend/src/components`,
+and transport utilities live in `frontend/src/lib`. Feature modules are added
+as their workflows are implemented.
+
+See [backend/README-SPRINT2.md](backend/README-SPRINT2.md) for migration and
+database-role setup details.
 
 ## License
 

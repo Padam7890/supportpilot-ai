@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from redis.asyncio import Redis
 
+from app.api.router import api_router
 from app.core.config import settings
 from app.core.database import check_database, close_database
 
@@ -34,6 +35,7 @@ app = FastAPI(
     debug=settings.debug,
     lifespan=lifespan,
 )
+app.include_router(api_router, prefix=settings.api_v1_prefix)
 
 app.add_middleware(
     CORSMiddleware,

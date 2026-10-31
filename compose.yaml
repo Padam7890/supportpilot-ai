@@ -13,6 +13,10 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
       POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      APP_DB_USER: ${APP_DB_USER:-supportpilot_app}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-change_this_app_password}
+      MIGRATION_DB_USER: ${MIGRATION_DB_USER:-supportpilot_migrator}
+      MIGRATION_DB_PASSWORD: ${MIGRATION_DB_PASSWORD:-change_this_migration_password}
 
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
@@ -73,17 +77,16 @@ services:
 
     restart: unless-stopped
 
-    env_file:
-      - .env
-
     environment:
       APP_NAME: "SupportPilot AI"
       APP_ENV: development
       DEBUG: "true"
+      ACCESS_TOKEN_EXPIRE_MINUTES: "15"
 
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_URL: postgresql+asyncpg://${APP_DB_USER:-supportpilot_app}:${APP_DB_PASSWORD:-change_this_app_password}@postgres:5432/${POSTGRES_DB}
 
       REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:-local-development-only-change-me}
 
       CORS_ORIGINS: '["http://localhost:3000"]'
 
@@ -123,6 +126,95 @@ services:
       - supportpilot_network
 
 
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    profiles: ["tools"]
+    environment:
+      APP_NAME: "SupportPilot AI"
+      APP_ENV: development
+      DEBUG: "false"
+      DATABASE_URL: postgresql+asyncpg://${MIGRATION_DB_USER:-supportpilot_migrator}:${MIGRATION_DB_PASSWORD:-change_this_migration_password}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:-local-development-only-change-me}
+      ACCESS_TOKEN_EXPIRE_MINUTES: "15"
+      CORS_ORIGINS: '["http://localhost:3000"]'
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - supportpilot_network
+
+
+  test-postgres:
+    image: pgvector/pgvector:0.8.7-pg16-bookworm
+    profiles: ["test"]
+    environment:
+      POSTGRES_DB: supportpilot_test
+      POSTGRES_USER: supportpilot_test_admin
+      POSTGRES_PASSWORD: supportpilot_test_admin_password
+      APP_DB_USER: supportpilot_test_app
+      APP_DB_PASSWORD: supportpilot_test_app_password
+      MIGRATION_DB_USER: supportpilot_test_migrator
+      MIGRATION_DB_PASSWORD: supportpilot_test_migrator_password
+    ports:
+      - "127.0.0.1:${TEST_POSTGRES_PORT:-55432}:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    volumes:
+      - ./infrastructure/docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - supportpilot_network
+
+
+  test-migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    profiles: ["test"]
+    environment:
+      APP_NAME: "SupportPilot AI Test"
+      DATABASE_URL: postgresql+asyncpg://supportpilot_test_migrator:supportpilot_test_migrator_password@test-postgres:5432/supportpilot_test
+      REDIS_URL: redis://localhost:6379/0
+      JWT_SECRET: test-only-secret-that-is-long-enough
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      test-postgres:
+        condition: service_healthy
+    networks:
+      - supportpilot_network
+
+
+  backend-tests:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    profiles: ["test"]
+    environment:
+      APP_NAME: "SupportPilot AI Test"
+      APP_ENV: test
+      DATABASE_URL: postgresql+asyncpg://supportpilot_test_app:supportpilot_test_app_password@test-postgres:5432/supportpilot_test
+      REDIS_URL: redis://localhost:6379/0
+      JWT_SECRET: test-only-secret-that-is-long-enough
+      ACCESS_TOKEN_EXPIRE_MINUTES: "15"
+      TEST_DATABASE_URL: postgresql+asyncpg://supportpilot_test_app:supportpilot_test_app_password@test-postgres:5432/supportpilot_test
+    command: ["pytest", "-q"]
+    depends_on:
+      test-postgres:
+        condition: service_healthy
+      test-migrate:
+        condition: service_completed_successfully
+    networks:
+      - supportpilot_network
+
+
   # -----------------------------
   # Next.js Frontend
   # -----------------------------
@@ -136,15 +228,9 @@ services:
     environment:
       NODE_ENV: development
       NEXT_TELEMETRY_DISABLED: "1"
-      NEXT_PUBLIC_API_URL: http://localhost:${API_PORT:-8000}
+      BACKEND_API_URL: http://api:8000
 
-    command:
-      - npm
-      - run
-      - dev
-      - --
-      - --hostname
-      - 0.0.0.0
+    command: ["sh", "/app/docker-entrypoint.sh"]
 
     ports:
       - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"

@@ -1,26 +1,50 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+:root { --background: #f8fafc; --foreground: #0f172a; }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html[data-theme="dark"] {
+  --background: #0b1120;
+  --foreground: #f8fafc;
+  --color-white: #111827;
+  --color-slate-50: #0b1120;
+  --color-slate-100: #172033;
+  --color-slate-200: #263349;
+  --color-slate-300: #38465d;
+  --color-slate-400: #7f8da3;
+  --color-slate-500: #a0aec0;
+  --color-slate-600: #bdc7d6;
+  --color-slate-700: #d2d9e4;
+  --color-slate-800: #e2e8f0;
+  --color-slate-900: #f1f5f9;
+  --color-slate-950: #f8fafc;
+  --color-blue-50: #10213f;
+  --color-blue-100: #1b3157;
+  --color-blue-200: #294774;
+  --color-blue-700: #76a9ff;
+  --color-blue-800: #9ac0ff;
+  --color-blue-900: #bfd7ff;
+  --color-emerald-50: #0c2b26;
+  --color-emerald-700: #6ee7b7;
+  --color-orange-50: #342012;
+  --color-orange-700: #fdba74;
+  --color-violet-50: #251942;
+  --color-violet-700: #c4b5fd;
+  --color-red-50: #35191f;
+  --color-red-200: #6c2934;
+  --color-red-600: #fb7185;
+  --color-red-700: #fda4af;
+  --color-amber-50: #342710;
+  --color-amber-700: #fcd34d;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
