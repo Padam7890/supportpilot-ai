@@ -1,5 +1,6 @@
 """Tenant-scoped catalog persistence and durable provider sync operations."""
 
+import logging
 import random
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -7,13 +8,18 @@ from decimal import Decimal
 
 from fastapi import HTTPException
 from sqlalchemy import and_, func, or_, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import SessionLocal, set_tenant_context
 from app.integrations.core.contracts.catalog import CatalogProductSnapshot
 from app.integrations.core.contracts.provider import IntegrationConnectionRef
 from app.integrations.providers.shopify.catalog import ShopifyProductCatalogAdapter
-from app.integrations.providers.shopify.client import ShopifyAPIError, effective_shopify_scopes
+from app.integrations.providers.shopify.client import (
+    ShopifyAPIError,
+    effective_shopify_scopes,
+    log_shopify_api_event,
+)
 from app.models import (
     CatalogProduct,
     CatalogSyncJob,
@@ -27,6 +33,7 @@ from app.services.integration_connections import sync_shopify_connection
 PAGE_SIZE = 20
 MAX_SYNC_ATTEMPTS = 5
 JOB_LEASE = timedelta(minutes=5)
+logger = logging.getLogger(__name__)
 
 
 async def resolve_shopify_credentials(connection_ref: IntegrationConnectionRef) -> tuple[str, str]:
@@ -40,19 +47,39 @@ async def resolve_shopify_credentials(connection_ref: IntegrationConnectionRef) 
             )
         )
         if installation is None or installation.shop_domain != connection_ref.external_account_id:
-            raise LookupError("catalog_not_connected")
+            raise ShopifyAPIError("catalog_not_connected", status_code=409)
         from app.api.routes.integrations import valid_access_token
+        token_was_current = bool(
+            installation.access_token_expires_at
+            and installation.access_token_expires_at > datetime.now(UTC) + timedelta(minutes=5)
+        )
         try:
             token = await valid_access_token(db, installation)
         except HTTPException as exc:
             code = (
-                "shopify_scope_or_data_access_required"
+                "shopify_required_scopes_missing"
+                if exc.status_code == 403 and "did not grant the required" in str(exc.detail).casefold()
+                else "shopify_access_denied"
                 if exc.status_code == 403
                 else "shopify_reauthorization_required"
                 if exc.status_code == 409
-                else "shopify_unavailable"
+                else "shopify_credentials_unavailable"
+                if exc.status_code == 503
+                else "shopify_authorization_failed"
             )
-            raise ShopifyAPIError(code, status_code=exc.status_code) from exc
+            raise ShopifyAPIError(code, status_code=exc.status_code) from None
+        effective_scopes = effective_shopify_scopes(installation.granted_scopes or [])
+        log_shopify_api_event(
+            "catalog_credentials_resolved",
+            organization_id=str(connection_ref.organization_id),
+            connection_id=str(connection_ref.id),
+            shop_domain=installation.shop_domain,
+            token_source="cached" if token_was_current else "refreshed",
+            effective_scopes=sorted(effective_scopes),
+            product_scope_granted="read_products" in effective_scopes,
+        )
+        if "read_products" not in effective_scopes:
+            raise ShopifyAPIError("shopify_product_scope_missing", status_code=403)
         await db.commit()
         return installation.shop_domain, token
 
@@ -234,11 +261,22 @@ async def run_catalog_sync_page(
 
     adapter = ShopifyProductCatalogAdapter(resolve_credentials)
     try:
+        log_shopify_api_event(
+            "catalog_sync_product_fetch_started",
+            organization_id=str(organization_id),
+            connection_id=str(ref.id),
+            job_id=str(job_id),
+            job_status="running",
+            mode=mode,
+            cursor_supplied=cursor is not None,
+            request_attempted=False,
+        )
         page = await adapter.list_products(
             ref,
             limit=PAGE_SIZE,
             cursor=cursor,
             updated_after=updated_after if mode == "incremental" else None,
+            sync_job_id=job_id,
         )
         async with SessionLocal() as db:
             await set_tenant_context(db, organization_id)
@@ -261,6 +299,7 @@ async def run_catalog_sync_page(
             job.records_seen += len(page.items)
             job.attempt_count = 0
             job.cursor = page.next_cursor
+            job.last_error_code = None
             if not page.has_more:
                 if mode in {"full", "reconcile"}:
                     await db.execute(
@@ -280,7 +319,25 @@ async def run_catalog_sync_page(
                 job.status = "queued"
                 job.next_attempt_at = now
             job.lease_expires_at = None
+            persisted_product_count = len(page.items)
+            persisted_variant_count = sum(len(product.variants) for product in page.items)
+            final_status = job.status
+            records_seen = job.records_seen
             await db.commit()
+            log_shopify_api_event(
+                "catalog_sync_page_succeeded",
+                organization_id=str(organization_id),
+                connection_id=str(ref.id),
+                job_id=str(job_id),
+                mode=mode,
+                products_received=len(page.items),
+                products_persisted=persisted_product_count,
+                variants_persisted=persisted_variant_count,
+                records_seen=records_seen,
+                has_more=page.has_more,
+                job_status=final_status,
+                transaction_committed=True,
+            )
         return True
     except (ShopifyAPIError, TimeoutError, OSError) as exc:
         async with SessionLocal() as db:
@@ -305,7 +362,53 @@ async def run_catalog_sync_page(
                 delay = min(30 * (2 ** max(job.attempt_count - 1, 0)), 1800)
                 job.status = "queued"
                 job.next_attempt_at = datetime.now(UTC) + timedelta(seconds=delay + random.uniform(0, delay * 0.2))
+            log_shopify_api_event(
+                "catalog_sync_provider_failed",
+                level=logging.ERROR,
+                organization_id=str(organization_id),
+                connection_id=str(job.connection_id),
+                job_id=str(job.id),
+                error_code=job.last_error_code,
+                provider_reason_code=exc.reason_code if isinstance(exc, ShopifyAPIError) else None,
+                provider_status_code=exc.status_code if isinstance(exc, ShopifyAPIError) else None,
+                provider_diagnostics=list(exc.diagnostics) if isinstance(exc, ShopifyAPIError) else [],
+                retryable=retryable,
+                attempt_count=job.attempt_count,
+                max_attempts=job.max_attempts,
+                job_status=job.status,
+            )
             await db.commit()
+        return True
+    except SQLAlchemyError as exc:
+        log_shopify_api_event(
+            "catalog_sync_persistence_failed",
+            level=logging.ERROR,
+            organization_id=str(organization_id),
+            job_id=str(job_id),
+            error_type=type(exc).__name__,
+        )
+        try:
+            async with SessionLocal() as db:
+                await set_tenant_context(db, organization_id)
+                job = await db.scalar(
+                    select(CatalogSyncJob)
+                    .where(CatalogSyncJob.organization_id == organization_id, CatalogSyncJob.id == job_id)
+                    .with_for_update()
+                )
+                if job is not None:
+                    job.status = "failed"
+                    job.last_error_code = "catalog_persistence_failed"
+                    job.lease_expires_at = None
+                    job.completed_at = datetime.now(UTC)
+                    await db.commit()
+        except SQLAlchemyError as status_error:
+            log_shopify_api_event(
+                "catalog_sync_failure_status_update_failed",
+                level=logging.ERROR,
+                organization_id=str(organization_id),
+                job_id=str(job_id),
+                error_type=type(status_error).__name__,
+            )
         return True
 
 

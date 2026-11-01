@@ -14,6 +14,9 @@ from app.services.product_comparison import compare_verified_products
 from app.services.recommendations import (
     CatalogCandidate,
     build_recommendation_result,
+    candidate_matches_category,
+    extract_intent,
+    normalize_category,
     parse_intent_output,
 )
 
@@ -34,9 +37,14 @@ def candidate(*, title: str, price: str, currency: str = "NPR", brand: str = "Ac
 @pytest.mark.parametrize(
     ("message", "expected_category", "expected_currency"),
     [
-        ("Recommend a smartphone under Rs. 30,000 with good camera and battery", "smartphone", None),
-        ("मोबाइल सिफारिस गर्नुहोस् रु ३००००", "मोबाइल", "NPR"),
-        ("Mobile suggest gara budget NPR 30000", "mobile", "NPR"),
+        ("Recommend a smartphone under Rs. 30,000 with good camera and battery", "phone", None),
+        ("मोबाइल सिफारिस गर्नुहोस् रु ३००००", "phone", "NPR"),
+        ("Mobile suggest gara budget NPR 30000", "phone", "NPR"),
+        ("Do you have a mobile?", "phone", None),
+        ("Do you sell smartphones?", "phone", None),
+        ("Any phone available?", "phone", None),
+        ("Mobile xa?", "phone", None),
+        ("30 hajar muni phone xa?", "phone", None),
     ],
 )
 def test_malformed_intent_uses_bounded_multilingual_fallback(message, expected_category, expected_currency):
@@ -44,6 +52,39 @@ def test_malformed_intent_uses_bounded_multilingual_fallback(message, expected_c
     assert result.is_recommendation
     assert result.category == expected_category
     assert result.budget_currency == expected_currency
+    if "30 hajar" in message:
+        assert result.budget_amount == Decimal(30000)
+
+
+@pytest.mark.parametrize(
+    ("alias", "canonical"),
+    [
+        ("mobile", "phone"), ("cell phone", "phone"), ("notebook", "laptop"),
+        ("computer", "laptop"), ("wireless earphones", "earbuds"), ("TWS", "earbuds"),
+        ("television", "tv"), ("refrigerator", "fridge"),
+    ],
+)
+def test_common_product_categories_normalize(alias, canonical):
+    assert normalize_category(alias) == canonical
+
+
+@pytest.mark.asyncio
+async def test_provider_failure_uses_deterministic_intent_fallback(monkeypatch):
+    from app.services.ai_execution import AIProviderError
+
+    async def fail_provider(*_args, **_kwargs):
+        raise AIProviderError("provider_timeout", "provider unavailable")
+
+    monkeypatch.setattr("app.services.ai_execution.generate_completion", fail_provider)
+    intent, usage, model_name = await extract_intent(
+        "Recommend a phone under NPR 30000", ["Phones"], ["Acme"]
+    )
+
+    assert intent.is_recommendation is True
+    assert intent.budget_amount == Decimal(30000)
+    assert intent.budget_currency == "NPR"
+    assert usage == {}
+    assert model_name is None
 
 
 @pytest.mark.parametrize("raw", ["{}", "[]", '{"budget_amount":"-10"}', '{"result_count":100}'])
@@ -155,6 +196,40 @@ def test_empty_catalog_returns_typed_no_match():
     result = build_recommendation_result("Recommend a phone", RecommendationIntent(category="phone"), [])
     assert result.response_type == "no_match"
     assert not result.products
+    assert "catalog is empty" in result.explanation
+
+
+def test_empty_search_result_in_nonempty_catalog_is_not_reported_as_empty_catalog():
+    result = build_recommendation_result(
+        "Find a phone", RecommendationIntent(category="phone"), [], catalog_empty=False
+    )
+    assert result.response_type == "no_match"
+    assert "catalog is empty" not in result.explanation
+    assert "Try a different product category" in result.suggested_follow_ups
+
+
+def test_category_match_uses_aliases_in_existing_catalog_fields():
+    item = candidate(title="Galaxy Z", price="10000", category="Mobile devices", features={})
+    assert candidate_matches_category(item, "phone")
+
+
+def test_known_category_without_verified_catalog_evidence_is_no_match_not_clarification():
+    item = candidate(title="Cordless Gadget", price="10000", category="Electronics", features={})
+    item.product.description = "A household accessory"
+    result = build_recommendation_result(
+        "Do you have a mobile?", RecommendationIntent(category="mobile"), [item]
+    )
+    assert result.response_type == "no_match"
+    assert "phones available" in result.explanation
+
+
+def test_recommendation_followups_are_specific_to_category_and_result_state():
+    phone = candidate(title="Mobile phone", price="25000", category="Phones")
+    found = build_recommendation_result("Do you have a mobile?", RecommendationIntent(category="mobile"), [phone])
+    assert found.explanation.startswith("Yes, we have")
+    assert "camera" in " ".join(found.suggested_follow_ups).lower()
+    empty = build_recommendation_result("Find a phone", RecommendationIntent(category="phone"), [])
+    assert "Talk to a support teammate" in empty.suggested_follow_ups
 
 
 def test_recommendation_execution_response_serializes_the_typed_result_only():

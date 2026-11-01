@@ -10,7 +10,11 @@ from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_current_user, require_roles
 from app.db.session import get_db, set_tenant_context
-from app.integrations.providers.shopify.client import effective_shopify_scopes
+from app.integrations.providers.shopify.client import (
+    effective_shopify_scopes,
+    log_shopify_api_event,
+    log_shopify_event,
+)
 from app.integrations.providers.shopify.security import normalize_shop_domain, verify_webhook_hmac
 from app.models import (
     CatalogProduct,
@@ -71,13 +75,39 @@ async def catalog_status(
                 CatalogSyncJob.organization_id == user.organization_id,
                 CatalogSyncJob.connection_id == connection.id,
             )
-            .order_by(CatalogSyncJob.created_at.desc())
+            .order_by(CatalogSyncJob.created_at.desc(), CatalogSyncJob.id.desc())
             .limit(1)
         )
-        if latest:
-            last_sync = latest.completed_at if latest.status == "succeeded" else None
+        last_success = await db.scalar(
+            select(CatalogSyncJob)
+            .where(
+                CatalogSyncJob.organization_id == user.organization_id,
+                CatalogSyncJob.connection_id == connection.id,
+                CatalogSyncJob.status == "succeeded",
+                CatalogSyncJob.completed_at.is_not(None),
+            )
+            .order_by(CatalogSyncJob.completed_at.desc(), CatalogSyncJob.id.desc())
+            .limit(1)
+        )
+        if latest and latest.status == "failed":
             last_error = latest.last_error_code
+        if last_success:
+            last_sync = last_success.completed_at
     granted = set(installation.granted_scopes or []) if installation else set()
+    effective = effective_shopify_scopes(granted)
+    missing_catalog_scopes = {"read_products"} - effective
+    log_shopify_event(
+        "scope_check",
+        source="catalog_status",
+        organization_id=str(user.organization_id),
+        shop_domain=installation.shop_domain if installation else None,
+        granted_scopes=sorted(granted),
+        effective_scopes=sorted(effective),
+        required_catalog_scopes=["read_products"],
+        missing_catalog_scopes=sorted(missing_catalog_scopes),
+        product_count=count,
+        latest_sync_error_code=last_error,
+    )
     return CatalogStatusOut(
         connected=bool(connection and installation and installation.disconnected_at is None),
         product_scope_granted="read_products" in effective_shopify_scopes(granted),
@@ -164,7 +194,20 @@ async def start_catalog_sync(
     user: User = Depends(require_roles("owner", "admin")),
 ) -> CatalogSyncJobOut:
     installation, connection = await connected_shopify_connection(db, user.organization_id)
-    if "read_products" not in effective_shopify_scopes(installation.granted_scopes):
+    granted = set(installation.granted_scopes or [])
+    effective = effective_shopify_scopes(granted)
+    missing = {"read_products"} - effective
+    log_shopify_event(
+        "scope_check",
+        source="catalog_sync_request",
+        organization_id=str(user.organization_id),
+        shop_domain=installation.shop_domain,
+        granted_scopes=sorted(granted),
+        effective_scopes=sorted(effective),
+        required_catalog_scopes=["read_products"],
+        missing_catalog_scopes=sorted(missing),
+    )
+    if missing:
         raise HTTPException(status_code=403, detail="Shopify read_products permission is required; reconnect and grant product access")
     running = await db.scalar(
         select(CatalogSyncJob).where(
@@ -174,6 +217,14 @@ async def start_catalog_sync(
         ).order_by(CatalogSyncJob.created_at.desc()).limit(1)
     )
     if running:
+        log_shopify_api_event(
+            "catalog_sync_job_reused",
+            organization_id=str(user.organization_id),
+            connection_id=str(connection.id),
+            job_id=str(running.id),
+            job_status=running.status,
+            mode=running.mode,
+        )
         return CatalogSyncJobOut.model_validate(running)
     now = datetime.now(UTC)
     mode = payload.mode
@@ -205,6 +256,14 @@ async def start_catalog_sync(
     )
     db.add(job)
     await db.flush()
+    log_shopify_api_event(
+        "catalog_sync_job_queued",
+        organization_id=str(user.organization_id),
+        connection_id=str(connection.id),
+        job_id=str(job.id),
+        job_status=job.status,
+        mode=job.mode,
+    )
     return CatalogSyncJobOut.model_validate(job)
 
 

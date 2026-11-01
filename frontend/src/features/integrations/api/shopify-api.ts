@@ -6,14 +6,24 @@ export type ShopifyOrderLookup = components["schemas"]["ShopifyOrderLookupOut"];
 export type ShopifyOrder = components["schemas"]["ShopifyOrderOut"];
 export type ShopifyOrderPage = components["schemas"]["ShopifyOrderPageOut"];
 export type ShopifyOrderSummary = components["schemas"]["ShopifyOrderSummaryOut"];
+export type CatalogStatus = components["schemas"]["CatalogStatusOut"];
+export type CatalogSyncJob = components["schemas"]["CatalogSyncJobOut"];
 
 export const shopifyQueryKeys = {
   status: ["shopify", "status"] as const,
+  catalogStatus: ["shopify", "catalog-status"] as const,
+  catalogJob: (jobId: string) => ["shopify", "catalog-sync-job", jobId] as const,
   orders: (email: string, number: string, cursor?: string) => ["shopify", "orders", email, number, cursor] as const,
   orderPages: () => ["shopify", "order-pages"] as const,
 };
 
 export const getShopifyStatus = () => api<ShopifyStatus>("/integrations/shopify/status");
+export const getCatalogStatus = () => api<CatalogStatus>("/catalog/status");
+export const startCatalogSync = () => api<CatalogSyncJob>("/catalog/sync", {
+  method: "POST",
+  body: JSON.stringify({ mode: "full" }),
+});
+export const getCatalogSyncJob = (jobId: string) => api<CatalogSyncJob>(`/catalog/sync-jobs/${encodeURIComponent(jobId)}`);
 
 export function getShopifyOrders(values: { limit?: number; cursor?: string } = {}) {
   const query = new URLSearchParams({ limit: String(values.limit ?? 25) });

@@ -140,7 +140,7 @@ async def test_shopify_oauth_scope_tenant_isolation_lookup_verification_and_disc
     assert connect.status_code == 302
     auth_url = urlsplit(connect.headers["location"])
     assert auth_url.netloc == "demo-store.myshopify.com"
-    assert parse_qs(auth_url.query)["scope"] == ["read_orders,read_customers"]
+    assert parse_qs(auth_url.query)["scope"] == ["read_orders,read_customers,read_products"]
     state = parse_qs(auth_url.query)["state"][0]
 
     async def mock_token(shop_domain, data):
@@ -360,10 +360,11 @@ async def test_configured_store_connection_uses_server_credentials_and_encrypts_
     pytest.importorskip("cryptography")
     owner = await approved_workspace(client, "shopify-configured")
     organization_id = UUID(owner["user"]["organization_id"])
+    configured_shop = f"supportpilot-test-{uuid4().hex[:12]}.myshopify.com"
     from cryptography.fernet import Fernet
 
     monkeypatch.setattr(settings, "app_env", "development")
-    monkeypatch.setattr(settings, "shopify_store_domain", "supportpilot-demo-stor.myshopify.com")
+    monkeypatch.setattr(settings, "shopify_store_domain", configured_shop)
     monkeypatch.setattr(settings, "shopify_client_id", "real-test-client-id")
     monkeypatch.setattr(settings, "shopify_client_secret", SecretStr("real-test-client-secret"))
     monkeypatch.setattr(settings, "shopify_encryption_key", SecretStr(Fernet.generate_key().decode("ascii")))
@@ -383,9 +384,9 @@ async def test_configured_store_connection_uses_server_credentials_and_encrypts_
         headers=bearer(owner["access_token"]),
     )
     assert response.status_code == 200, response.text
-    assert calls == ["supportpilot-demo-stor.myshopify.com"]
+    assert calls == [configured_shop]
     assert response.json()["connected"] is True
-    assert response.json()["shop_domain"] == "supportpilot-demo-stor.myshopify.com"
+    assert response.json()["shop_domain"] == configured_shop
 
     async with SessionLocal() as db:
         await set_tenant_context(db, organization_id)

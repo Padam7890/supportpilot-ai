@@ -54,6 +54,8 @@ class CatalogStatusOut(BaseModel):
 
 
 class CatalogSyncJobOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     mode: Literal["full", "incremental", "reconcile"]
     status: Literal["queued", "running", "succeeded", "failed", "cancelled"]

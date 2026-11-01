@@ -28,7 +28,9 @@ from app.services.recommendation_tool_registry import (
 )
 from app.services.recommendations import (
     build_recommendation_result,
+    catalog_has_active_products,
     load_candidates,
+    normalize_category,
 )
 
 SHOPPING_CONTEXT_TTL = timedelta(days=30)
@@ -38,9 +40,9 @@ MAX_PREFERENCES = 20
 MAX_REJECTED_PRODUCTS = 50
 MAX_LAST_DISPLAYED = 5
 SHOPPING_CUES = re.compile(
-    r"\b(recommend|recommendation|suggest|phone|smartphone|mobile|laptop|camera|battery|budget|under|" 
-    r"only|compare|first|second|third|another|better|prefer|like|cheaper|lower|higher|not that|don't like|do not like|"
-    r"reset|remove preference|no preference|alternative|another|similar|unavailable|out of stock|sifaris|sujhab|khoj)\b|मोबाइल|फोन|ल्यापटप|सिफारिस|सुझाव|क्यामेरा|ब्याट्री",
+    r"\b(recommend|recommendation|suggest|phones?|smartphones?|mobiles?|cellphones?|cell phones?|laptops?|notebooks?|computers?|earbuds?|earphones?|tws|televisions?|tv|fridges?|refrigerators?|camera|battery|budget|under|muni|hajar|"
+    r"only|compare|first|second|third|another|better|prefer|like|cheaper|lower|higher|less expensive|different product category|not that|don't like|do not like|"
+    r"reset|remove preference|no preference|alternative|another|similar|unavailable|out of stock|sifaris|sujhab|khoj)\b|मोबाइल|फोन|ल्यापटप|सिफारिस|सुझाव|क्यामेरा|ब्याट्री|इयरफोन|टिभी|रेफ्रिजरेटर|हजार|मुनि",
     re.IGNORECASE,
 )
 
@@ -143,6 +145,13 @@ def fallback_turn_analysis(
         return ShoppingTurnAnalysis(action="reset")
     if re.search(r"\bcompare\b", folded):
         return ShoppingTurnAnalysis(action="compare", product_positions=_positions(folded, len(state.last_displayed_recommendations), comparison=True))
+    if state.active and re.search(r"\b(?:different|another|other) product categor(?:y|ies)\b", folded):
+        return ShoppingTurnAnalysis(action="change_category", clear_value=True)
+    if state.active and re.search(r"\b(?:cheaper|lower[- ]priced|less expensive|lower price)\b", folded):
+        return ShoppingTurnAnalysis(
+            action="start_or_refine",
+            intent_patch=state.intent.model_copy(update={"sort_by": "price_asc"}),
+        )
     if state.active and re.search(r"\b(alternative|alternatives|another|similar|instead|out of stock|unavailable)\b", folded):
         from app.services.recommendations import parse_intent_output
 
@@ -174,7 +183,7 @@ def fallback_turn_analysis(
         return ShoppingTurnAnalysis(action="add_preference", preference=feature)
     matching_category = next((category for category in (categories or []) if category.casefold() in folded), None)
     if intent.category or matching_category:
-        patch = intent.model_copy(update={"category": matching_category or intent.category})
+        patch = intent.model_copy(update={"category": normalize_category(matching_category or intent.category)})
         if state.active and state.intent.category and (matching_category or intent.category or "").casefold() != state.intent.category.casefold():
             return ShoppingTurnAnalysis(action="change_category", intent_patch=patch)
         return ShoppingTurnAnalysis(action="start_or_refine", intent_patch=patch)
@@ -244,11 +253,16 @@ def _merge_intent(state: ShoppingConversationState, patch: RecommendationIntent)
             continue
         if key in {"required_features", "excluded_brands", "optional_preferences"}:
             current[key] = list(dict.fromkeys(current[key] + value))[:12]
-        elif key in {"sort_by", "result_count"}:
+        elif key == "sort_by":
+            if value != "relevance":
+                current[key] = value
+            continue
+        elif key == "result_count":
             # The extractor returns defaults for omitted fields; preserve prior choices.
             continue
         elif value not in (None, [], ""):
             current[key] = value
+    current["category"] = normalize_category(current.get("category"))
     current["is_recommendation"] = True
     state.intent = RecommendationIntent.model_validate(current)
     state.required_constraints = list(dict.fromkeys(state.required_constraints + state.intent.required_features))[:12]
@@ -444,6 +458,11 @@ async def invoke_recommend_products(
     intent = make_recommendation_intent(state)
     if policy:
         intent.result_count = min(intent.result_count, policy.max_products)
+    catalog_empty = False
+    if not candidates and db is not None:
+        catalog_empty = not await catalog_has_active_products(db, organization_id)
+    elif not candidates:
+        catalog_empty = True
     tool_input = validate_tool_input("recommend_products", {
         "intent": intent.model_dump(mode="json"),
         "rejected_product_ids": [str(value) for value in state.rejected_product_ids],
@@ -456,6 +475,7 @@ async def invoke_recommend_products(
         eligible,
         soft_preference_weights=state.soft_preferences,
         ranking_preferences=policy.ranking_preferences if policy else None,
+        catalog_empty=catalog_empty,
     )
     refs = [
         DisplayedRecommendationRef(
@@ -550,7 +570,6 @@ def render_recommendation_reply(output: RecommendationToolOutput) -> str:
             lines.append("   Note: " + "; ".join(product.limitations[:2]) + ".")
         if product.product_url:
             lines.append(f"   {product.product_url}")
-    lines.append("Would you like to refine these choices, find alternatives, or compare 2–4 products?")
     return "\n".join(lines)
 
 

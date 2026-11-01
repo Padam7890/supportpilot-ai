@@ -99,6 +99,14 @@ def to_api_error(exc: ShopifyAPIError) -> HTTPException:
             "(write_orders includes read access), the store has granted the current app permissions, and the order "
             "is within the accessible order-history window."
         ),
+        "shopify_access_denied": (
+            "Shopify denied this request. Review the Shopify API diagnostic event for its access-denied code and field path."
+        ),
+        "shopify_required_scopes_missing": "The current Shopify access token is missing required app scopes.",
+        "shopify_product_scope_missing": "The current Shopify access token does not include read_products.",
+        "shopify_graphql_error": "Shopify returned a GraphQL validation or execution error. Review its safe diagnostic details in the API logs.",
+        "shopify_rate_limited": "Shopify rate-limited this request. Retry after the provider backoff.",
+        "shopify_credentials_unavailable": "Shopify credentials are unavailable. Check the server encryption configuration.",
         "shopify_reauthorization_required": "The Shopify connection needs to be reconnected.",
         "shopify_request_rejected": "Shopify rejected the read request.",
     }
@@ -406,6 +414,20 @@ async def shopify_status(
             else None,
         )
     missing_scopes = set(REQUIRED_SCOPES) - effective_shopify_scopes(installation.granted_scopes)
+    effective_scopes = effective_shopify_scopes(installation.granted_scopes)
+    catalog_missing_scopes = set(PRODUCT_CATALOG_SCOPES) - effective_scopes
+    log_shopify_event(
+        "scope_check",
+        source="integration_status",
+        organization_id=str(user.organization_id),
+        shop_domain=installation.shop_domain,
+        granted_scopes=sorted(installation.granted_scopes or []),
+        effective_scopes=sorted(effective_scopes),
+        required_order_scopes=sorted(REQUIRED_SCOPES),
+        missing_order_scopes=sorted(missing_scopes),
+        required_catalog_scopes=sorted(PRODUCT_CATALOG_SCOPES),
+        missing_catalog_scopes=sorted(catalog_missing_scopes),
+    )
     return ShopifyStatusOut(
         configured=oauth_is_configured(),
         connected=True,
@@ -497,6 +519,18 @@ async def connect_configured_shopify_store(
         )
         raise HTTPException(status_code=502, detail="Shopify returned invalid token metadata")
     effective_scopes = effective_shopify_scopes(granted_scopes)
+    log_shopify_event(
+        "scope_check",
+        source="configured_store_connect",
+        organization_id=str(user.organization_id),
+        shop_domain=shop_domain,
+        granted_scopes=sorted(granted_scopes),
+        effective_scopes=sorted(effective_scopes),
+        required_order_scopes=sorted(REQUIRED_SCOPES),
+        missing_order_scopes=sorted(set(REQUIRED_SCOPES) - effective_scopes),
+        required_catalog_scopes=sorted(PRODUCT_CATALOG_SCOPES),
+        missing_catalog_scopes=sorted(set(PRODUCT_CATALOG_SCOPES) - effective_scopes),
+    )
     missing_scopes = set(REQUIRED_SCOPES) - effective_scopes
     if missing_scopes:
         log_shopify_event(

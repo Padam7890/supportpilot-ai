@@ -165,6 +165,8 @@ async def main() -> None:
                 "catalog_variants",
                 "catalog_sync_jobs",
                 "catalog_webhook_events",
+                "recommendation_settings",
+                "recommendation_events",
             }
             actual_tables = {row.relname for row in rls_tables}
             if actual_tables != expected_tables:

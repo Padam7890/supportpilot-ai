@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -47,11 +48,40 @@ def test_product_normalization_keeps_price_on_variant_and_strips_html():
     assert product.variants[0].attributes == {"Color": "Blue"}
 
 
+def test_shopify_2026_money_scalars_use_verified_shop_currency():
+    product = shopify_catalog.map_product(
+        {
+            "id": "gid://shopify/Product/11",
+            "title": "Wool scarf",
+            "status": "ACTIVE",
+            "variants": {
+                "nodes": [
+                    {
+                        "id": "gid://shopify/ProductVariant/21",
+                        "title": "Default",
+                        "price": "1499.50",
+                        "compareAtPrice": "1799.00",
+                        "availableForSale": True,
+                    }
+                ],
+                "pageInfo": {"hasNextPage": False, "endCursor": None},
+            },
+        },
+        default_currency="NPR",
+    )
+
+    assert str(product.variants[0].price) == "1499.50"
+    assert str(product.variants[0].compare_at_price) == "1799.00"
+    assert product.variants[0].currency == "NPR"
+    assert "price { amount currencyCode }" not in shopify_catalog.PRODUCTS_QUERY
+    assert "shop { currencyCode }" in shopify_catalog.PRODUCTS_QUERY
+
+
 @pytest.mark.anyio
-async def test_shopify_product_pagination_normalizes_all_pages(monkeypatch):
+async def test_shopify_product_pagination_normalizes_all_pages(monkeypatch, caplog):
     calls = []
 
-    async def fake_graphql(_shop, _token, _query, variables):
+    async def fake_graphql(_shop, _token, _query, variables, **_kwargs):
         calls.append(variables)
         page_number = len(calls)
         return {
@@ -72,6 +102,8 @@ async def test_shopify_product_pagination_normalizes_all_pages(monkeypatch):
         }
 
     monkeypatch.setattr(shopify_catalog, "graphql", fake_graphql)
+    from app.integrations.providers.shopify import client as shopify_client
+
     connection = IntegrationConnectionRef(
         id=uuid4(),
         organization_id=uuid4(),
@@ -83,8 +115,9 @@ async def test_shopify_product_pagination_normalizes_all_pages(monkeypatch):
         return "demo.myshopify.com", "should-not-be-logged"
 
     adapter = shopify_catalog.ShopifyProductCatalogAdapter(credentials)
-    first = await adapter.list_products(connection, limit=20, cursor=None)
-    second = await adapter.list_products(connection, limit=20, cursor=first.next_cursor)
+    with caplog.at_level("INFO", logger=shopify_client.__name__):
+        first = await adapter.list_products(connection, limit=20, cursor=None)
+        second = await adapter.list_products(connection, limit=20, cursor=first.next_cursor)
 
     assert first.has_more is True
     assert first.next_cursor == "cursor-page-2"
@@ -92,6 +125,40 @@ async def test_shopify_product_pagination_normalizes_all_pages(monkeypatch):
     assert [item.title for item in first.items + second.items] == ["Product 1", "Product 2"]
     assert calls[0]["after"] is None
     assert calls[1]["after"] == "cursor-page-2"
+    assert caplog.text.count('"event": "catalog_products_response"') == 2
+    assert '"products_returned": 1' in caplog.text
+    assert '"has_more": true' in caplog.text
+    assert '"has_more": false' in caplog.text
+    assert "should-not-be-logged" not in caplog.text
+    assert "Product 1" not in caplog.text
+
+
+@pytest.mark.anyio
+async def test_shopify_empty_product_catalog_is_a_valid_empty_page(monkeypatch):
+    async def fake_graphql(_shop, _token, _query, _variables, **_kwargs):
+        return {
+            "products": {
+                "nodes": [],
+                "pageInfo": {"hasNextPage": False, "endCursor": None},
+            }
+        }
+
+    monkeypatch.setattr(shopify_catalog, "graphql", fake_graphql)
+    connection = IntegrationConnectionRef(
+        id=uuid4(),
+        organization_id=uuid4(),
+        provider_id="shopify",
+        external_account_id="empty-demo.myshopify.com",
+    )
+    adapter = shopify_catalog.ShopifyProductCatalogAdapter(
+        lambda _connection: _credentials("empty-demo.myshopify.com", "private-token")
+    )
+
+    page = await adapter.list_products(connection, limit=20, cursor=None)
+
+    assert page.items == []
+    assert page.has_more is False
+    assert page.next_cursor is None
 
 
 @pytest.mark.anyio
@@ -111,6 +178,42 @@ async def test_shopify_adapter_propagates_safe_api_failure(monkeypatch):
     )
     with pytest.raises(ShopifyAPIError, match="shopify_unavailable"):
         await adapter.list_products(connection, limit=10, cursor=None)
+
+
+@pytest.mark.anyio
+async def test_catalog_credentials_reject_installation_for_a_different_shop(monkeypatch):
+    from app.services import catalog as catalog_service
+
+    connection = IntegrationConnectionRef(
+        id=uuid4(),
+        organization_id=uuid4(),
+        provider_id="shopify",
+        external_account_id="expected-shop.myshopify.com",
+    )
+    other_shop_installation = SimpleNamespace(
+        shop_domain="different-shop.myshopify.com",
+        disconnected_at=None,
+        access_token_encrypted="must-not-be-used",
+    )
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def scalar(self, _statement):
+            return other_shop_installation
+
+    async def no_op_tenant_context(_session, _organization_id):
+        return None
+
+    monkeypatch.setattr(catalog_service, "SessionLocal", FakeSession)
+    monkeypatch.setattr(catalog_service, "set_tenant_context", no_op_tenant_context)
+
+    with pytest.raises(ShopifyAPIError, match="catalog_not_connected"):
+        await catalog_service.resolve_shopify_credentials(connection)
 
 
 @pytest.mark.anyio

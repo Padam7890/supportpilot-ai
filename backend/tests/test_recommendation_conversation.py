@@ -8,6 +8,7 @@ import pytest
 from app.schemas.conversation import ConversationOut
 from app.schemas.recommendations import RecommendationIntent
 from app.services.recommendation_conversation import (
+    SHOPPING_CUES,
     ShoppingConversationState,
     ShoppingTurnAnalysis,
     apply_shopping_turn,
@@ -59,6 +60,16 @@ def test_better_camera_is_soft_preference_and_increases_weight():
     assert "camera" not in next_state.required_constraints
     assert next_state.intent.category == "phone"
     assert next_state.intent.budget_amount == 30000
+
+
+def test_cheaper_followup_sorts_by_price_without_relaxing_strict_budget():
+    state = state_with_results()
+    analysis = fallback_turn_analysis("Show cheaper options", state)
+    next_state, action, _, _ = apply_shopping_turn(state, analysis)
+    assert action == "recommend"
+    assert next_state.intent.sort_by == "price_asc"
+    assert next_state.intent.budget_amount == Decimal(30000)
+    assert next_state.intent.budget_strict is True
 
 
 def test_soft_preference_weight_changes_ranking_deterministically():
@@ -271,6 +282,28 @@ def test_k_budget_is_parsed_as_thousands_for_conversational_refinement():
     assert analysis.action == "start_or_refine"
     assert analysis.intent_patch is not None
     assert analysis.intent_patch.budget_amount == 30000
+
+
+@pytest.mark.parametrize(
+    ("message", "category"),
+    [
+        ("Do you have a mobile?", "phone"),
+        ("Do you sell smartphones?", "phone"),
+        ("Any phone available?", "phone"),
+        ("Mobile xa?", "phone"),
+        ("30 hajar muni phone xa?", "phone"),
+        ("Show me a notebook", "laptop"),
+        ("TWS cha?", "earbuds"),
+        ("television khoj", "tv"),
+        ("refrigerator", "fridge"),
+    ],
+)
+def test_product_discovery_phrases_are_routed_as_shopping(message, category):
+    assert SHOPPING_CUES.search(message)
+    analysis = fallback_turn_analysis(message, ShoppingConversationState())
+    assert analysis.action == "start_or_refine"
+    assert analysis.intent_patch is not None
+    assert analysis.intent_patch.category == category
 
 
 def test_tool_registry_rejects_unknown_tools_and_extra_fields():

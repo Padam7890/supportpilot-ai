@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import Mapping
 from typing import Any
 
 import httpx
@@ -33,6 +34,10 @@ __all__ = [
 logger = logging.getLogger(__name__)
 _SENSITIVE_LOG_KEY_PARTS = ("secret", "token", "authorization", "assertion", "password", "hmac")
 _SENSITIVE_LOG_KEYS = {"code", "state"}
+_EMAIL_PATTERN = re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
+_PHONE_PATTERN = re.compile(r"(?<!\w)(?:\+?\d[\d .()-]{7,}\d)(?!\w)")
+_BEARER_PATTERN = re.compile(r"(?i)\bBearer\s+\S+")
+_SHOPIFY_TOKEN_PATTERN = re.compile(r"\bshp(?:at|ss|ca|pa)_[A-Za-z0-9_-]+\b")
 
 
 def _is_sensitive_log_key(key: str) -> bool:
@@ -71,11 +76,56 @@ def log_shopify_api_event(event: str, *, level: int = logging.INFO, **fields: An
 
 
 class ShopifyAPIError(Exception):
-    def __init__(self, code: str, *, status_code: int = 502, reason_code: str | None = None):
+    def __init__(
+        self,
+        code: str,
+        *,
+        status_code: int = 502,
+        reason_code: str | None = None,
+        diagnostics: tuple[dict[str, Any], ...] = (),
+    ):
         self.code = code
         self.status_code = status_code
         self.reason_code = reason_code
+        self.diagnostics = diagnostics
         super().__init__(code)
+
+
+def _safe_graphql_diagnostics(
+    errors: Any,
+    *,
+    sensitive_values: tuple[str, ...] = (),
+    include_messages: bool = False,
+) -> tuple[dict[str, Any], ...]:
+    """Keep useful provider error context while redacting possible PII/secrets."""
+    if not isinstance(errors, list):
+        return ()
+    diagnostics: list[dict[str, Any]] = []
+    for error in errors[:5]:
+        if not isinstance(error, dict):
+            continue
+        extensions = error.get("extensions")
+        code = extensions.get("code") if isinstance(extensions, dict) else None
+        path = error.get("path")
+        safe_path = [part for part in path[:8] if isinstance(part, (str, int))] if isinstance(path, list) else None
+        message = error.get("message")
+        safe_message = None
+        if include_messages and isinstance(message, str):
+            safe_message = " ".join(message.split())[:500]
+            for sensitive_value in sensitive_values:
+                if sensitive_value:
+                    safe_message = safe_message.replace(sensitive_value, "[REDACTED_SECRET]")
+            safe_message = _EMAIL_PATTERN.sub("[REDACTED_EMAIL]", safe_message)
+            safe_message = _PHONE_PATTERN.sub("[REDACTED_PHONE]", safe_message)
+            safe_message = _BEARER_PATTERN.sub("Bearer [REDACTED]", safe_message)
+            safe_message = _SHOPIFY_TOKEN_PATTERN.sub("[REDACTED_TOKEN]", safe_message)
+            safe_message = re.sub(r"https?://\S+", "[REDACTED_URL]", safe_message)
+        diagnostics.append({
+            "code": code if isinstance(code, str) else None,
+            "path": safe_path,
+            "message": safe_message,
+        })
+    return tuple(diagnostics)
 
 
 async def request_oauth_token(shop_domain: str, data: dict[str, str]) -> dict[str, Any]:
@@ -179,7 +229,14 @@ async def request_client_credentials_token(shop_domain: str) -> dict[str, Any]:
     )
 
 
-async def graphql(shop_domain: str, access_token: str, query: str, variables: dict[str, Any]) -> dict[str, Any]:
+async def graphql(
+    shop_domain: str,
+    access_token: str,
+    query: str,
+    variables: dict[str, Any],
+    *,
+    diagnostic_context: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
     api_version = settings.shopify_api_version
     if len(api_version) != 7 or api_version[4] != "-" or not api_version.replace("-", "").isdigit():
         raise ShopifyAPIError("shopify_api_version_invalid", status_code=503)
@@ -188,10 +245,13 @@ async def graphql(shop_domain: str, access_token: str, query: str, variables: di
     operation_name = operation_match.group(2) if operation_match else "anonymous"
     query_fingerprint = hashlib.sha256(query.encode("utf-8")).hexdigest()
     started_at = time.monotonic()
+    safe_context = dict(diagnostic_context or {})
     log_shopify_api_event(
         "graphql_request",
+        **safe_context,
         shop_domain=shop_domain,
         api_version=api_version,
+        request_attempted=True,
         operation_type=operation_type,
         operation_name=operation_name,
         query_fingerprint=query_fingerprint,
@@ -212,6 +272,7 @@ async def graphql(shop_domain: str, access_token: str, query: str, variables: di
         except httpx.HTTPError as exc:
             log_shopify_api_event(
                 "graphql_transport_error",
+                **safe_context,
                 shop_domain=shop_domain,
                 api_version=api_version,
                 operation_name=operation_name,
@@ -232,39 +293,71 @@ async def graphql(shop_domain: str, access_token: str, query: str, variables: di
         and isinstance(error.get("extensions"), dict)
         and isinstance(error.get("extensions", {}).get("code"), str)
     }) if isinstance(errors, list) else []
+    diagnostics = _safe_graphql_diagnostics(
+        errors,
+        sensitive_values=(access_token,),
+        include_messages=operation_name.startswith("SupportPilotProduct"),
+    )
+    response_headers = getattr(response, "headers", {})
+    served_api_version = response_headers.get("x-shopify-api-version") if hasattr(response_headers, "get") else None
+    extensions = body.get("extensions") if isinstance(body, dict) else None
+    cost = extensions.get("cost") if isinstance(extensions, dict) else None
+    safe_cost = None
+    if isinstance(cost, dict):
+        throttle = cost.get("throttleStatus")
+        safe_cost = {
+            "requested_query_cost": cost.get("requestedQueryCost"),
+            "actual_query_cost": cost.get("actualQueryCost"),
+            "throttle_status": {
+                key: throttle.get(key)
+                for key in ("maximumAvailable", "currentlyAvailable", "restoreRate")
+                if isinstance(throttle, dict) and isinstance(throttle.get(key), (int, float))
+            },
+        }
     log_shopify_api_event(
         "graphql_response",
         level=logging.ERROR if response.status_code >= 400 or error_codes else logging.INFO,
+        **safe_context,
         shop_domain=shop_domain,
         api_version=api_version,
         operation_name=operation_name,
         query_fingerprint=query_fingerprint,
         status_code=response.status_code,
+        served_api_version=served_api_version,
         elapsed_ms=round((time.monotonic() - started_at) * 1000),
-        request_id=getattr(response, "headers", {}).get("x-request-id"),
+        request_id=response_headers.get("x-request-id") if hasattr(response_headers, "get") else None,
         graphql_error_count=len(errors) if isinstance(errors, list) else 0,
         graphql_error_codes=error_codes,
+        graphql_errors=diagnostics,
+        graphql_cost=safe_cost,
         data_present=isinstance(body, dict) and isinstance(body.get("data"), dict),
     )
     if response.status_code == 401:
         raise ShopifyAPIError("shopify_reauthorization_required", status_code=409)
     if response.status_code == 403:
-        raise ShopifyAPIError("shopify_scope_or_data_access_required", status_code=403)
+        raise ShopifyAPIError("shopify_access_denied", status_code=403, diagnostics=diagnostics)
     if response.status_code == 429:
         raise ShopifyAPIError("shopify_rate_limited", status_code=429)
     if response.status_code >= 500:
         raise ShopifyAPIError("shopify_unavailable")
     if response.status_code >= 400:
+        if isinstance(errors, list) and errors:
+            if "THROTTLED" in error_codes:
+                raise ShopifyAPIError("shopify_rate_limited", status_code=429, diagnostics=diagnostics)
+            if "ACCESS_DENIED" in error_codes:
+                raise ShopifyAPIError("shopify_access_denied", status_code=403, diagnostics=diagnostics)
+            raise ShopifyAPIError("shopify_graphql_error", status_code=422, diagnostics=diagnostics)
         raise ShopifyAPIError("shopify_request_rejected", status_code=502)
     if body is None:
         raise ShopifyAPIError("shopify_invalid_response")
     if not isinstance(body, dict):
         raise ShopifyAPIError("shopify_invalid_response")
     if body.get("errors"):
-        # Shopify can return HTTP 200 with GraphQL access-denied or redaction errors.
         if "THROTTLED" in error_codes:
-            raise ShopifyAPIError("shopify_rate_limited", status_code=429)
-        raise ShopifyAPIError("shopify_scope_or_data_access_required", status_code=403)
+            raise ShopifyAPIError("shopify_rate_limited", status_code=429, diagnostics=diagnostics)
+        if "ACCESS_DENIED" in error_codes:
+            raise ShopifyAPIError("shopify_access_denied", status_code=403, diagnostics=diagnostics)
+        raise ShopifyAPIError("shopify_graphql_error", status_code=422, diagnostics=diagnostics)
     data = body.get("data")
     if not isinstance(data, dict):
         raise ShopifyAPIError("shopify_invalid_response")

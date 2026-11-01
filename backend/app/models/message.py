@@ -32,6 +32,12 @@ class Message(UUIDPrimaryKey, TimestampMixin, Base):
             "created_at",
         ),
         UniqueConstraint("organization_id", "id", name="uq_messages_org_id"),
+        UniqueConstraint("organization_id", "source_ai_execution_id", name="uq_messages_org_ai_execution"),
+        ForeignKeyConstraint(
+            ["organization_id", "source_ai_execution_id"],
+            ["ai_executions.organization_id", "ai_executions.id"],
+            name="fk_messages_source_ai_execution",
+        ),
         UniqueConstraint(
             "organization_id",
             "conversation_id",
@@ -69,6 +75,7 @@ class Message(UUIDPrimaryKey, TimestampMixin, Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     content_type: Mapped[str] = mapped_column(String(30), default="text", nullable=False)
     widget_idempotency_hash: Mapped[str | None] = mapped_column(String(64))
+    source_ai_execution_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
     external_message_id: Mapped[str | None] = mapped_column(String(512))
     delivery_status: Mapped[str | None] = mapped_column(String(24))
     provider_metadata: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)

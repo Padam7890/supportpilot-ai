@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from sqlalchemy import and_, func, literal_column, or_, select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.db.session import SessionLocal, set_tenant_context
 from app.models import (
@@ -27,6 +28,7 @@ from app.services.recommendation_conversation import process_widget_shopping_tur
 from app.services.recommendation_tool_registry import ToolReference
 from app.services.recommendations import (
     build_recommendation_result,
+    catalog_has_active_products,
     extract_intent,
     load_candidates,
 )
@@ -38,6 +40,7 @@ from app.services.widget_ai import (
     widget_greeting_reply,
     widget_is_cancellation_request,
     widget_missing_knowledge_reply,
+    widget_purchase_reply,
     widget_request_needs_order_verification,
     widget_sensitive_reply,
 )
@@ -361,6 +364,7 @@ async def process_ai_execution(organization_id: UUID, execution_id: UUID) -> Non
             async with SessionLocal() as db:
                 await set_tenant_context(db, organization_id)
                 candidates, categories, brands = await load_candidates(db, organization_id, question)
+                catalog_empty = not await catalog_has_active_products(db, organization_id) if not candidates else False
                 policy = await db.scalar(select(RecommendationSettings).where(RecommendationSettings.organization_id == organization_id))
             if policy is not None and not policy.enabled:
                 from app.schemas.recommendations import RecommendationResult
@@ -390,6 +394,7 @@ async def process_ai_execution(organization_id: UUID, execution_id: UUID) -> Non
                     intent,
                     candidates,
                     ranking_preferences=policy.ranking_preferences if policy else None,
+                    catalog_empty=catalog_empty,
                 )
             async with SessionLocal() as db:
                 await set_tenant_context(db, organization_id)
@@ -415,6 +420,20 @@ async def process_ai_execution(organization_id: UUID, execution_id: UUID) -> Non
             if await widget_reply_is_stale(organization_id, execution_id):
                 return
             delivery_status = "draft_ready" if execution.delivery_mode == "draft_only" else "sent"
+            purchase_reply = widget_purchase_reply(execution.question)
+            if purchase_reply is not None:
+                await finish_widget_reply(
+                    organization_id,
+                    execution_id,
+                    draft=purchase_reply,
+                    reply_status=delivery_status,
+                    safe_summary="The shopper asked to place an order and was directed to the merchant’s checkout; no purchase was created.",
+                    citations=[],
+                    outcomes=[],
+                    usage={},
+                    model_name=None,
+                )
+                return
             sensitive_reply = widget_sensitive_reply(execution.question)
             if sensitive_reply is not None:
                 draft, safe_summary = sensitive_reply
@@ -902,30 +921,35 @@ async def finish_widget_reply(
         row.error_code = None
         row.completed_at = now
         if reply_status == "sent" or (reply_status == "escalated" and row.delivery_mode == "auto_reply" and widget is not None and widget.ai_enabled and widget.enabled):
-            db.add(
-                Message(
+            inserted_assistant_id = await db.scalar(
+                pg_insert(Message)
+                .values(
                     organization_id=organization_id,
                     conversation_id=conversation.id,
                     sender_type="assistant",
                     sender_user_id=None,
                     content=draft,
                     content_type="text",
+                    source_ai_execution_id=row.id,
                     provider_metadata=(
                         {"recommendation": recommendation_payload}
                         if recommendation_payload is not None
                         else {}
                     ),
                 )
+                .on_conflict_do_nothing(constraint="uq_messages_org_ai_execution")
+                .returning(Message.id)
             )
-            conversation.updated_at = now
-            ticket = await db.scalar(
-                select(Ticket).where(
-                    Ticket.id == conversation.ticket_id,
-                    Ticket.organization_id == organization_id,
+            if inserted_assistant_id is not None:
+                conversation.updated_at = now
+                ticket = await db.scalar(
+                    select(Ticket).where(
+                        Ticket.id == conversation.ticket_id,
+                        Ticket.organization_id == organization_id,
+                    )
                 )
-            )
-            if ticket is not None:
-                ticket.updated_at = now
+                if ticket is not None:
+                    ticket.updated_at = now
         if recommendation_payload is not None:
             response_type = recommendation_payload.get("response_type")
             event_type = "no_result" if response_type == "no_match" else "comparison" if response_type == "comparison" else None

@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.config import settings
 from app.core.security import hash_password
@@ -21,7 +21,7 @@ from app.models import (
     WidgetOrderVerification,
     WidgetSubmission,
 )
-from app.services.ai_worker import claim_ai_execution, process_ai_execution
+from app.services.ai_worker import claim_ai_execution, finish_widget_reply, process_ai_execution
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("TEST_DATABASE_URL"),
@@ -245,7 +245,7 @@ async def test_widget_variant_comparison_accepts_only_variants_from_latest_recom
         json={
             "content": "Compare the first two products",
             "recommendation_selections": [
-                {"product_id": str(product_ids[0]), "variant_id": str(option_ids[1][0])},
+                {"product_id": str(product_ids[0]), "variant_id": str(option_ids[0][1])},
                 {"product_id": str(product_ids[1]), "variant_id": str(option_ids[1][0])},
             ],
         },
@@ -516,6 +516,59 @@ async def test_widget_auto_reply_answers_standalone_greeting_without_knowledge_o
         "Hi there! I’m your store’s support assistant. I can help with order updates, product questions, "
         "and store policies. What can I help you with?"
     )
+
+
+@pytest.mark.anyio
+async def test_widget_ai_reply_is_bound_to_one_execution_and_retry_is_idempotent(client):
+    _auth, organization_id, public_id = await setup_widget(
+        client,
+        "widget-reply-idempotency",
+        "https://store-reply-idempotency.example",
+        ai_enabled=True,
+        ai_reply_mode="auto_reply",
+    )
+    origin = "https://store-reply-idempotency.example"
+    started = await client.post(
+        f"/api/v1/widget/{public_id}/messages",
+        headers={"Origin": origin, "Idempotency-Key": "widget-reply-idempotency-0001"},
+        json={"content": "hello"},
+    )
+    assert started.status_code == 201, started.text
+    execution_id = await claim_ai_execution(organization_id)
+    assert execution_id is not None
+    await process_ai_execution(organization_id, execution_id)
+
+    async with SessionLocal() as db:
+        await set_tenant_context(db, organization_id)
+        reply_count = await db.scalar(
+            select(func.count(Message.id)).where(
+                Message.organization_id == organization_id,
+                Message.source_ai_execution_id == execution_id,
+            )
+        )
+    assert reply_count == 1
+
+    # Replaying a completed worker execution must not append another assistant row.
+    await finish_widget_reply(
+        organization_id,
+        execution_id,
+        draft="duplicate should not persist",
+        reply_status="sent",
+        safe_summary="Retry regression test.",
+        citations=[],
+        outcomes=[],
+        usage={},
+        model_name=None,
+    )
+    async with SessionLocal() as db:
+        await set_tenant_context(db, organization_id)
+        reply_count = await db.scalar(
+            select(func.count(Message.id)).where(
+                Message.organization_id == organization_id,
+                Message.source_ai_execution_id == execution_id,
+            )
+        )
+    assert reply_count == 1
 
 
 @pytest.mark.anyio

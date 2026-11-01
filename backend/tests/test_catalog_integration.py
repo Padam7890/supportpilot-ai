@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import hmac
+import logging
 import os
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -84,15 +85,29 @@ async def create_catalog_product(session, owner: dict, suffix: str):
     organization_id = UUID(owner["user"]["organization_id"])
     user_id = UUID(owner["user"]["id"])
     await set_tenant_context(session, organization_id)
+    shop_domain = f"{suffix}-{uuid4().hex[:10]}.myshopify.com"
     connection = IntegrationConnection(
         organization_id=organization_id,
         provider_id="shopify",
-        external_account_id=f"{suffix}.myshopify.com",
+        external_account_id=shop_domain,
         display_name=suffix,
         status="connected",
         connected_by_user_id=user_id,
     )
     session.add(connection)
+    await session.flush()
+    session.add(
+        ShopifyInstallation(
+            organization_id=organization_id,
+            shop_domain=shop_domain,
+            auth_mode="oauth",
+            access_token_encrypted="encrypted-access",
+            refresh_token_encrypted="encrypted-refresh",
+            granted_scopes=["read_orders", "read_customers", "read_products"],
+            connected_by_user_id=user_id,
+            connected_at=datetime.now(UTC),
+        )
+    )
     await session.flush()
     product = CatalogProduct(
         organization_id=organization_id,
@@ -200,6 +215,31 @@ async def test_catalog_reads_are_tenant_scoped_and_composite_fk_rejects_cross_te
 
 
 @pytest.mark.anyio
+async def test_catalog_status_surfaces_missing_product_scope_and_logs_no_credentials(client, caplog):
+    caplog.set_level(logging.INFO, logger="app.integrations.providers.shopify.client")
+    owner = await create_approved_tenant(client, "catalog-scope")
+    organization_id = UUID(owner["user"]["organization_id"])
+    async with SessionLocal() as session:
+        await create_catalog_product(session, owner, "catalog-scope")
+        installation = await session.scalar(
+            select(ShopifyInstallation).where(ShopifyInstallation.organization_id == organization_id)
+        )
+        assert installation is not None
+        installation.granted_scopes = ["read_customers", "write_orders"]
+        await session.commit()
+
+    response = await client.get("/api/v1/catalog/status", headers=bearer(owner["access_token"]))
+    assert response.status_code == 200, response.text
+    assert response.json()["connected"] is True
+    assert response.json()["product_scope_granted"] is False
+    assert response.json()["product_count"] == 1
+    assert '"event": "scope_check"' in caplog.text
+    assert '"source": "catalog_status"' in caplog.text
+    assert '"missing_catalog_scopes": ["read_products"]' in caplog.text
+    assert "encrypted-access" not in caplog.text
+
+
+@pytest.mark.anyio
 async def test_catalog_sync_updates_price_and_partial_failure_preserves_last_good_data(client, monkeypatch):
     from app.integrations.providers.shopify import catalog as shopify_catalog
 
@@ -239,6 +279,21 @@ async def test_catalog_sync_updates_price_and_partial_failure_preserves_last_goo
 
     monkeypatch.setattr(shopify_catalog, "graphql", fake_graphql)
     assert await run_catalog_sync_page(organization_id, job_id, resolve_credentials=credentials)
+    async with SessionLocal() as session:
+        await set_tenant_context(session, organization_id)
+        completed_job = await session.scalar(
+            select(CatalogSyncJob).where(
+                CatalogSyncJob.organization_id == organization_id,
+                CatalogSyncJob.id == job_id,
+            )
+        )
+        assert completed_job is not None
+        assert completed_job.status == "succeeded"
+        assert completed_job.records_seen == 1
+        assert completed_job.last_error_code is None
+        candidates, _, _ = await load_candidates(session, organization_id, "recommend product")
+        assert len(candidates) == 1
+        assert candidates[0].product.external_product_id == "gid://shopify/Product/61001"
 
     response_node = product_node("12.50")
     async with SessionLocal() as session:
@@ -306,7 +361,57 @@ async def test_catalog_sync_updates_price_and_partial_failure_preserves_last_goo
             )
         )
         assert product is not None and product.deleted_at is None
-        assert product.variants[0].price == Decimal("12.50")
+        current_variant = await session.scalar(
+            select(CatalogVariant).where(
+                CatalogVariant.organization_id == organization_id,
+                CatalogVariant.product_id == product.id,
+                CatalogVariant.deleted_at.is_(None),
+            )
+        )
+        assert current_variant is not None and current_variant.price == Decimal("12.50")
+
+        # A successful empty response is not a provider permission failure and
+        # must clear an error from a prior attempt/job.
+        empty_job = CatalogSyncJob(
+            organization_id=organization_id,
+            connection_id=connection_id,
+            mode="full",
+            status="running",
+            attempt_count=0,
+            max_attempts=5,
+            next_attempt_at=datetime.now(UTC),
+            sync_started_at=datetime.now(UTC),
+            started_at=datetime.now(UTC),
+            last_error_code="shopify_scope_or_data_access_required",
+        )
+        session.add(empty_job)
+        await session.commit()
+        empty_job_id = empty_job.id
+
+    async def empty_graphql(*_args, **_kwargs):
+        return {"products": {"nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}}
+
+    monkeypatch.setattr(shopify_catalog, "graphql", empty_graphql)
+    assert await run_catalog_sync_page(organization_id, empty_job_id, resolve_credentials=credentials)
+    async with SessionLocal() as session:
+        await set_tenant_context(session, organization_id)
+        empty_job_result = await session.scalar(
+            select(CatalogSyncJob).where(
+                CatalogSyncJob.organization_id == organization_id,
+                CatalogSyncJob.id == empty_job_id,
+            )
+        )
+        assert empty_job_result is not None
+        assert empty_job_result.status == "succeeded"
+        assert empty_job_result.records_seen == 0
+        assert empty_job_result.last_error_code is None
+    status_response = await client.get("/api/v1/catalog/status", headers=bearer(owner["access_token"]))
+    assert status_response.status_code == 200, status_response.text
+    assert status_response.json()["product_count"] == 0
+    assert status_response.json()["last_error_code"] is None
+
+    async with SessionLocal() as session:
+        await set_tenant_context(session, organization_id)
 
         delete_event = CatalogWebhookEvent(
             organization_id=organization_id,
@@ -339,7 +444,13 @@ async def test_catalog_sync_updates_price_and_partial_failure_preserves_last_goo
             )
         )
         assert deleted is not None and deleted.deleted_at is not None
-        assert deleted.variants[0].deleted_at is not None
+        deleted_variant = await session.scalar(
+            select(CatalogVariant).where(
+                CatalogVariant.organization_id == organization_id,
+                CatalogVariant.product_id == deleted.id,
+            )
+        )
+        assert deleted_variant is not None and deleted_variant.deleted_at is not None
 
 
 @pytest.mark.anyio
@@ -386,7 +497,9 @@ async def test_recommendation_execution_and_catalog_candidates_are_tenant_scoped
     async with SessionLocal() as session:
         _, product_a = await create_catalog_product(session, owner_a, "recommendation-a")
         _, product_b = await create_catalog_product(session, owner_b, "recommendation-b")
+        await session.commit()
         for organization_id, product in ((organization_a, product_a), (organization_b, product_b)):
+            await set_tenant_context(session, organization_id)
             product.title = "Camera smartphone"
             product.brand = "Example"
             product.category = "Smartphones"
@@ -402,7 +515,7 @@ async def test_recommendation_execution_and_catalog_candidates_are_tenant_scoped
                 availability="available",
                 synced_at=datetime.now(UTC),
             ))
-        await session.commit()
+            await session.commit()
     async with SessionLocal() as session:
         await set_tenant_context(session, organization_b)
         visible, _, _ = await load_candidates(session, organization_b, "recommend smartphone camera")

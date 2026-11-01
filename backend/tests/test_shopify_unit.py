@@ -330,7 +330,7 @@ async def test_graphql_logs_provider_error_codes_without_tokens_or_response_text
             return Response()
 
     monkeypatch.setattr(shopify_client.httpx, "AsyncClient", Client)
-    with caplog.at_level("INFO", logger=shopify_client.__name__), pytest.raises(shopify_client.ShopifyAPIError):
+    with caplog.at_level("INFO", logger=shopify_client.__name__), pytest.raises(shopify_client.ShopifyAPIError) as error:
         await shopify_client.graphql(
             "configured-store.myshopify.com",
             "private-shopify-token",
@@ -343,9 +343,73 @@ async def test_graphql_logs_provider_error_codes_without_tokens_or_response_text
     assert '"graphql_error_codes": ["ACCESS_DENIED"]' in caplog.text
     assert '"status_code": 200' in caplog.text
     assert "shopify-request-123" in caplog.text
+    assert error.value.code == "shopify_access_denied"
+    assert error.value.diagnostics[0]["code"] == "ACCESS_DENIED"
+    assert error.value.diagnostics[0]["message"] is None
     assert "private-shopify-token" not in caplog.text
     assert "private.customer@example.test" not in caplog.text
     assert "No order access" not in caplog.text
+
+
+@pytest.mark.anyio
+async def test_graphql_validation_errors_are_not_misreported_as_missing_scopes(monkeypatch, caplog):
+    from app.integrations.providers.shopify import client as shopify_client
+
+    class Response:
+        status_code = 200
+
+        def __init__(self):
+            self.headers = {"x-shopify-api-version": "2026-10", "x-request-id": "query-error-123"}
+
+        @staticmethod
+        def json():
+            return {
+                "errors": [{
+                    "message": "Field doesNotExist is not defined on Product",
+                    "path": ["products"],
+                    "extensions": {"code": "GRAPHQL_VALIDATION_FAILED"},
+                }],
+            }
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, *_args, **_kwargs):
+            return Response()
+
+    monkeypatch.setattr(shopify_client.httpx, "AsyncClient", Client)
+    with caplog.at_level("INFO", logger=shopify_client.__name__), pytest.raises(shopify_client.ShopifyAPIError) as error:
+        await shopify_client.graphql(
+            "configured-store.myshopify.com",
+            "private-shopify-token",
+            "query SupportPilotProducts { products(first: 1) { nodes { id } } }",
+            {},
+            diagnostic_context={
+                "organization_id": "tenant-1",
+                "connection_id": "connection-1",
+                "job_id": "job-1",
+                "job_status": "running",
+            },
+        )
+
+    assert error.value.code == "shopify_graphql_error"
+    assert error.value.status_code == 422
+    assert error.value.diagnostics[0]["code"] == "GRAPHQL_VALIDATION_FAILED"
+    assert '"served_api_version": "2026-10"' in caplog.text
+    assert '"request_attempted": true' in caplog.text
+    assert '"organization_id": "tenant-1"' in caplog.text
+    assert '"connection_id": "connection-1"' in caplog.text
+    assert '"job_id": "job-1"' in caplog.text
+    assert '"job_status": "running"' in caplog.text
+    assert "Field doesNotExist is not defined on Product" in caplog.text
+    assert "private-shopify-token" not in caplog.text
 
 
 def test_shopify_cancellation_rejects_missing_scope_and_ineligible_orders():

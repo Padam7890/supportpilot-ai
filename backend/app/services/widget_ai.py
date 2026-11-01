@@ -96,6 +96,24 @@ POLICY_QUESTION = re.compile(
     r"\b(?:shipping|delivery|returns?|refunds?|exchange|policy|warranty|discount)\b",
     re.IGNORECASE,
 )
+PURCHASE_INTENT = re.compile(
+    r"\b(?:"
+    r"i\s+(?:want|need)\s+to\s+(?:buy|purchase|order)|"
+    r"i(?:'d|\s+would)\s+like\s+to\s+(?:buy|purchase|order)|"
+    r"can\s+i\s+(?:buy|purchase|order)|"
+    r"how\s+(?:can|do)\s+i\s+(?:buy|purchase|order)|"
+    r"how\s+to\s+(?:buy|purchase|order)|"
+    r"(?:place|make)\s+(?:an?\s+)?order|"
+    r"(?:buy|purchase|order)\s+(?:the\s+)?(?:first|second|third|fourth|one|this|that|it|product|item)|"
+    r"add\s+(?:this|that|it|the\s+product|the\s+item)\s+to\s+(?:my\s+)?cart|"
+    r"checkout\s+now"
+    r")\b",
+    re.IGNORECASE,
+)
+PURCHASE_HELP_REPLY = (
+    "I can’t place orders or take payment in this chat. To buy the item, open its product page on the store and "
+    "complete checkout there. If you tell me which product you mean, I can help you find it."
+)
 
 
 def widget_request_needs_human(message: str) -> bool:
@@ -109,6 +127,11 @@ def widget_request_needs_order_verification(message: str) -> bool:
 
 def widget_is_cancellation_request(message: str) -> bool:
     return bool(CANCELLATION_REQUEST.search(message))
+
+
+def widget_purchase_reply(message: str) -> str | None:
+    """Direct purchase requests to the merchant's own product page and checkout."""
+    return PURCHASE_HELP_REPLY if PURCHASE_INTENT.search(message.strip()) else None
 
 
 def widget_greeting_reply(message: str) -> str | None:

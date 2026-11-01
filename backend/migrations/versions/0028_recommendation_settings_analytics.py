@@ -10,6 +10,10 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Alembic's default ledger column is VARCHAR(32), but this revision ID is
+    # 38 characters. Expand it inside the migration transaction before Alembic
+    # writes the new revision into the ledger.
+    op.execute("ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(64)")
     op.create_table(
         "recommendation_settings",
         sa.Column("id", sa.Uuid(), nullable=False),

@@ -20,6 +20,7 @@ from app.services.widget_ai import (
     THANKS_REPLY,
     widget_greeting_reply,
     widget_missing_knowledge_reply,
+    widget_purchase_reply,
     widget_request_needs_human,
     widget_sensitive_reply,
 )
@@ -150,6 +151,34 @@ def test_widget_missing_knowledge_replies_are_specific_to_the_question_type():
     assert "exact policy" in policy
     assert "more detail" in general
     assert len({product, policy, general}) == 3
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "I want to buy this",
+        "Can I purchase the first one?",
+        "I would like to order that product",
+        "How do I place an order?",
+        "Add it to my cart",
+        "Checkout now",
+    ],
+)
+def test_widget_purchase_requests_are_directed_to_store_checkout(message):
+    reply = widget_purchase_reply(message)
+
+    assert reply is not None
+    assert "can’t place orders" in reply
+    assert "product page" in reply
+    assert "complete checkout there" in reply
+
+
+@pytest.mark.parametrize(
+    "message",
+    ["Where is my order #1001?", "I want to cancel my order", "What is your order status?", "Hi"],
+)
+def test_widget_purchase_reply_does_not_capture_support_requests(message):
+    assert widget_purchase_reply(message) is None
 
 
 @pytest.mark.parametrize(
