@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.core.security import hash_password
 from app.db.session import SessionLocal, set_tenant_context
 from app.models import (
+    AIExecution,
     CatalogProduct,
     CatalogSyncJob,
     CatalogVariant,
@@ -23,6 +24,7 @@ from app.models import (
     ShopifyInstallation,
 )
 from app.services.catalog import process_catalog_webhook, run_catalog_sync_page
+from app.services.recommendations import load_candidates
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("TEST_DATABASE_URL"),
@@ -373,5 +375,55 @@ async def test_verified_shopify_product_webhook_is_deduplicated(client, monkeypa
     assert first.json() == {"accepted": True, "duplicate": False}
     assert duplicate.status_code == 200, duplicate.text
     assert duplicate.json() == {"accepted": True, "duplicate": True}
+
+
+@pytest.mark.anyio
+async def test_recommendation_execution_and_catalog_candidates_are_tenant_scoped(client):
+    owner_a = await create_approved_tenant(client, "recommendation-a")
+    owner_b = await create_approved_tenant(client, "recommendation-b")
+    organization_a = UUID(owner_a["user"]["organization_id"])
+    organization_b = UUID(owner_b["user"]["organization_id"])
+    async with SessionLocal() as session:
+        _, product_a = await create_catalog_product(session, owner_a, "recommendation-a")
+        _, product_b = await create_catalog_product(session, owner_b, "recommendation-b")
+        for organization_id, product in ((organization_a, product_a), (organization_b, product_b)):
+            product.title = "Camera smartphone"
+            product.brand = "Example"
+            product.category = "Smartphones"
+            session.add(CatalogVariant(
+                organization_id=organization_id,
+                product_id=product.id,
+                connection_id=product.connection_id,
+                external_variant_id=f"variant-{uuid4().hex}",
+                title="Standard",
+                attributes={"feature": "camera"},
+                price=Decimal(25000),
+                currency="NPR",
+                availability="available",
+                synced_at=datetime.now(UTC),
+            ))
+        await session.commit()
+    async with SessionLocal() as session:
+        await set_tenant_context(session, organization_b)
+        visible, _, _ = await load_candidates(session, organization_b, "recommend smartphone camera")
+        assert visible
+        assert {item.product.id for item in visible} == {product_b.id}
+
+    created = await client.post(
+        "/api/v1/recommendations",
+        json={"question": "Recommend a smartphone under NPR 30000"},
+        headers=bearer(owner_a["access_token"]),
+    )
+    assert created.status_code == 202, created.text
+    execution_id = created.json()["id"]
+    async with SessionLocal() as session:
+        await set_tenant_context(session, organization_a)
+        execution = await session.scalar(select(AIExecution).where(AIExecution.id == UUID(execution_id)))
+        assert execution is not None and execution.kind == "recommendation" and execution.status == "queued"
+    denied = await client.get(
+        f"/api/v1/recommendations/{execution_id}",
+        headers=bearer(owner_b["access_token"]),
+    )
+    assert denied.status_code == 404
 
 

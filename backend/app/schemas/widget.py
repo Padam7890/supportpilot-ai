@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
+from app.schemas.recommendations import ProductComparisonResult, RecommendationResult
+
 
 class WidgetConfigCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -69,10 +71,18 @@ class WidgetFirstMessage(BaseModel):
         return self
 
 
+class WidgetRecommendationSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    product_id: UUID
+    variant_id: UUID
+
+
 class WidgetMessageCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     content: str = Field(min_length=1, max_length=4000)
     website: str | None = Field(default=None, max_length=200)
+    recommendation_selections: list["WidgetRecommendationSelection"] | None = Field(default=None, max_length=4)
 
     @field_validator("content")
     @classmethod
@@ -96,6 +106,7 @@ class WidgetMessageOut(BaseModel):
     sender_type: str
     content: str
     created_at: datetime
+    recommendation: RecommendationResult | ProductComparisonResult | None = None
 
 
 class WidgetConversationOut(BaseModel):

@@ -43,6 +43,52 @@ def is_provider_configured() -> bool:
     return bool(settings.ai_provider_base_url and settings.ai_model)
 
 
+async def generate_completion(messages: list[dict[str, str]], *, max_tokens: int = 400) -> tuple[str, dict[str, int], str | None]:
+    """Call the configured OpenAI-compatible provider with shared safety limits."""
+    import httpx
+
+    base_url = (settings.ai_provider_base_url or "").rstrip("/")
+    if not base_url or not settings.ai_model:
+        raise AIProviderError("provider_not_configured", "AI provider is not configured")
+    parsed_url = urlsplit(base_url)
+    local_http_host = parsed_url.scheme == "http" and parsed_url.hostname in {"localhost", "127.0.0.1", "::1"}
+    if (parsed_url.scheme != "https" and not local_http_host) or not parsed_url.hostname or parsed_url.username or parsed_url.password or parsed_url.query or parsed_url.fragment:
+        raise AIProviderError("provider_url_invalid", "AI provider URL must use HTTPS outside local development")
+    headers = {"content-type": "application/json"}
+    if settings.ai_provider_api_key:
+        headers["authorization"] = f"Bearer {settings.ai_provider_api_key.get_secret_value()}"
+    try:
+        async with httpx.AsyncClient(timeout=settings.ai_provider_timeout_seconds) as client:
+            response = await client.post(
+                f"{base_url}/chat/completions",
+                headers=headers,
+                json={"model": settings.ai_model, "messages": messages, "max_completion_tokens": max_tokens},
+            )
+    except httpx.TimeoutException as exc:
+        raise AIProviderError("provider_timeout", "AI provider request timed out") from exc
+    except httpx.RequestError as exc:
+        raise AIProviderError("provider_unreachable", "AI provider could not be reached") from exc
+    if response.is_error:
+        raise AIProviderError(f"provider_http_{response.status_code}", f"AI provider returned HTTP {response.status_code}")
+    try:
+        body = response.json()
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise AIProviderError("provider_invalid_response", "AI provider returned invalid JSON") from exc
+    if not isinstance(body, dict):
+        raise AIProviderError("provider_invalid_response", "AI provider returned an invalid response")
+    choices = body.get("choices")
+    first_choice = choices[0] if isinstance(choices, list) and choices else None
+    message = first_choice.get("message") if isinstance(first_choice, dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, str) or not content.strip():
+        raise AIProviderError("provider_empty_response", "AI provider returned an empty draft")
+    raw_usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
+    usage = {key: int(raw_usage.get(source, 0) or 0) for key, source in (
+        ("prompt_tokens", "prompt_tokens"), ("completion_tokens", "completion_tokens"), ("total_tokens", "total_tokens")
+    )}
+    return content.strip(), usage, settings.ai_model
+
+
 def checkpoint_dsn() -> str:
     # LangGraph's Postgres saver uses psycopg rather than SQLAlchemy's asyncpg driver.
     url = make_url(settings.database_url)
@@ -117,72 +163,8 @@ def build_grounded_draft_graph(checkpointer: Any) -> Any:
         }
 
     async def generate(state: ExecutionState) -> dict[str, Any]:
-        import httpx
-
-        base_url = (settings.ai_provider_base_url or "").rstrip("/")
-        if not base_url or not settings.ai_model:
-            raise AIProviderError("provider_not_configured", "AI provider is not configured")
-        parsed_url = urlsplit(base_url)
-        local_http_host = parsed_url.scheme == "http" and parsed_url.hostname in {
-            "localhost",
-            "127.0.0.1",
-            "::1",
-        }
-        if (
-            parsed_url.scheme != "https" and not local_http_host
-        ) or not parsed_url.hostname or parsed_url.username or parsed_url.password or parsed_url.query or parsed_url.fragment:
-            raise AIProviderError(
-                "provider_url_invalid", "AI provider URL must use HTTPS outside local development"
-            )
-        headers = {"content-type": "application/json"}
-        if settings.ai_provider_api_key:
-            headers["authorization"] = f"Bearer {settings.ai_provider_api_key.get_secret_value()}"
-        try:
-            async with httpx.AsyncClient(timeout=settings.ai_provider_timeout_seconds) as client:
-                response = await client.post(
-                    f"{base_url}/chat/completions",
-                    headers=headers,
-                    json={
-                        "model": settings.ai_model,
-                        "messages": state.get("prompt", []),
-                        # max_completion_tokens is the current Chat Completions
-                        # limit and also applies when a reasoning model uses tokens
-                        # that are not part of its visible answer. Omit sampling
-                        # parameters so reasoning-model defaults remain compatible.
-                        "max_completion_tokens": 400,
-                    },
-                )
-        except httpx.TimeoutException as exc:
-            raise AIProviderError("provider_timeout", "AI provider request timed out") from exc
-        except httpx.RequestError as exc:
-            raise AIProviderError("provider_unreachable", "AI provider could not be reached") from exc
-        if response.is_error:
-            raise AIProviderError(
-                f"provider_http_{response.status_code}",
-                f"AI provider returned HTTP {response.status_code}",
-            )
-        try:
-            body = response.json()
-        except (ValueError, json.JSONDecodeError) as exc:
-            raise AIProviderError("provider_invalid_response", "AI provider returned invalid JSON") from exc
-        if not isinstance(body, dict):
-            raise AIProviderError("provider_invalid_response", "AI provider returned an invalid response")
-        choices = body.get("choices")
-        first_choice = choices[0] if isinstance(choices, list) and choices else None
-        message = first_choice.get("message") if isinstance(first_choice, dict) else None
-        content = message.get("content") if isinstance(message, dict) else None
-        if not isinstance(content, str) or not content.strip():
-            raise AIProviderError("provider_empty_response", "AI provider returned an empty draft")
-        raw_usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
-        usage = {
-            key: int(raw_usage.get(source, 0) or 0)
-            for key, source in (
-                ("prompt_tokens", "prompt_tokens"),
-                ("completion_tokens", "completion_tokens"),
-                ("total_tokens", "total_tokens"),
-            )
-        }
-        return {"draft": content.strip(), "usage": usage, "model_name": settings.ai_model}
+        content, usage, model_name = await generate_completion(state.get("prompt", []), max_tokens=400)
+        return {"draft": content, "usage": usage, "model_name": model_name}
 
     workflow = StateGraph(ExecutionState)
     workflow.add_node("prepare_prompt", prepare_prompt)

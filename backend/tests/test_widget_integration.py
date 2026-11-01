@@ -1,4 +1,5 @@
 import os
+from datetime import UTC, datetime, timedelta
 from typing import ClassVar
 from uuid import UUID, uuid4
 
@@ -199,6 +200,80 @@ async def test_widget_ai_setting_enqueues_one_execution_per_new_message(client):
         assert len(executions) == 2
         assert all(row.delivery_mode == "auto_reply" for row in executions)
         assert all(row.reply_status == "processing" for row in executions)
+
+
+@pytest.mark.anyio
+async def test_widget_variant_comparison_accepts_only_variants_from_latest_recommendations(client):
+    _auth, organization_id, public_id = await setup_widget(
+        client, "widget-variant-compare", "https://store-variant-compare.example", ai_enabled=True
+    )
+    origin = "https://store-variant-compare.example"
+    first = await client.post(
+        f"/api/v1/widget/{public_id}/messages",
+        headers={"Origin": origin, "Idempotency-Key": "widget-variant-start-0001"},
+        json={"content": "Show phones"},
+    )
+    assert first.status_code == 201, first.text
+    product_ids = [uuid4(), uuid4()]
+    option_ids = [[uuid4(), uuid4()], [uuid4()]]
+    async with SessionLocal() as db:
+        await set_tenant_context(db, organization_id)
+        conversation = await db.get(Conversation, first.json()["conversation_id"])
+        assert conversation is not None
+        conversation.shopping_state = {
+            "active": True,
+            "last_displayed_recommendations": [
+                {
+                    "product_id": str(product_id),
+                    "variant_id": str(options[0]),
+                    "available_variant_ids": [str(option_id) for option_id in options],
+                }
+                for product_id, options in zip(product_ids, option_ids, strict=True)
+            ],
+        }
+        conversation.shopping_state_expires_at = datetime.now(UTC) + timedelta(days=1)
+        await db.commit()
+
+    headers = {
+        "Origin": origin,
+        "Authorization": f"Bearer {first.json()['visitor_token']}",
+        "Idempotency-Key": "widget-variant-compare-valid",
+    }
+    valid = await client.post(
+        f"/api/v1/widget/conversations/{first.json()['conversation_id']}/messages",
+        headers=headers,
+        json={
+            "content": "Compare the first two products",
+            "recommendation_selections": [
+                {"product_id": str(product_ids[0]), "variant_id": str(option_ids[1][0])},
+                {"product_id": str(product_ids[1]), "variant_id": str(option_ids[1][0])},
+            ],
+        },
+    )
+    assert valid.status_code == 200, valid.text
+    invalid = await client.post(
+        f"/api/v1/widget/conversations/{first.json()['conversation_id']}/messages",
+        headers={**headers, "Idempotency-Key": "widget-variant-compare-invalid"},
+        json={
+            "content": "Compare the first two products",
+            "recommendation_selections": [
+                {"product_id": str(uuid4()), "variant_id": str(uuid4())},
+                {"product_id": str(product_ids[1]), "variant_id": str(option_ids[1][0])},
+            ],
+        },
+    )
+    assert invalid.status_code == 422
+    async with SessionLocal() as db:
+        await set_tenant_context(db, organization_id)
+        saved = await db.scalar(
+            select(Message).where(
+                Message.organization_id == organization_id,
+                Message.conversation_id == first.json()["conversation_id"],
+                Message.content == "Compare the first two products",
+            )
+        )
+        assert saved is not None
+        assert len(saved.provider_metadata["recommendation_selections"]) == 2
 
 
 @pytest.mark.anyio

@@ -1,7 +1,10 @@
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy import (
+    JSON,
     CheckConstraint,
+    DateTime,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
@@ -52,6 +55,22 @@ class Conversation(UUIDPrimaryKey, TimestampMixin, Base):
     )
     integration_connection_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
     external_conversation_id: Mapped[str | None] = mapped_column(String(512))
+    # Compact, non-PII shopping preferences for this conversation only.
+    shopping_state: Mapped[dict | None] = mapped_column(JSON)
+    shopping_state_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    shopping_state_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     ticket = relationship("Ticket", back_populates="conversations")
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
+
+    @property
+    def shopping_context(self) -> dict | None:
+        """Expose only unexpired, compact shopping context to authenticated teammates."""
+        if not self.shopping_state or self.shopping_state_expires_at is None:
+            return None
+        expires = self.shopping_state_expires_at
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=UTC)
+        if expires <= datetime.now(UTC):
+            return None
+        return self.shopping_state

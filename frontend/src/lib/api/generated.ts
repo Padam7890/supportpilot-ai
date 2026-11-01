@@ -141,6 +141,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/analytics/recommendations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Recommendation Analytics
+         * @description Tenant scoped funnel and operational measurements; commerce conversion is unavailable until trusted events exist.
+         */
+        get: operations["recommendation_analytics_api_v1_analytics_recommendations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/invitations/accept": {
         parameters: {
             query?: never;
@@ -1112,6 +1132,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/recommendation-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Settings */
+        get: operations["get_settings_api_v1_recommendation_settings_get"];
+        /** Update Settings */
+        put: operations["update_settings_api_v1_recommendation_settings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/recommendations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Recommendation */
+        post: operations["create_recommendation_api_v1_recommendations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/recommendations/{execution_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Recommendation */
+        get: operations["get_recommendation_api_v1_recommendations__execution_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/search": {
         parameters: {
             query?: never;
@@ -1388,6 +1460,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/widget/conversations/{conversation_id}/recommendation-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record Recommendation Event
+         * @description Record only widget events tied to a recommendation actually shown in this visitor's chat.
+         */
+        post: operations["record_recommendation_event_api_v1_widget_conversations__conversation_id__recommendation_events_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/widget/{public_id}/config": {
         parameters: {
             query?: never;
@@ -1565,9 +1657,13 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "playground" | "reply_draft" | "widget_reply";
+            kind: "playground" | "reply_draft" | "widget_reply" | "recommendation";
             /** Model Name */
             model_name: string | null;
+            /** Recommendation Result */
+            recommendation_result?: {
+                [key: string]: unknown;
+            } | null;
             /** Reply Status */
             reply_status?: ("processing" | "draft_ready" | "sent" | "escalated" | "failed") | null;
             /** Safe Summary */
@@ -1663,6 +1759,34 @@ export interface components {
             succeeded: number;
             /** Total Tokens */
             total_tokens: number;
+        };
+        /** AppliedCriteria */
+        AppliedCriteria: {
+            /** Budget Amount */
+            budget_amount?: string | null;
+            /** Budget Currency */
+            budget_currency?: string | null;
+            /** Budget Strict */
+            budget_strict: boolean;
+            /** Category */
+            category?: string | null;
+            /** Excluded Brands */
+            excluded_brands?: string[];
+            /** Optional Preferences */
+            optional_preferences?: string[];
+            /** Preferred Brand */
+            preferred_brand?: string | null;
+            /** Required Brand */
+            required_brand?: string | null;
+            /** Required Features */
+            required_features?: string[];
+            /**
+             * Sort By
+             * @enum {string}
+             */
+            sort_by: "relevance" | "price_asc" | "price_desc";
+            /** Use Case */
+            use_case?: string | null;
         };
         /** CatalogProductOut */
         CatalogProductOut: {
@@ -2002,6 +2126,44 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** ComparedProduct */
+        ComparedProduct: {
+            /**
+             * Availability
+             * @enum {string}
+             */
+            availability: "available" | "unavailable" | "unknown";
+            /** Brand */
+            brand: string | null;
+            /** Category */
+            category: string | null;
+            /** Currency */
+            currency: string;
+            /** Limitations */
+            limitations?: string[];
+            /** Normalized Attributes */
+            normalized_attributes?: {
+                [key: string]: string;
+            };
+            /** Price */
+            price: string;
+            /**
+             * Product Id
+             * Format: uuid
+             */
+            product_id: string;
+            /** Title */
+            title: string;
+            /**
+             * Variant Id
+             * Format: uuid
+             */
+            variant_id: string;
+            /** Verified Attributes */
+            verified_attributes: {
+                [key: string]: string;
+            };
+        };
         /** ConversationAIModeUpdate */
         ConversationAIModeUpdate: {
             /**
@@ -2042,6 +2204,7 @@ export interface components {
              * Format: uuid
              */
             organization_id: string;
+            shopping_context?: components["schemas"]["ShoppingContextOut"] | null;
             /** Status */
             status: string;
             /**
@@ -2728,6 +2891,30 @@ export interface components {
             /** Type */
             type: string;
         };
+        /** ProductComparisonResult */
+        ProductComparisonResult: {
+            /** Differences */
+            differences?: string[];
+            /** Explanation */
+            explanation: string;
+            /** Limitations */
+            limitations?: string[];
+            /** Products */
+            products?: components["schemas"]["ComparedProduct"][];
+            /**
+             * Response Type
+             * @enum {string}
+             */
+            response_type: "comparison" | "clarification";
+            /**
+             * Schema Version
+             * @default 1.0
+             * @constant
+             */
+            schema_version: "1.0";
+            /** Trade Offs */
+            trade_offs?: string[];
+        };
         /** PublicWidgetConfigOut */
         PublicWidgetConfigOut: {
             /**
@@ -2749,6 +2936,371 @@ export interface components {
              * @default Hi! How can we help?
              */
             welcome_message: string;
+        };
+        /** RecommendationAnalyticsOut */
+        RecommendationAnalyticsOut: {
+            /** Add To Cart */
+            add_to_cart: number | null;
+            /** Assisted Purchases */
+            assisted_purchases: number | null;
+            /** Attributed Purchases */
+            attributed_purchases: number | null;
+            /**
+             * Attribution Window Days
+             * @default 7
+             */
+            attribution_window_days: number;
+            /** Average Latency Ms */
+            average_latency_ms: number | null;
+            /** Comparisons */
+            comparisons: number;
+            /** Completion Tokens */
+            completion_tokens: number;
+            /**
+             * Conversion Tracking Available
+             * @default false
+             */
+            conversion_tracking_available: boolean;
+            /** Direct Purchases */
+            direct_purchases: number | null;
+            /** End Date */
+            end_date: string;
+            /** Error Codes */
+            error_codes?: {
+                [key: string]: string | number;
+            }[];
+            /** Estimated Cost Usd */
+            estimated_cost_usd: number | null;
+            /** Failed Executions */
+            failed_executions: number;
+            /** Human Handoffs */
+            human_handoffs: number;
+            /** Impressions */
+            impressions: number;
+            /** No Result Categories */
+            no_result_categories?: {
+                [key: string]: string | number;
+            }[];
+            /** No Result Searches */
+            no_result_searches: number;
+            /** Product Clicks */
+            product_clicks: number;
+            /** Prompt Tokens */
+            prompt_tokens: number;
+            /** Rejected Recommendations */
+            rejected_recommendations: number;
+            /** Start Date */
+            start_date: string;
+            /** Top Clicked Products */
+            top_clicked_products?: {
+                [key: string]: string | number;
+            }[];
+            /** Top Recommended Products */
+            top_recommended_products?: {
+                [key: string]: string | number;
+            }[];
+            /** Trends */
+            trends?: components["schemas"]["RecommendationTrendPoint"][];
+        };
+        /** RecommendationEventIn */
+        RecommendationEventIn: {
+            /**
+             * Event Id
+             * Format: uuid
+             */
+            event_id: string;
+            /**
+             * Event Type
+             * @enum {string}
+             */
+            event_type: "impression" | "product_click" | "comparison" | "rejection";
+            /**
+             * Message Id
+             * Format: uuid
+             */
+            message_id: string;
+            /** Product Id */
+            product_id?: string | null;
+            /** Variant Id */
+            variant_id?: string | null;
+        };
+        /** RecommendationEventOut */
+        RecommendationEventOut: {
+            /**
+             * Accepted
+             * @default true
+             */
+            accepted: boolean;
+        };
+        /** RecommendationExecutionOut */
+        RecommendationExecutionOut: {
+            /** Completed At */
+            completed_at?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Error Code */
+            error_code?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Kind
+             * @default recommendation
+             * @constant
+             */
+            kind: "recommendation";
+            result?: components["schemas"]["RecommendationResult"] | null;
+            /** Safe Summary */
+            safe_summary?: string | null;
+            /** Started At */
+            started_at?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "running" | "succeeded" | "failed";
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** RecommendationRequest */
+        RecommendationRequest: {
+            /** Question */
+            question: string;
+        };
+        /** RecommendationResult */
+        RecommendationResult: {
+            applied_criteria?: components["schemas"]["AppliedCriteria"] | null;
+            /** Available Actions */
+            available_actions?: ("refine_search" | "view_product")[];
+            /** Explanation */
+            explanation: string;
+            /** Limitations */
+            limitations?: string[];
+            /** Products */
+            products?: components["schemas"]["RecommendedProduct"][];
+            /**
+             * Response Type
+             * @enum {string}
+             */
+            response_type: "recommendations" | "clarification" | "unsupported" | "no_match";
+            /**
+             * Schema Version
+             * @default 1.0
+             * @constant
+             */
+            schema_version: "1.0";
+            /** Suggested Follow Ups */
+            suggested_follow_ups?: string[];
+        };
+        /** RecommendationSettingsIn */
+        RecommendationSettingsIn: {
+            /**
+             * Comparison Enabled
+             * @default true
+             */
+            comparison_enabled: boolean;
+            /**
+             * Cross Selling Enabled
+             * @default false
+             */
+            cross_selling_enabled: boolean;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /** Excluded Collection Ids */
+            excluded_collection_ids?: string[];
+            /** Excluded Product Ids */
+            excluded_product_ids?: string[];
+            /** Human Handoff Preferences */
+            human_handoff_preferences?: {
+                [key: string]: number | boolean;
+            };
+            /**
+             * In Stock Only
+             * @default false
+             */
+            in_stock_only: boolean;
+            /**
+             * Max Products
+             * @default 3
+             */
+            max_products: number;
+            /**
+             * Mode
+             * @default automatic
+             * @enum {string}
+             */
+            mode: "automatic" | "explicit";
+            /** Ranking Preferences */
+            ranking_preferences?: {
+                [key: string]: number;
+            };
+            /**
+             * Upselling Enabled
+             * @default false
+             */
+            upselling_enabled: boolean;
+        };
+        /** RecommendationSettingsOut */
+        RecommendationSettingsOut: {
+            /**
+             * Comparison Enabled
+             * @default true
+             */
+            comparison_enabled: boolean;
+            /**
+             * Cross Selling Enabled
+             * @default false
+             */
+            cross_selling_enabled: boolean;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /** Excluded Collection Ids */
+            excluded_collection_ids?: string[];
+            /** Excluded Product Ids */
+            excluded_product_ids?: string[];
+            /** Human Handoff Preferences */
+            human_handoff_preferences?: {
+                [key: string]: number | boolean;
+            };
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * In Stock Only
+             * @default false
+             */
+            in_stock_only: boolean;
+            /**
+             * Max Products
+             * @default 3
+             */
+            max_products: number;
+            /**
+             * Mode
+             * @default automatic
+             * @enum {string}
+             */
+            mode: "automatic" | "explicit";
+            /** Ranking Preferences */
+            ranking_preferences?: {
+                [key: string]: number;
+            };
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /**
+             * Upselling Enabled
+             * @default false
+             */
+            upselling_enabled: boolean;
+        };
+        /** RecommendationTrendPoint */
+        RecommendationTrendPoint: {
+            /** Clicks */
+            clicks: number;
+            /** Comparisons */
+            comparisons: number;
+            /** Date */
+            date: string;
+            /** Handoffs */
+            handoffs: number;
+            /** Impressions */
+            impressions: number;
+            /** No Results */
+            no_results: number;
+        };
+        /** RecommendationVariantOption */
+        RecommendationVariantOption: {
+            /**
+             * Availability
+             * @enum {string}
+             */
+            availability: "available" | "unavailable" | "unknown";
+            /** Currency */
+            currency: string;
+            /** Limitations */
+            limitations?: string[];
+            /** Price */
+            price: string;
+            /** Reasons */
+            reasons?: string[];
+            /**
+             * Variant Id
+             * Format: uuid
+             */
+            variant_id: string;
+            /** Variant Title */
+            variant_title: string;
+            /** Verified Attributes */
+            verified_attributes?: {
+                [key: string]: string;
+            };
+        };
+        /** RecommendedProduct */
+        RecommendedProduct: {
+            /**
+             * Availability
+             * @enum {string}
+             */
+            availability: "available" | "unavailable" | "unknown";
+            /** Brand */
+            brand: string | null;
+            /** Budget Overage */
+            budget_overage?: string | null;
+            /** Category */
+            category: string | null;
+            /** Currency */
+            currency: string;
+            /** Image Url */
+            image_url: string | null;
+            /** Limitations */
+            limitations?: string[];
+            /** Price */
+            price: string;
+            /**
+             * Product Id
+             * Format: uuid
+             */
+            product_id: string;
+            /** Product Url */
+            product_url: string | null;
+            /** Reasons */
+            reasons: string[];
+            /** Score */
+            score: number;
+            /** Title */
+            title: string;
+            /**
+             * Variant Id
+             * Format: uuid
+             */
+            variant_id: string;
+            /** Variant Options */
+            variant_options?: components["schemas"]["RecommendationVariantOption"][];
+            /** Variant Title */
+            variant_title: string;
+            /** Verified Attributes */
+            verified_attributes?: {
+                [key: string]: string;
+            };
         };
         /** RefreshRequest */
         RefreshRequest: {
@@ -2970,6 +3522,51 @@ export interface components {
             number: string | null;
             /** Url */
             url: string | null;
+        };
+        /** ShoppingContextOut */
+        ShoppingContextOut: {
+            /**
+             * Active
+             * @default false
+             */
+            active: boolean;
+            /** Clarification State */
+            clarification_state?: string | null;
+            /**
+             * Handoff Offer Pending
+             * @default false
+             */
+            handoff_offer_pending: boolean;
+            /** Intent */
+            intent?: {
+                [key: string]: unknown;
+            };
+            /** Last Displayed Recommendations */
+            last_displayed_recommendations?: {
+                [key: string]: unknown;
+            }[];
+            /** Rejected Product Ids */
+            rejected_product_ids?: string[];
+            /**
+             * Rejected Recommendation Count
+             * @default 0
+             */
+            rejected_recommendation_count: number;
+            /** Required Constraints */
+            required_constraints?: string[];
+            /** Selected Products For Comparison */
+            selected_products_for_comparison?: {
+                [key: string]: string;
+            }[];
+            /** Soft Preferences */
+            soft_preferences?: {
+                [key: string]: number;
+            };
+            /**
+             * Unsupported Request Count
+             * @default 0
+             */
+            unsupported_request_count: number;
         };
         /** TicketActivityOut */
         TicketActivityOut: {
@@ -3313,6 +3910,8 @@ export interface components {
         WidgetMessageCreate: {
             /** Content */
             content: string;
+            /** Recommendation Selections */
+            recommendation_selections?: components["schemas"]["WidgetRecommendationSelection"][] | null;
             /** Website */
             website?: string | null;
         };
@@ -3330,6 +3929,8 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /** Recommendation */
+            recommendation?: components["schemas"]["RecommendationResult"] | components["schemas"]["ProductComparisonResult"] | null;
             /** Sender Type */
             sender_type: string;
         };
@@ -3369,6 +3970,19 @@ export interface components {
             email: string;
             /** Order Number */
             order_number: string;
+        };
+        /** WidgetRecommendationSelection */
+        WidgetRecommendationSelection: {
+            /**
+             * Product Id
+             * Format: uuid
+             */
+            product_id: string;
+            /**
+             * Variant Id
+             * Format: uuid
+             */
+            variant_id: string;
         };
         /** WidgetStartOut */
         WidgetStartOut: {
@@ -4234,6 +4848,119 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AIEvaluationOut"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    recommendation_analytics_api_v1_analytics_recommendations_get: {
+        parameters: {
+            query?: {
+                start_date?: string | null;
+                end_date?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecommendationAnalyticsOut"];
                 };
             };
             /** @description RFC 9457 Problem Details response */
@@ -10708,6 +11435,285 @@ export interface operations {
             };
         };
     };
+    get_settings_api_v1_recommendation_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecommendationSettingsOut"];
+                };
+            };
+        };
+    };
+    update_settings_api_v1_recommendation_settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecommendationSettingsIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecommendationSettingsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_recommendation_api_v1_recommendations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecommendationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecommendationExecutionOut"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    get_recommendation_api_v1_recommendations__execution_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                execution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecommendationExecutionOut"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
     command_search_api_v1_search_get: {
         parameters: {
             query: {
@@ -12576,6 +13582,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WidgetOrderVerificationOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    record_recommendation_event_api_v1_widget_conversations__conversation_id__recommendation_events_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecommendationEventIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecommendationEventOut"];
                 };
             };
             /** @description Validation Error */

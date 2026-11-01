@@ -16,6 +16,7 @@ from app.models.message import Message
 from app.models.organization import Organization
 from app.models.platform_owner import PlatformOwner
 from app.models.platform_refresh_session import PlatformRefreshSession
+from app.models.recommendation import RecommendationEvent, RecommendationSettings
 from app.models.refresh_session import RefreshSession
 from app.models.shopify import ShopifyAccessAudit, ShopifyInstallation, ShopifyOAuthState
 from app.models.support_widget import SupportWidget, WidgetOrderVerification, WidgetSubmission
@@ -46,6 +47,8 @@ __all__ = [
     "Organization",
     "PlatformOwner",
     "PlatformRefreshSession",
+    "RecommendationEvent",
+    "RecommendationSettings",
     "RefreshSession",
     "ShopifyAccessAudit",
     "ShopifyInstallation",

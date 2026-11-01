@@ -4,9 +4,9 @@ import json
 import logging
 import re
 from datetime import UTC, datetime, timedelta
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
-from sqlalchemy import and_, func, literal_column, or_, select
+from sqlalchemy import and_, func, literal_column, or_, select, text
 
 from app.db.session import SessionLocal, set_tenant_context
 from app.models import (
@@ -16,11 +16,20 @@ from app.models import (
     DocumentChunk,
     KnowledgeDocument,
     Message,
+    RecommendationEvent,
+    RecommendationSettings,
     SupportWidget,
     Ticket,
     WidgetOrderVerification,
 )
 from app.services.ai_execution import create_grounded_draft, is_provider_configured
+from app.services.recommendation_conversation import process_widget_shopping_turn
+from app.services.recommendation_tool_registry import ToolReference
+from app.services.recommendations import (
+    build_recommendation_result,
+    extract_intent,
+    load_candidates,
+)
 from app.services.widget_ai import (
     AI_TEMPORARY_FAILURE_REPLY,
     VERIFIED_CANCELLATION_REPLY,
@@ -348,6 +357,60 @@ async def process_ai_execution(organization_id: UUID, execution_id: UUID) -> Non
         if loaded is None:
             return
         execution, question, transcript, context, citations, outcomes, integration_context = loaded
+        if execution.kind == "recommendation":
+            async with SessionLocal() as db:
+                await set_tenant_context(db, organization_id)
+                candidates, categories, brands = await load_candidates(db, organization_id, question)
+                policy = await db.scalar(select(RecommendationSettings).where(RecommendationSettings.organization_id == organization_id))
+            if policy is not None and not policy.enabled:
+                from app.schemas.recommendations import RecommendationResult
+
+                usage, model_name = {}, None
+                result = RecommendationResult(
+                    response_type="unsupported",
+                    explanation="Product recommendations are currently disabled for this store.",
+                    available_actions=["refine_search"],
+                )
+            else:
+                intent, usage, model_name = await extract_intent(question, categories, brands)
+                excluded_ids: set[UUID] = set()
+                if policy is not None:
+                    for value in policy.excluded_product_ids:
+                        try:
+                            excluded_ids.add(UUID(value))
+                        except (TypeError, ValueError):
+                            continue
+                    excluded_collections = set(policy.excluded_collection_ids)
+                    candidates = [item for item in candidates if item.product.id not in excluded_ids
+                        and (not policy.in_stock_only or item.variant.availability == "available")
+                        and not (excluded_collections & {str(value) for value in item.product.specifications.get("collection_ids", [])})]
+                    intent.result_count = min(intent.result_count, policy.max_products)
+                result = build_recommendation_result(
+                    question,
+                    intent,
+                    candidates,
+                    ranking_preferences=policy.ranking_preferences if policy else None,
+                )
+            async with SessionLocal() as db:
+                await set_tenant_context(db, organization_id)
+                row = await db.scalar(select(AIExecution).where(
+                    AIExecution.id == execution_id,
+                    AIExecution.organization_id == organization_id,
+                    AIExecution.kind == "recommendation",
+                    AIExecution.status == "running",
+                ).with_for_update())
+                if row is None:
+                    await db.rollback()
+                    return
+                row.status = "succeeded"
+                row.recommendation_result = result.model_dump(mode="json")
+                row.safe_summary = f"Recommendation request completed with {len(result.products)} result(s)."
+                row.usage = usage
+                row.model_name = model_name
+                row.error_code = None
+                row.completed_at = now
+                await db.commit()
+            return
         if execution.kind == "widget_reply":
             if await widget_reply_is_stale(organization_id, execution_id):
                 return
@@ -414,6 +477,11 @@ async def process_ai_execution(organization_id: UUID, execution_id: UUID) -> Non
                     usage={},
                     model_name=None,
                 )
+                return
+            shopping_outcome = await process_widget_shopping_execution(
+                organization_id, execution_id, question=execution.question
+            )
+            if shopping_outcome:
                 return
             if not context:
                 await finish_widget_reply(
@@ -624,6 +692,90 @@ async def widget_reply_is_stale(organization_id: UUID, execution_id: UUID) -> bo
         return False
 
 
+async def process_widget_shopping_execution(
+    organization_id: UUID,
+    execution_id: UUID,
+    *,
+    question: str,
+) -> bool:
+    """Run the closed recommendation tools against compact conversation state.
+
+    A transaction-scoped advisory lock serializes recommendation turns for one
+    conversation across worker processes. The response writer separately locks
+    the conversation and checks that the source message is still current.
+    """
+    async with SessionLocal() as db:
+        await set_tenant_context(db, organization_id)
+        execution = await db.scalar(
+            select(AIExecution).where(
+                AIExecution.id == execution_id,
+                AIExecution.organization_id == organization_id,
+                AIExecution.kind == "widget_reply",
+                AIExecution.status == "running",
+            )
+        )
+        if execution is None or execution.conversation_id is None:
+            await db.rollback()
+            return True
+        conversation_id = execution.conversation_id
+        if db.bind is not None and db.bind.dialect.name == "postgresql":
+            lock_key = int.from_bytes(conversation_id.bytes[:8], "big", signed=True)
+            await db.execute(
+                text("SELECT pg_advisory_xact_lock(:lock_key)"), {"lock_key": lock_key}
+            )
+        conversation = await db.scalar(
+            select(Conversation).where(
+                Conversation.id == conversation_id,
+                Conversation.organization_id == organization_id,
+            )
+        )
+        if conversation is None:
+            await db.rollback()
+            return True
+        source_message = await db.scalar(
+            select(Message).where(
+                Message.organization_id == organization_id,
+                Message.conversation_id == conversation_id,
+                Message.id == execution.source_message_id,
+            )
+        )
+        selected_references: list[ToolReference] | None = None
+        if source_message is not None:
+            raw_selections = source_message.provider_metadata.get("recommendation_selections")
+            if isinstance(raw_selections, list):
+                selected_references = [ToolReference.model_validate(item) for item in raw_selections]
+        outcome = await process_widget_shopping_turn(
+            db,
+            organization_id,
+            conversation_id,
+            question,
+            conversation.shopping_state,
+            conversation.shopping_state_expires_at,
+            selected_references=selected_references,
+        )
+        if not outcome.handled:
+            await db.rollback()
+            return False
+        await finish_widget_reply(
+            organization_id,
+            execution_id,
+            draft=outcome.draft or "Could you clarify what product you are looking for?",
+            reply_status="draft_ready" if execution.delivery_mode == "draft_only" else "sent",
+            safe_summary="A shopping response was grounded in this tenant’s catalog and conversation preferences.",
+            citations=[],
+            outcomes=outcome.tool_outcomes or [],
+            usage=outcome.usage or {},
+            model_name=outcome.model_name,
+            shopping_state=outcome.state,
+            persist_shopping_state=True,
+            displayed_recommendations=outcome.displayed_recommendations,
+            recommendation_payload=outcome.recommendation_payload,
+            switch_to_human=outcome.switch_to_human,
+        )
+        await db.commit()
+        return True
+
+
 async def finish_widget_reply(
     organization_id: UUID,
     execution_id: UUID,
@@ -635,6 +787,11 @@ async def finish_widget_reply(
     outcomes: list[dict[str, str | int]],
     usage: dict[str, int],
     model_name: str | None,
+    shopping_state: dict | None = None,
+    persist_shopping_state: bool = False,
+    displayed_recommendations: list[dict[str, object]] | None = None,
+    recommendation_payload: dict[str, object] | None = None,
+    switch_to_human: bool = False,
 ) -> None:
     """Persist a draft or send only while holding the conversation row lock."""
     now = datetime.now(UTC)
@@ -712,6 +869,22 @@ async def finish_widget_reply(
             row.completed_at = now
             await db.commit()
             return
+        if persist_shopping_state:
+            if shopping_state is None:
+                conversation.shopping_state = None
+                conversation.shopping_state_updated_at = None
+                conversation.shopping_state_expires_at = None
+            else:
+                conversation.shopping_state = shopping_state
+                conversation.shopping_state_updated_at = now
+                conversation.shopping_state_expires_at = now + timedelta(days=30)
+                if displayed_recommendations is not None:
+                    conversation.shopping_state = {
+                        **shopping_state,
+                        "last_displayed_recommendations": displayed_recommendations[:5],
+                    }
+            if switch_to_human:
+                conversation.ai_mode = "human"
         if widget is None or not widget.enabled or not widget.ai_enabled:
             reply_status = "escalated"
             safe_summary = "AI replies were disabled before this response could be delivered."
@@ -737,6 +910,11 @@ async def finish_widget_reply(
                     sender_user_id=None,
                     content=draft,
                     content_type="text",
+                    provider_metadata=(
+                        {"recommendation": recommendation_payload}
+                        if recommendation_payload is not None
+                        else {}
+                    ),
                 )
             )
             conversation.updated_at = now
@@ -748,4 +926,42 @@ async def finish_widget_reply(
             )
             if ticket is not None:
                 ticket.updated_at = now
+        if recommendation_payload is not None:
+            response_type = recommendation_payload.get("response_type")
+            event_type = "no_result" if response_type == "no_match" else "comparison" if response_type == "comparison" else None
+            if event_type:
+                from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+                criteria = recommendation_payload.get("applied_criteria")
+                category = criteria.get("category") if isinstance(criteria, dict) else None
+                category_text = str(category).strip() if category is not None else ""
+                safe_category = (
+                    category_text[:120]
+                    if re.fullmatch(r"[\wÀ-ÿ -]{1,80}", category_text)
+                    and not re.search(r"\d{4,}", category_text)
+                    else None
+                )
+                event_name = f"{event_type}:{row.source_message_id}"
+                await db.execute(pg_insert(RecommendationEvent).values(
+                    organization_id=organization_id,
+                    event_id=uuid5(NAMESPACE_URL, event_name),
+                    conversation_id=conversation.id,
+                    message_id=row.source_message_id,
+                    event_type=event_type,
+                    query_category=safe_category,
+                ).on_conflict_do_nothing(constraint="uq_recommendation_events_org_event"))
+        shopping_handoff = any(
+            isinstance(item, dict) and item.get("tool") == "shopping_state" and item.get("status") in {"handoff", "handoff_offer", "unsupported"}
+            for item in outcomes
+        )
+        if shopping_handoff and row.source_message_id is not None:
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+            await db.execute(pg_insert(RecommendationEvent).values(
+                organization_id=organization_id,
+                event_id=uuid5(NAMESPACE_URL, f"human_handoff:{row.source_message_id}"),
+                conversation_id=conversation.id,
+                message_id=row.source_message_id,
+                event_type="human_handoff",
+            ).on_conflict_do_nothing(constraint="uq_recommendation_events_org_event"))
         await db.commit()

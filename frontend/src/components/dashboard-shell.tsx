@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, BarChart3, BookOpen, Building2, CircleHelp, Inbox, LogOut, Menu, Moon, PackageSearch, PanelLeftClose, PanelLeftOpen, ShieldCheck, Sparkles, Sun, Users, X } from "lucide-react";
+import { Activity, BarChart3, BookOpen, Building2, CircleHelp, Inbox, LogOut, Menu, Moon, PackageSearch, PanelLeftClose, PanelLeftOpen, Sparkles, Sun, Users, X } from "lucide-react";
 import { getCurrentUser, currentUserQueryKey, logout as logoutRequest } from "@/features/auth/api/auth-api";
 import { getSystemReadiness } from "@/features/dashboard/api/system-status-api";
 import { Button } from "@/components/ui/button";
@@ -17,7 +17,6 @@ const navigation = [
   { href: "/dashboard/ai", label: "AI Playground", icon: Sparkles },
   { href: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/dashboard/operations", label: "Operations", icon: Activity },
-  { href: "/dashboard/security", label: "Security", icon: ShieldCheck },
   { href: "/dashboard/orders", label: "Shopify orders", icon: PackageSearch },
   { href: "/dashboard/tickets", label: "Tickets", icon: Inbox },
   { href: "/dashboard/customers", label: "Customers", icon: Users },
@@ -104,7 +103,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   }
   const user = me.data;
   const canManage = user.role === "owner" || user.role === "admin";
-  const links = canManage ? [...navigation, { href: "/dashboard/settings", label: "Settings & team", icon: Building2 }] : navigation;
+  const links = [...navigation, { href: "/dashboard/settings", label: canManage ? "Settings & team" : "Settings", icon: Building2 }];
 
   return (
     <div className={isInbox ? "flex h-dvh overflow-hidden bg-slate-50 text-slate-900" : "flex min-h-screen bg-slate-50 text-slate-900"}>

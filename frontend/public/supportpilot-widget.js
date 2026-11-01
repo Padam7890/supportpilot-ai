@@ -130,6 +130,68 @@
   let verifiedOrder = false;
   let latestMessages = [];
   let lastHistorySignature = "";
+  let recommendationUIPromise;
+  let compareSelections = [];
+  let lastRecommendationMessageId = null;
+  let nextRecommendationSelections = null;
+
+  function loadRecommendationUI() {
+    if (window.SupportPilotRecommendationUI) {
+      window.SupportPilotRecommendationUI.mountStyles(shadow);
+      return Promise.resolve(window.SupportPilotRecommendationUI);
+    }
+    if (recommendationUIPromise) return recommendationUIPromise;
+    recommendationUIPromise = new Promise((resolve, reject) => {
+      const recommendationScript = document.createElement("script");
+      const recommendationUrl = new URL("supportpilot-recommendations.js", script.src);
+      recommendationUrl.searchParams.set("v", new URL(script.src).searchParams.get("v") || "1");
+      recommendationScript.src = recommendationUrl.href;
+      recommendationScript.async = true;
+      recommendationScript.onload = () => {
+        const ui = window.SupportPilotRecommendationUI;
+        if (!ui) return reject(new Error("Product recommendations could not be loaded."));
+        ui.mountStyles(shadow);
+        resolve(ui);
+      };
+      recommendationScript.onerror = () => reject(new Error("Product recommendations could not be loaded."));
+      document.head.appendChild(recommendationScript);
+    });
+    return recommendationUIPromise;
+  }
+
+  function compareProductsAt(index, selection) {
+    const existing = compareSelections.findIndex((item) => item.selection.product_id === selection.product_id);
+    if (existing >= 0) {
+      compareSelections.splice(existing, 1);
+      setStatus(`Removed product ${index + 1}. ${compareSelections.length} selected for comparison.`);
+      return false;
+    }
+    if (compareSelections.length >= 4) {
+      setStatus("Compare up to four products at a time.", true);
+      return false;
+    }
+    compareSelections.push({ index, selection });
+    setStatus(`${compareSelections.length} product${compareSelections.length === 1 ? "" : "s"} selected. Choose 2–4, then compare.`);
+    return true;
+  }
+
+  function updateComparedVariant(_index, selection) {
+    const existing = compareSelections.find((item) => item.selection.product_id === selection.product_id);
+    if (existing) existing.selection = selection;
+  }
+
+  function compareSelectedProducts() {
+    if (compareSelections.length < 2 || compareSelections.length > 4) {
+      setStatus("Select between two and four different products to compare.", true);
+      return;
+    }
+    const ordered = [...compareSelections].sort((left, right) => left.index - right.index);
+    const names = ["first", "second", "third", "fourth"];
+    compose.value = `Compare the ${ordered.map((item) => names[item.index] || `${item.index + 1}`).join(", ")} products`;
+    nextRecommendationSelections = ordered.map((item) => item.selection);
+    resizeComposer();
+    sendMessage();
+  }
 
   function setStatus(message, error = false) {
     status.textContent = message;
@@ -146,7 +208,7 @@
     return Number.isNaN(date.getTime()) ? "" : new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date);
   }
 
-  function addMessage(message) {
+  function addMessage(message, { canCompare = false } = {}) {
     const sender = message.sender_type === "customer" ? "customer" : message.sender_type === "agent" ? "agent" : "assistant";
     const row = document.createElement("article");
     row.className = `message-row ${sender}`;
@@ -161,7 +223,28 @@
     const time = document.createElement("time");
     time.textContent = timestamp(message.created_at);
     meta.append(name, time);
-    row.append(bubble, meta);
+    if (!message.recommendation) row.appendChild(bubble);
+    if (message.recommendation && window.SupportPilotRecommendationUI) {
+      const recommendation = window.SupportPilotRecommendationUI.ProductRecommendationMessage(message.recommendation, {
+        onImpression: (product) => trackRecommendationEvent(message.id, "impression", product),
+        onProductClick: (product) => trackRecommendationEvent(message.id, "product_click", product),
+        onReject: (product) => trackRecommendationEvent(message.id, "rejection", product),
+        onComparison: () => trackRecommendationEvent(message.id, "comparison"),
+        onCompare: canCompare ? compareProductsAt : undefined,
+        onVariantSelected: canCompare ? updateComparedVariant : undefined,
+        selectedCompareProductIds: compareSelections.map((item) => item.selection.product_id),
+        getCompareCount: () => compareSelections.length,
+        onCompareSelected: compareSelectedProducts,
+        onQuickReply: (reply) => {
+          compose.value = reply;
+          resizeComposer();
+          sendMessage();
+        },
+      });
+      row.appendChild(recommendation);
+      row.classList.add("recommendation-message");
+    }
+    row.appendChild(meta);
     thread.appendChild(row);
   }
 
@@ -432,6 +515,26 @@
     return body;
   }
 
+  function trackRecommendationEvent(messageId, eventType, product) {
+    if (!session || !messageId) return;
+    const productId = product?.product_id || "none";
+    const key = `${messageId}:${eventType}:${productId}`;
+    let tracked;
+    try { tracked = JSON.parse(sessionStorage.getItem(`${sessionKey}:events`) || "{}"); } catch { tracked = {}; }
+    if (tracked[key]) return;
+    const eventId = crypto.randomUUID();
+    tracked[key] = eventId;
+    sessionStorage.setItem(`${sessionKey}:events`, JSON.stringify(tracked));
+    callVisitorApi(`/widget/conversations/${encodeURIComponent(session.conversation_id)}/recommendation-events`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ event_id: eventId, message_id: messageId, event_type: eventType, ...(product?.product_id ? { product_id: product.product_id } : {}), ...(product?.variant_id ? { variant_id: product.variant_id } : {}) }),
+    }).catch(() => {
+      delete tracked[key];
+      sessionStorage.setItem(`${sessionKey}:events`, JSON.stringify(tracked));
+    });
+  }
+
   function readSession() {
     try { session = JSON.parse(sessionStorage.getItem(sessionKey) || "null"); }
     catch { session = null; }
@@ -466,7 +569,17 @@
     const assistantBefore = thread.querySelectorAll(".message-row.assistant:not(.typing-row)").length;
     thread.replaceChildren();
     if (!latestMessages.length) addWelcome();
-    latestMessages.forEach(addMessage);
+    const latestRecommendation = [...latestMessages].reverse().find(
+      (message) => message.recommendation?.response_type,
+    );
+    const lastRecommendationId = latestRecommendation?.id || null;
+    if (lastRecommendationId !== lastRecommendationMessageId) {
+      compareSelections = [];
+      lastRecommendationMessageId = lastRecommendationId;
+    }
+    latestMessages.forEach((message) => addMessage(message, {
+      canCompare: message.id === lastRecommendationId && message.recommendation?.response_type === "recommendations",
+    }));
     const assistantAfter = thread.querySelectorAll(".message-row.assistant:not(.typing-row)").length;
     if (waitingForAssistant && assistantAfter > assistantBefore) {
       waitingForAssistant = false;
@@ -474,7 +587,16 @@
     }
     const verificationRequested = latestAssistantRequestsVerification(latestMessages);
     const needsOrderVerification = containsOrderIntent(latestMessages) && (!verifiedOrder || verificationRequested) && !cancellationWasSubmitted(latestMessages);
-    if (waitingForAssistant && conversationMode === "ai" && config?.ai_enabled && !needsOrderVerification) addTyping();
+    if (waitingForAssistant && conversationMode === "ai" && config?.ai_enabled && !needsOrderVerification) {
+      const latestCustomer = [...latestMessages].reverse().find((item) => item.sender_type === "customer")?.content || "";
+      if (/\b(recommend|suggest|phone|smartphone|mobile|laptop|camera|budget|compare|better|only)\b/i.test(latestCustomer) && window.SupportPilotRecommendationUI) {
+        const loading = window.SupportPilotRecommendationUI.RecommendationLoadingState();
+        loading.classList.add("recommendation-message");
+        thread.appendChild(loading);
+      } else {
+        addTyping();
+      }
+    }
     if (needsOrderVerification) {
       waitingForAssistant = false;
       addOrderVerificationCard();
@@ -488,6 +610,7 @@
 
   async function ensureConfig() {
     if (config) return config;
+    await loadRecommendationUI();
     const response = await fetch(`${apiBase}/widget/${encodeURIComponent(publicId)}/config`, { credentials: "omit" });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(safeError(body, "Chat is unavailable for this store."));
@@ -575,14 +698,21 @@
         sessionStorage.removeItem(pendingKey);
         firstAttempt = null;
       } else {
-        const attempt = followingAttempt?.content === content ? followingAttempt : { content, key: crypto.randomUUID() };
+        const selectionSignature = JSON.stringify(nextRecommendationSelections || []);
+        const attempt = followingAttempt?.content === content && followingAttempt.selectionSignature === selectionSignature
+          ? followingAttempt
+          : { content, selectionSignature, key: crypto.randomUUID() };
         followingAttempt = attempt;
+        const messageBody = { content, website };
+        if (nextRecommendationSelections) messageBody.recommendation_selections = nextRecommendationSelections;
         await callVisitorApi(`/widget/conversations/${encodeURIComponent(session.conversation_id)}/messages`, {
           method: "POST",
           headers: { "content-type": "application/json", "idempotency-key": attempt.key },
-          body: JSON.stringify({ content, website }),
+          body: JSON.stringify(messageBody),
         });
         followingAttempt = null;
+        nextRecommendationSelections = null;
+        compareSelections = [];
       }
       compose.value = "";
       resizeComposer();
@@ -594,7 +724,15 @@
         if (document.visibilityState === "visible" && panel.classList.contains("open")) loadHistory().catch(() => {});
       }, 5000);
     } catch (error) {
-      setStatus(error.message || "Could not send your message. Please try again.", true);
+      const errorText = error.message || "Could not send your message. Please try again.";
+      setStatus(errorText, true);
+      if (/\b(recommend|suggest|phone|smartphone|mobile|laptop|camera|budget|compare|better|only)\b/i.test(content) && window.SupportPilotRecommendationUI) {
+        thread.querySelector(".recommendation-error")?.remove();
+        const errorState = window.SupportPilotRecommendationUI.RecommendationErrorState(errorText, sendMessage);
+        errorState.classList.add("recommendation-message");
+        thread.appendChild(errorState);
+        errorState.scrollIntoView({ block: "nearest" });
+      }
     } finally {
       pending = false;
       sendButton.disabled = !compose.value.trim();

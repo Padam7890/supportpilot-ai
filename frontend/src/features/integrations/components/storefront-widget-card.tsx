@@ -17,7 +17,7 @@ export function StorefrontWidgetCard() {
   const [aiModeDraft, setAiModeDraft] = useState<"draft_only" | "auto_reply">();
   const [copied, setCopied] = useState(false);
   const appBase = (process.env.NEXT_PUBLIC_SUPPORTPILOT_APP_URL || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
-  const widgetScriptVersion = "2026-10-31-otp-flow-v3";
+  const widgetScriptVersion = "2026-11-01-recommendations-v1";
   const originsText = originsDraft ?? config.data?.allowed_origins.join("\n") ?? "";
   const enabled = enabledDraft ?? config.data?.enabled ?? true;
   const aiEnabled = aiEnabledDraft ?? config.data?.ai_enabled ?? false;

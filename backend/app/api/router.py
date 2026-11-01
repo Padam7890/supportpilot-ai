@@ -13,6 +13,8 @@ from app.api.routes import (
     integrations,
     knowledge,
     platform,
+    recommendation_settings,
+    recommendations,
     search,
     tickets,
     users,
@@ -37,4 +39,6 @@ api_router.include_router(users.router)
 api_router.include_router(widgets.management_router)
 api_router.include_router(widgets.public_router)
 api_router.include_router(platform.router)
+api_router.include_router(recommendations.router)
+api_router.include_router(recommendation_settings.router)
 api_router.include_router(search.router)

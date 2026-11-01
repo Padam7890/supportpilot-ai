@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, StringConstraints
 
@@ -24,12 +24,13 @@ class AICitation(BaseModel):
 
 class AIExecutionOut(BaseModel):
     id: uuid.UUID
-    kind: Literal["playground", "reply_draft", "widget_reply"]
+    kind: Literal["playground", "reply_draft", "widget_reply", "recommendation"]
     status: Literal["queued", "running", "succeeded", "failed"]
     delivery_mode: Literal["draft_only", "auto_reply"] | None = None
     reply_status: Literal["processing", "draft_ready", "sent", "escalated", "failed"] | None = None
     safe_summary: str | None
     draft: str | None
+    recommendation_result: dict[str, Any] | None = None
     citations: list[AICitation]
     tool_outcomes: list[dict[str, str | int]]
     usage: dict[str, int]

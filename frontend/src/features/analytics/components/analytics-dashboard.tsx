@@ -13,6 +13,7 @@ import {
   submitEvaluation,
   type AIEvaluationCreate,
 } from "../api/analytics-api";
+import { getRecommendationAnalytics, recommendationQueryKeys } from "@/features/recommendations/api/recommendation-api";
 
 function dateValue(value: Date) {
   return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
@@ -38,6 +39,11 @@ export function AnalyticsDashboard() {
   const evaluations = useQuery({
     queryKey: analyticsQueryKeys.evaluations(startDate, endDate),
     queryFn: () => getEvaluationSummary(startDate, endDate),
+    enabled: startDate <= endDate,
+  });
+  const recommendations = useQuery({
+    queryKey: recommendationQueryKeys.analytics(startDate, endDate),
+    queryFn: () => getRecommendationAnalytics(startDate, endDate),
     enabled: startDate <= endDate,
   });
   const executions = useQuery({ queryKey: ["ai-executions", "analytics"], queryFn: () => listAIExecutions(100, 0) });
@@ -87,9 +93,41 @@ export function AnalyticsDashboard() {
           </form>}
         </section>
       </div>
+      <RecommendationInsights data={recommendations.data} loading={recommendations.isPending} error={recommendations.isError}/>
     </>}
   </div>;
 }
+
+function RecommendationInsights({ data, loading, error }: { data: import("@/features/recommendations/api/recommendation-api").RecommendationAnalytics | undefined; loading: boolean; error: boolean }) {
+  const trends = data?.trends ?? [];
+  const recommended = data?.top_recommended_products ?? [];
+  const clicked = data?.top_clicked_products ?? [];
+  const noResults = data?.no_result_categories ?? [];
+  const errorCodes = data?.error_codes ?? [];
+  const max = Math.max(1, ...trends.map((point) => point.impressions));
+  return <section aria-labelledby="recommendation-analytics-title" className="space-y-4">
+    <div><p className="text-xs font-bold uppercase tracking-[.16em] text-violet-700">Commerce intelligence</p><h2 id="recommendation-analytics-title" className="mt-1 text-xl font-bold">Product recommendations</h2><p className="mt-1 text-sm text-slate-500">Tenant-scoped storefront events and recommendation execution health.</p></div>
+    {loading ? <div role="status" className="h-40 animate-pulse rounded-2xl bg-slate-100"/> : error ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">Recommendation analytics could not be loaded.</div> : data && <>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Metric title="Impressions" value={data.impressions.toLocaleString()} detail="Recommendation products rendered" icon={<Sparkles size={18}/>}/>
+        <Metric title="Product clicks" value={data.product_clicks.toLocaleString()} detail={`${data.impressions ? Math.round((data.product_clicks / data.impressions) * 100) : 0}% of impressions`} icon={<BarChart3 size={18}/>}/>
+        <Metric title="Comparisons" value={data.comparisons.toLocaleString()} detail={`${data.rejected_recommendations} rejected · ${data.no_result_searches} no-result`} icon={<ThumbsDown size={18}/>}/>
+        <Metric title="Recommendation AI cost" value={data.estimated_cost_usd == null ? "Not configured" : `$${data.estimated_cost_usd.toFixed(4)}`} detail={`${data.prompt_tokens + data.completion_tokens} tokens · ${data.failed_executions} failed`} icon={<CircleDollarSign size={18}/>}/>
+      </div>
+      <div className="grid gap-5 xl:grid-cols-[1.4fr_1fr]">
+        <section className="rounded-2xl border border-slate-200 bg-white p-5" aria-label="Recommendation trend"><h3 className="font-semibold">Recommendation funnel and trend</h3><p className="mt-1 text-xs text-slate-500">Daily product impressions and clicks. Mean generation time: {data.average_latency_ms == null ? "no completed samples" : `${data.average_latency_ms} ms`}.</p>
+          <div className="mt-4 grid grid-cols-5 gap-2 text-center text-xs"><Funnel label="Shown" count={data.impressions}/><Funnel label="Clicked" count={data.product_clicks}/><Funnel label="Compared" count={data.comparisons}/><Funnel label="No result" count={data.no_result_searches}/><Funnel label="Handoff" count={data.human_handoffs}/></div>
+          <div className="mt-5 flex h-36 items-end gap-1 overflow-x-auto border-b border-slate-100 pb-2" role="img" aria-label="Daily recommendation impression volume">{trends.map((point) => <div key={point.date} title={`${point.date}: ${point.impressions} impressions, ${point.clicks} clicks`} className="flex min-w-2 flex-1 flex-col justify-end"><div className="rounded-t-sm bg-violet-500" style={{ height: `${Math.max(point.impressions ? 4 : 1, Math.round(point.impressions / max * 100))}%` }}/><div className="mt-0.5 rounded-t-sm bg-blue-400" style={{ height: `${Math.max(point.clicks ? 3 : 1, Math.round(point.clicks / max * 100))}%` }}/></div>)}</div>
+          <p className="mt-2 text-xs text-slate-500">Purchases and cart adds are unavailable until a trusted commerce event source is configured. Attribution window planned: {data.attribution_window_days} days; no conversion is currently attributed.</p>
+        </section>
+        <div className="space-y-5"><LeaderList title="Top recommended" items={recommended.map((item) => ({ product_id: String(item.product_id), title: String(item.title), count: Number(item.count) }))}/><LeaderList title="Top clicked" items={clicked.map((item) => ({ product_id: String(item.product_id), title: String(item.title), count: Number(item.count) }))}/><LeaderList title="No-result categories" items={noResults.map((item) => ({ product_id: String(item.category), title: String(item.category), count: Number(item.count) }))}/><LeaderList title="AI errors" items={errorCodes.map((item) => ({ product_id: String(item.code), title: String(item.code), count: Number(item.count) }))}/></div>
+      </div>
+    </>}
+  </section>;
+}
+
+function Funnel({ label, count }: { label: string; count: number }) { return <div className="rounded-lg bg-slate-50 p-2"><p className="text-lg font-bold text-slate-900">{count.toLocaleString()}</p><p className="mt-0.5 text-slate-500">{label}</p></div>; }
+function LeaderList({ title, items }: { title: string; items: { product_id: string; title: string; count: number }[] }) { return <section className="rounded-2xl border border-slate-200 bg-white p-5"><h3 className="font-semibold">{title}</h3>{items.length ? <ol className="mt-3 space-y-2">{items.slice(0, 5).map((item, index) => <li key={`${item.product_id}-${index}`} className="flex items-center justify-between gap-3 text-sm"><span className="truncate text-slate-700">{item.title}</span><span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold">{item.count}</span></li>)}</ol> : <p className="mt-3 text-sm text-slate-500">No activity in this date range.</p>}</section>; }
 
 function Metric({ title, value, detail, icon }: { title: string; value: string; detail: string; icon: React.ReactNode }) {
   return <article className="rounded-2xl border border-slate-200 bg-white p-5"><div className="flex items-center justify-between text-slate-500"><p className="text-sm font-medium">{title}</p>{icon}</div><p className="mt-3 truncate text-2xl font-bold tracking-tight text-slate-950">{value}</p><p className="mt-1 text-xs text-slate-500">{detail}</p></article>;

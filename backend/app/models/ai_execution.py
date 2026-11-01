@@ -26,7 +26,7 @@ class AIExecution(UUIDPrimaryKey, TimestampMixin, Base):
 
     __tablename__ = "ai_executions"
     __table_args__ = (
-        CheckConstraint("kind IN ('playground', 'reply_draft', 'widget_reply')", name="ck_ai_executions_kind"),
+        CheckConstraint("kind IN ('playground', 'reply_draft', 'widget_reply', 'recommendation')", name="ck_ai_executions_kind"),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed')",
             name="ck_ai_executions_status",
@@ -78,6 +78,7 @@ class AIExecution(UUIDPrimaryKey, TimestampMixin, Base):
     # Optional, encrypted verified integration context. Never included in API output.
     integration_context_encrypted: Mapped[str | None] = mapped_column(Text)
     draft: Mapped[str | None] = mapped_column(Text)
+    recommendation_result: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     safe_summary: Mapped[str | None] = mapped_column(String(500))
     citations: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
     tool_outcomes: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)

@@ -43,6 +43,7 @@ from app.models import (
     Customer,
     Message,
     Organization,
+    RecommendationEvent,
     SupportWidget,
     Ticket,
     TicketActivity,
@@ -50,6 +51,8 @@ from app.models import (
     WidgetOrderVerification,
     WidgetSubmission,
 )
+from app.schemas.recommendation_settings import RecommendationEventIn, RecommendationEventOut
+from app.schemas.recommendations import ProductComparisonResult, RecommendationResult
 from app.schemas.widget import (
     PublicWidgetConfigOut,
     WidgetCancellationRequest,
@@ -84,6 +87,27 @@ def _log_order_verification(level: int, event: str, **fields: object) -> None:
     Never pass customer email, order number, OTP, visitor token, or provider payloads.
     """
     logger.log(level, "widget_order_verification %s", json.dumps({"event": event, **fields}, sort_keys=True))
+
+
+def widget_message_out(message: Message) -> WidgetMessageOut:
+    raw = message.provider_metadata.get("recommendation") if message.provider_metadata else None
+    recommendation = None
+    if isinstance(raw, dict):
+        try:
+            recommendation = (
+                RecommendationResult.model_validate(raw)
+                if "suggested_follow_ups" in raw or raw.get("response_type") in {"recommendations", "no_match", "unsupported"}
+                else ProductComparisonResult.model_validate(raw)
+            )
+        except ValueError:
+            logger.warning("Widget recommendation payload failed schema validation: message_id=%s", message.id)
+    return WidgetMessageOut(
+        id=message.id,
+        sender_type=message.sender_type,
+        content=message.content,
+        created_at=message.created_at,
+        recommendation=recommendation,
+    )
 
 
 def normalize_origin(value: str) -> str:
@@ -252,6 +276,71 @@ async def require_visitor_conversation(
         raise HTTPException(status_code=404, detail="Conversation not found")
     await rate_limit_widget(request, public_id)
     return widget, conversation, ticket
+
+
+@public_router.post(
+    "/conversations/{conversation_id}/recommendation-events",
+    response_model=RecommendationEventOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def record_recommendation_event(
+    conversation_id: UUID,
+    payload: RecommendationEventIn,
+    request: Request,
+    authorization: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> RecommendationEventOut:
+    """Record only widget events tied to a recommendation actually shown in this visitor's chat."""
+    widget, conversation, _ticket = await require_visitor_conversation(request, conversation_id, authorization, db)
+    message = await db.scalar(select(Message).where(
+        Message.organization_id == widget.organization_id,
+        Message.conversation_id == conversation.id,
+        Message.id == payload.message_id,
+        Message.sender_type == "assistant",
+    ))
+    raw = message.provider_metadata.get("recommendation") if message and message.provider_metadata else None
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=422, detail="This message has no recommendation data")
+    if payload.event_type == "comparison" and raw.get("response_type") != "comparison":
+        raise HTTPException(status_code=422, detail="This message is not a product comparison")
+    if payload.event_type in {"impression", "product_click", "rejection"}:
+        products = raw.get("products")
+        product_ids = {str(item.get("product_id")) for item in products if isinstance(item, dict)} if isinstance(products, list) else set()
+        if payload.event_type == "impression" and payload.product_id is None:
+            raise HTTPException(status_code=422, detail="Product impression events require a product")
+        if payload.product_id is not None and str(payload.product_id) not in product_ids:
+            raise HTTPException(status_code=422, detail="Product is not in this recommendation")
+        if payload.variant_id is not None:
+            product = next((item for item in products if isinstance(item, dict) and str(item.get("product_id")) == str(payload.product_id)), None) if isinstance(products, list) else None
+            variants = product.get("variant_options", []) if product else []
+            allowed_variants = {str(item.get("variant_id")) for item in variants if isinstance(item, dict)} if isinstance(variants, list) else set()
+            if str(payload.variant_id) not in allowed_variants and str(payload.variant_id) != str(product.get("variant_id") if product else None):
+                raise HTTPException(status_code=422, detail="Variant is not part of this product recommendation")
+    inserted = await db.execute(
+        pg_insert(RecommendationEvent)
+        .values(
+            organization_id=widget.organization_id,
+            event_id=payload.event_id,
+            conversation_id=conversation.id,
+            message_id=message.id,
+            event_type=payload.event_type,
+            product_id=payload.product_id,
+            variant_id=payload.variant_id,
+        )
+        .on_conflict_do_nothing(constraint="uq_recommendation_events_org_event")
+        .returning(RecommendationEvent.id)
+    )
+    if inserted.scalar_one_or_none() is not None and payload.event_type == "rejection" and payload.product_id is not None:
+        state = dict(conversation.shopping_state or {})
+        rejected = list(state.get("rejected_product_ids", []))
+        if str(payload.product_id) not in {str(value) for value in rejected}:
+            rejected.append(str(payload.product_id))
+            state["rejected_product_ids"] = rejected[-50:]
+            state["rejected_recommendation_count"] = min(100, int(state.get("rejected_recommendation_count", 0)) + 1)
+            conversation.shopping_state = state
+            conversation.shopping_state_updated_at = datetime.now(UTC)
+            conversation.shopping_state_expires_at = datetime.now(UTC) + timedelta(days=30)
+    return RecommendationEventOut()
 
 
 @management_router.get("", response_model=WidgetConfigOut | None)
@@ -490,15 +579,7 @@ async def get_widget_conversation(
         conversation_id=conversation.id,
         order_verified=active_verification_id is not None,
         ai_mode=conversation.ai_mode,
-        messages=[
-            WidgetMessageOut(
-                id=message.id,
-                sender_type=message.sender_type,
-                content=message.content,
-                created_at=message.created_at,
-            )
-            for message in messages
-        ],
+        messages=[widget_message_out(message) for message in messages],
     )
 
 
@@ -518,6 +599,43 @@ async def continue_widget_conversation(
     widget, conversation, ticket = await require_visitor_conversation(
         request, conversation_id, authorization, db
     )
+    recommendation_selections: list[dict[str, str]] = []
+    if payload.recommendation_selections:
+        selections = payload.recommendation_selections
+        if not 2 <= len(selections) <= 4 or len({selection.product_id for selection in selections}) != len(selections):
+            raise HTTPException(status_code=422, detail="Select 2–4 different displayed products to compare")
+        selection_expires_at = conversation.shopping_state_expires_at
+        if selection_expires_at is None:
+            raise HTTPException(status_code=422, detail="Those recommendations have expired; please ask for options again")
+        normalized_expiry = (
+            selection_expires_at
+            if selection_expires_at.tzinfo is not None
+            else selection_expires_at.replace(tzinfo=UTC)
+        )
+        if normalized_expiry <= datetime.now(UTC):
+            raise HTTPException(status_code=422, detail="Those recommendations have expired; please ask for options again")
+        raw_state = conversation.shopping_state or {}
+        displayed = raw_state.get("last_displayed_recommendations", []) if isinstance(raw_state, dict) else []
+        available_by_product: dict[str, set[str]] = {}
+        if isinstance(displayed, list):
+            for item in displayed:
+                if not isinstance(item, dict):
+                    continue
+                product_id = item.get("product_id")
+                variant_id = item.get("variant_id")
+                if not isinstance(product_id, str) or not isinstance(variant_id, str):
+                    continue
+                options = item.get("available_variant_ids")
+                allowed = {value for value in options if isinstance(value, str)} if isinstance(options, list) else set()
+                allowed.add(variant_id)
+                available_by_product[product_id] = allowed
+        if any(
+            str(selection.product_id) not in available_by_product
+            or str(selection.variant_id) not in available_by_product[str(selection.product_id)]
+            for selection in selections
+        ):
+            raise HTTPException(status_code=422, detail="A selected option is no longer in this chat’s recommendations")
+        recommendation_selections = [selection.model_dump(mode="json") for selection in selections]
     hashed_key = key_hash(idempotency_key)
     inserted_id = await db.scalar(
         pg_insert(Message)
@@ -529,6 +647,11 @@ async def continue_widget_conversation(
             content=payload.content,
             content_type="text",
             widget_idempotency_hash=hashed_key,
+            provider_metadata=(
+                {"recommendation_selections": recommendation_selections}
+                if recommendation_selections
+                else {}
+            ),
         )
         .on_conflict_do_nothing(constraint="uq_messages_widget_idempotency")
         .returning(Message.id)
@@ -545,6 +668,9 @@ async def continue_widget_conversation(
             raise HTTPException(status_code=409, detail="Retry this message with a new idempotency key")
         if existing.content != payload.content:
             raise HTTPException(status_code=409, detail="This idempotency key was used for a different message")
+        existing_selections = existing.provider_metadata.get("recommendation_selections", [])
+        if existing_selections != recommendation_selections:
+            raise HTTPException(status_code=409, detail="This idempotency key was used for a different comparison")
         return WidgetMessageOut(id=existing.id, sender_type=existing.sender_type, content=existing.content, created_at=existing.created_at)
     message = await db.get(Message, inserted_id)
     if message is None:
