@@ -7,15 +7,15 @@ from uuid import UUID
 from sqlalchemy import and_, or_, select
 
 from app.db.session import SessionLocal, set_tenant_context
-from app.models import CommerceAction, CommerceActionAudit, Customer, ShopifyInstallation, Ticket
-from app.services.mock_commerce import MockCommerceService
-from app.services.shopify_actions import (
+from app.integrations.providers.shopify.actions import (
     ShopifyOrderActionError,
     cancel_shopify_order,
     check_cancellation_eligibility,
 )
-from app.services.shopify_orders import lookup_authorized_order
-from app.services.shopify_security import decrypt_credential
+from app.integrations.providers.shopify.orders import lookup_authorized_order
+from app.integrations.providers.shopify.security import decrypt_credential
+from app.models import CommerceAction, CommerceActionAudit, Customer, ShopifyInstallation, Ticket
+from app.services.mock_commerce import MockCommerceService
 
 logger = logging.getLogger(__name__)
 ACTION_LEASE_TIMEOUT = timedelta(minutes=5)

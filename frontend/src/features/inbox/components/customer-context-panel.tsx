@@ -45,15 +45,15 @@ export function CustomerContextPanel({ item, role }: { item: InboxItem; role: st
     },
   });
 
-  return <div className="h-full overflow-y-auto bg-[#f8f8f9]">
-    <div className="border-b border-[#e7e7e8] bg-white p-5">
+  return <div className="h-full overflow-y-auto bg-slate-50 text-slate-900">
+    <div className="border-b border-slate-200 bg-white p-5">
       <div className="flex items-center gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-full bg-violet-100 text-base font-bold text-violet-800">{item.customer.name.trim().slice(0, 1).toUpperCase()}</span><div className="min-w-0"><h2 className="truncate font-semibold">{item.customer.name}</h2><p className="truncate text-xs text-slate-500">{item.customer.email ?? "No email address"}</p></div></div>
       <Link href={`/dashboard/customers/${item.customer.id}`} className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-blue-700 hover:underline">Customer profile <ArrowUpRight size={13}/></Link>
       {item.customer.email && <Link href={`/dashboard/orders?email=${encodeURIComponent(item.customer.email)}`} className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-blue-700 hover:underline">Verify Shopify order <ArrowUpRight size={13}/></Link>}
     </div>
 
     <div className="space-y-4 p-4">
-      <Panel className="border-[#e7e7e8] shadow-[0_2px_8px_rgba(11,9,7,.035)]">
+      <Panel className="border-slate-200 shadow-sm">
         <PanelHeader title="Ticket details" description={`Updated ${formatDateTime(item.updatedAt)}`}/>
         <PanelBody className="space-y-4">
           <div><label htmlFor="inbox-ticket-status" className="mb-1.5 block text-xs font-semibold text-slate-500">Status</label><Select id="inbox-ticket-status" value={item.status} disabled={!canEdit || update.isPending} onChange={(event) => update.mutate({ status: event.target.value as Ticket["status"] })}>{statuses.map((status) => <option key={status} value={status}>{titleCase(status)}</option>)}</Select></div>

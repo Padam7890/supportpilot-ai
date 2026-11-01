@@ -46,8 +46,14 @@ html[data-theme="dark"] {
   --color-red-200: #6c2934;
   --color-red-600: #fb7185;
   --color-red-700: #fda4af;
+  --color-red-800: #fecdd3;
   --color-amber-50: #342710;
+  --color-amber-100: #45340f;
+  --color-amber-200: #614916;
   --color-amber-700: #fcd34d;
+  --color-amber-800: #fde68a;
+  --color-amber-900: #fef3c7;
+  --color-amber-950: #fffbeb;
   --surface: #111827;
   --surface-muted: #172033;
   --border: #263349;

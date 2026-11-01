@@ -12,7 +12,10 @@ from redis.asyncio import Redis
 from app.api.router import api_router
 from app.core.config import settings
 from app.core.database import DatabaseSchemaOutOfDate, check_database, close_database
+from app.integrations.core.registry import IntegrationRegistry
+from app.integrations.providers.shopify.provider import ShopifyCatalogProvider
 from app.schemas.errors import ProblemDetails
+from app.services.catalog import resolve_shopify_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +28,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         decode_responses=True,
     )
     app.state.redis = redis_client
+    app.state.integration_registry = IntegrationRegistry()
+    app.state.integration_registry.register(ShopifyCatalogProvider(resolve_shopify_credentials))
     try:
         yield
     finally:
@@ -39,6 +44,8 @@ app = FastAPI(
     debug=settings.debug,
     lifespan=lifespan,
 )
+app.state.integration_registry = IntegrationRegistry()
+app.state.integration_registry.register(ShopifyCatalogProvider(resolve_shopify_credentials))
 app.include_router(api_router, prefix=settings.api_v1_prefix)
 
 _default_openapi = app.openapi

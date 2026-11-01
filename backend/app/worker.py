@@ -26,6 +26,16 @@ from app.services.ai_worker import (
     fail_exhausted_ai_leases,
     process_ai_execution,
 )
+from app.services.catalog import (
+    claim_catalog_job,
+    claim_catalog_webhook,
+    enqueue_reconciliation,
+    process_catalog_webhook,
+    run_catalog_sync_page,
+)
+from app.services.catalog import (
+    resolve_shopify_credentials as resolve_shopify_catalog_credentials,
+)
 from app.services.commerce_action_worker import (
     claim_commerce_action,
     expire_one_pending_action,
@@ -39,6 +49,17 @@ ORGANIZATION_BATCH_SIZE = 100
 _organization_cursor: UUID | None = None
 _prefer_ai_execution = False
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+_last_catalog_reconciliation_scan: datetime | None = None
+
+
+async def reconcile_catalogs_if_due(organizations: list[UUID]) -> None:
+    global _last_catalog_reconciliation_scan
+    now = datetime.now(UTC)
+    if _last_catalog_reconciliation_scan and now - _last_catalog_reconciliation_scan < timedelta(hours=1):
+        return
+    _last_catalog_reconciliation_scan = now
+    for organization_id in organizations:
+        await enqueue_reconciliation(organization_id)
 
 
 def extract_text(name: str, content: bytes) -> str:
@@ -362,6 +383,23 @@ async def process_next_job() -> bool:
             organizations = list(await db.scalars(statement))
     for organization_id in organizations:
         _organization_cursor = organization_id
+        await reconcile_catalogs_if_due(organizations)
+        webhook_id = await claim_catalog_webhook(organization_id)
+        if webhook_id:
+            await process_catalog_webhook(
+                organization_id,
+                webhook_id,
+                resolve_credentials=resolve_shopify_catalog_credentials,
+            )
+            return True
+        catalog_job_id = await claim_catalog_job(organization_id)
+        if catalog_job_id:
+            await run_catalog_sync_page(
+                organization_id,
+                catalog_job_id,
+                resolve_credentials=resolve_shopify_catalog_credentials,
+            )
+            return True
         if await expire_one_pending_action(organization_id):
             return True
         if _prefer_ai_execution:

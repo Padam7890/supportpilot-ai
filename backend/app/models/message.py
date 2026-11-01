@@ -1,6 +1,8 @@
 import uuid
 
 from sqlalchemy import (
+    JSON,
+    CheckConstraint,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
@@ -18,6 +20,11 @@ from app.models.mixins import TimestampMixin, UUIDPrimaryKey
 class Message(UUIDPrimaryKey, TimestampMixin, Base):
     __tablename__ = "messages"
     __table_args__ = (
+        CheckConstraint(
+            "delivery_status IS NULL OR delivery_status IN "
+            "('received', 'accepted', 'sent', 'delivered', 'failed', 'unknown')",
+            name="ck_messages_delivery_status",
+        ),
         Index(
             "ix_messages_org_conversation_created",
             "organization_id",
@@ -25,6 +32,12 @@ class Message(UUIDPrimaryKey, TimestampMixin, Base):
             "created_at",
         ),
         UniqueConstraint("organization_id", "id", name="uq_messages_org_id"),
+        UniqueConstraint(
+            "organization_id",
+            "conversation_id",
+            "external_message_id",
+            name="uq_messages_provider_external_id",
+        ),
         UniqueConstraint(
             "organization_id",
             "conversation_id",
@@ -56,5 +69,8 @@ class Message(UUIDPrimaryKey, TimestampMixin, Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     content_type: Mapped[str] = mapped_column(String(30), default="text", nullable=False)
     widget_idempotency_hash: Mapped[str | None] = mapped_column(String(64))
+    external_message_id: Mapped[str | None] = mapped_column(String(512))
+    delivery_status: Mapped[str | None] = mapped_column(String(24))
+    provider_metadata: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
 
     conversation = relationship("Conversation", back_populates="messages")

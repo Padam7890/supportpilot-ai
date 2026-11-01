@@ -10,6 +10,7 @@ from app.api.routes import ai as ai_routes
 from app.core.config import settings
 from app.core.security import hash_password
 from app.db.session import SessionLocal, set_tenant_context
+from app.integrations.providers.shopify import security as shopify_security
 from app.models import (
     AIExecution,
     Conversation,
@@ -22,7 +23,6 @@ from app.models import (
     User,
 )
 from app.schemas.shopify import ShopifyOrderLookupOut, ShopifyOrderOut
-from app.services import shopify_security
 from app.services.ai_worker import claim_ai_execution, process_ai_execution
 
 pytestmark = pytest.mark.skipif(

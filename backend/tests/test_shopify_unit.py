@@ -8,7 +8,7 @@ from pydantic import SecretStr
 
 from app.api.routes.integrations import shopify_query_fingerprint
 from app.core.config import settings
-from app.services.shopify_security import (
+from app.integrations.providers.shopify.security import (
     hash_oauth_state,
     make_authorization_url,
     normalize_shop_domain,
@@ -26,14 +26,14 @@ from app.services.shopify_security import (
     ],
 )
 def test_effective_shopify_scopes_include_only_implied_read_permissions(granted, expected):
-    from app.services.shopify_client import effective_shopify_scopes
+    from app.integrations.providers.shopify.client import effective_shopify_scopes
 
     assert effective_shopify_scopes(granted) == expected
 
 
 def test_write_orders_and_read_customers_satisfy_connector_read_requirements():
-    from app.services.shopify_client import effective_shopify_scopes
-    from app.services.shopify_security import REQUIRED_SCOPES
+    from app.integrations.providers.shopify.client import effective_shopify_scopes
+    from app.integrations.providers.shopify.security import REQUIRED_SCOPES
 
     actual_grants = ["read_customers", "write_orders"]
 
@@ -60,7 +60,7 @@ def test_authorization_url_requests_only_read_scopes_and_unique_state(monkeypatc
     second = make_authorization_url("demo-shop.myshopify.com", "state-two")
     first_params = parse_qs(urlsplit(first).query)
     second_params = parse_qs(urlsplit(second).query)
-    assert first_params["scope"] == ["read_orders,read_customers"]
+    assert first_params["scope"] == ["read_orders,read_customers,read_products"]
     assert first_params["redirect_uri"] == ["https://support.example/api/integrations/shopify/callback"]
     assert first_params["state"] != second_params["state"]
     assert hash_oauth_state("state-one") != "state-one"
@@ -97,7 +97,7 @@ def test_shopify_credential_encryption_round_trip(monkeypatch):
     pytest.importorskip("cryptography")
     from cryptography.fernet import Fernet
 
-    from app.services.shopify_security import decrypt_credential, encrypt_credential
+    from app.integrations.providers.shopify.security import decrypt_credential, encrypt_credential
 
     key = Fernet.generate_key().decode("ascii")
     monkeypatch.setattr(settings, "shopify_encryption_key", SecretStr(key))
@@ -110,7 +110,7 @@ def test_shopify_credential_encryption_round_trip(monkeypatch):
 
 @pytest.mark.anyio
 async def test_client_credentials_exchange_is_server_side_and_requests_no_extra_scope(monkeypatch, caplog):
-    from app.services import shopify_client
+    from app.integrations.providers.shopify import client as shopify_client
 
     monkeypatch.setattr(settings, "shopify_client_id", "configured-client")
     monkeypatch.setattr(settings, "shopify_client_secret", SecretStr("configured-secret"))
@@ -172,7 +172,7 @@ async def test_client_credentials_exchange_is_server_side_and_requests_no_extra_
 
 @pytest.mark.anyio
 async def test_client_credentials_exchange_preserves_only_shopify_error_code(monkeypatch, caplog):
-    from app.services import shopify_client
+    from app.integrations.providers.shopify import client as shopify_client
 
     monkeypatch.setattr(settings, "shopify_client_id", "configured-client")
     monkeypatch.setattr(settings, "shopify_client_secret", SecretStr("configured-secret"))
@@ -222,7 +222,7 @@ async def test_client_credentials_exchange_preserves_only_shopify_error_code(mon
 
 @pytest.mark.anyio
 async def test_empty_token_scope_falls_back_to_actual_installation_scopes(monkeypatch):
-    from app.services import shopify_client
+    from app.integrations.providers.shopify import client as shopify_client
 
     calls = []
 
@@ -248,7 +248,7 @@ async def test_empty_token_scope_falls_back_to_actual_installation_scopes(monkey
 
 @pytest.mark.anyio
 async def test_empty_token_scope_and_empty_installation_scopes_remain_empty(monkeypatch):
-    from app.services import shopify_client
+    from app.integrations.providers.shopify import client as shopify_client
 
     async def fake_graphql(*_args):
         return {"currentAppInstallation": {"accessScopes": []}}
@@ -265,7 +265,7 @@ async def test_empty_token_scope_and_empty_installation_scopes_remain_empty(monk
 
 @pytest.mark.anyio
 async def test_fetch_order_page_maps_shopify_connection_page_without_customer_fields(monkeypatch):
-    from app.services import shopify_client
+    from app.integrations.providers.shopify import client as shopify_client
 
     calls = []
 
@@ -298,7 +298,7 @@ async def test_fetch_order_page_maps_shopify_connection_page_without_customer_fi
 
 @pytest.mark.anyio
 async def test_graphql_logs_provider_error_codes_without_tokens_or_response_text(monkeypatch, caplog):
-    from app.services import shopify_client
+    from app.integrations.providers.shopify import client as shopify_client
 
     class Response:
         status_code = 200
@@ -349,7 +349,7 @@ async def test_graphql_logs_provider_error_codes_without_tokens_or_response_text
 
 
 def test_shopify_cancellation_rejects_missing_scope_and_ineligible_orders():
-    from app.services.shopify_actions import (
+    from app.integrations.providers.shopify.actions import (
         ShopifyOrderActionError,
         check_cancellation_eligibility,
         check_cancellation_scope,
@@ -369,7 +369,7 @@ def test_shopify_cancellation_rejects_missing_scope_and_ineligible_orders():
 
 @pytest.mark.anyio
 async def test_shopify_cancellation_passes_explicit_consequences_and_returns_safe_result(monkeypatch):
-    from app.services import shopify_actions
+    from app.integrations.providers.shopify import actions as shopify_actions
 
     calls = []
 
@@ -415,8 +415,8 @@ async def test_shopify_cancellation_passes_explicit_consequences_and_returns_saf
 
 @pytest.mark.anyio
 async def test_shopify_cancellation_maps_permission_and_provider_errors(monkeypatch):
-    from app.services import shopify_actions
-    from app.services.shopify_client import ShopifyAPIError
+    from app.integrations.providers.shopify import actions as shopify_actions
+    from app.integrations.providers.shopify.client import ShopifyAPIError
 
     async def forbidden(*_args, **_kwargs):
         raise ShopifyAPIError("shopify_scope_or_data_access_required", status_code=403)

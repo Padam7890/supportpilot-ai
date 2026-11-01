@@ -502,7 +502,7 @@ async def test_widget_order_lookup_requires_email_code_and_returns_only_verified
     monkeypatch.setattr("app.api.routes.widgets.encrypt_credential", lambda value: f"encrypted:{value}")
     monkeypatch.setattr("app.api.routes.widgets.decrypt_credential", lambda value: value.removeprefix("encrypted:"))
     monkeypatch.setattr(
-        "app.services.shopify_security.decrypt_credential",
+        "app.integrations.providers.shopify.security.decrypt_credential",
         lambda value: value.removeprefix("encrypted:"),
     )
     async def get_installation(db, org_id):
@@ -565,7 +565,7 @@ async def test_widget_order_lookup_requires_email_code_and_returns_only_verified
     assert "https://tracking.example/1001" in confirmed.json()["message"]
     monkeypatch.setattr("app.api.routes.integrations.installation_for", get_installation)
     monkeypatch.setattr("app.api.routes.integrations.valid_access_token", lambda db, installation: _token())
-    monkeypatch.setattr("app.services.shopify_orders.lookup_authorized_order", find_order)
+    monkeypatch.setattr("app.integrations.providers.shopify.orders.lookup_authorized_order", find_order)
     followup = await client.post(
         f"/api/v1/widget/conversations/{started.json()['conversation_id']}/messages",
         headers={**visitor_headers, "Idempotency-Key": "widget-order-followup-status-1"},

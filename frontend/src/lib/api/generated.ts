@@ -294,6 +294,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/catalog/products": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Catalog Products */
+        get: operations["list_catalog_products_api_v1_catalog_products_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/catalog/products/{product_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Catalog Product */
+        get: operations["get_catalog_product_api_v1_catalog_products__product_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/catalog/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Catalog Status */
+        get: operations["catalog_status_api_v1_catalog_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/catalog/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Catalog Sync */
+        post: operations["start_catalog_sync_api_v1_catalog_sync_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/catalog/sync-jobs/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Catalog Sync Job */
+        get: operations["get_catalog_sync_job_api_v1_catalog_sync_jobs__job_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/commerce/actions": {
         parameters: {
             query?: never;
@@ -554,6 +639,77 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/integrations/connections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Connections */
+        get: operations["list_connections_api_v1_integrations_connections_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/integrations/connections/{connection_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Connection */
+        get: operations["get_connection_api_v1_integrations_connections__connection_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/integrations/connections/{connection_id}/disconnect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Disconnect Connection */
+        post: operations["disconnect_connection_api_v1_integrations_connections__connection_id__disconnect_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/integrations/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Integration Providers
+         * @description Return only providers with a registered, real adapter.
+         */
+        get: operations["list_integration_providers_api_v1_integrations_providers_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/integrations/shopify/callback": {
         parameters: {
             query?: never;
@@ -690,6 +846,23 @@ export interface paths {
         get: operations["shopify_status_api_v1_integrations_shopify_status_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/integrations/shopify/webhooks/catalog/{organization_id}/{connection_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Shopify Catalog Webhook */
+        post: operations["shopify_catalog_webhook_api_v1_integrations_shopify_webhooks_catalog__organization_id___connection_id__post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1491,6 +1664,159 @@ export interface components {
             /** Total Tokens */
             total_tokens: number;
         };
+        /** CatalogProductOut */
+        CatalogProductOut: {
+            /** Brand */
+            brand: string | null;
+            /** Canonical Url */
+            canonical_url: string | null;
+            /** Category */
+            category: string | null;
+            /** Description */
+            description: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Images */
+            images: {
+                [key: string]: string | null;
+            }[];
+            /** Specifications */
+            specifications: {
+                [key: string]: unknown;
+            };
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "active" | "draft" | "archived" | "unknown";
+            /**
+             * Synced At
+             * Format: date-time
+             */
+            synced_at: string;
+            /** Title */
+            title: string;
+            /** Variants */
+            variants: components["schemas"]["CatalogVariantOut"][];
+        };
+        /** CatalogProductPageOut */
+        CatalogProductPageOut: {
+            /** Items */
+            items: components["schemas"]["CatalogProductOut"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
+        /** CatalogStatusOut */
+        CatalogStatusOut: {
+            /** Connected */
+            connected: boolean;
+            /** Last Error Code */
+            last_error_code: string | null;
+            /** Last Sync At */
+            last_sync_at: string | null;
+            /** Product Count */
+            product_count: number;
+            /** Product Scope Granted */
+            product_scope_granted: boolean;
+        };
+        /** CatalogSyncJobOut */
+        CatalogSyncJobOut: {
+            /** Attempt Count */
+            attempt_count: number;
+            /** Completed At */
+            completed_at: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Last Error Code */
+            last_error_code: string | null;
+            /** Max Attempts */
+            max_attempts: number;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "full" | "incremental" | "reconcile";
+            /** Records Seen */
+            records_seen: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+        };
+        /** CatalogSyncRequest */
+        CatalogSyncRequest: {
+            /**
+             * Mode
+             * @default full
+             * @enum {string}
+             */
+            mode: "full" | "incremental";
+        };
+        /** CatalogVariantOut */
+        CatalogVariantOut: {
+            /** Attributes */
+            attributes: {
+                [key: string]: string;
+            };
+            /**
+             * Availability
+             * @enum {string}
+             */
+            availability: "available" | "unavailable" | "unknown";
+            /** Compare At Price */
+            compare_at_price: string | null;
+            /** Currency */
+            currency: string;
+            /** External Variant Id */
+            external_variant_id: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Inventory Quantity */
+            inventory_quantity: number | null;
+            /** Price */
+            price: string;
+            /** Sku */
+            sku: string | null;
+            /**
+             * Synced At
+             * Format: date-time
+             */
+            synced_at: string;
+            /** Title */
+            title: string;
+        };
+        /** CatalogWebhookAccepted */
+        CatalogWebhookAccepted: {
+            /**
+             * Accepted
+             * @default true
+             */
+            accepted: boolean;
+            /**
+             * Duplicate
+             * @default false
+             */
+            duplicate: boolean;
+        };
         /** CommerceActionAuditOut */
         CommerceActionAuditOut: {
             /** Actor Name */
@@ -1993,6 +2319,73 @@ export interface components {
              * @enum {string}
              */
             status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+        };
+        /** IntegrationConnectionEventOut */
+        IntegrationConnectionEventOut: {
+            /** Message */
+            message: string;
+            /**
+             * Status
+             * @constant
+             */
+            status: "disconnected";
+        };
+        /** IntegrationConnectionListOut */
+        IntegrationConnectionListOut: {
+            /** Items */
+            items: components["schemas"]["IntegrationConnectionOut"][];
+            /** Total */
+            total: number;
+        };
+        /** IntegrationConnectionOut */
+        IntegrationConnectionOut: {
+            /** Connected At */
+            connected_at: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Display Name */
+            display_name: string;
+            /** External Account Id */
+            external_account_id: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Last Checked At */
+            last_checked_at: string | null;
+            /** Last Error Code */
+            last_error_code: string | null;
+            /** Provider Id */
+            provider_id: string;
+            /** Safe Configuration */
+            safe_configuration: {
+                [key: string]: unknown;
+            };
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "connected" | "disconnected" | "error" | "reauthorization_required";
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** IntegrationProviderOut */
+        IntegrationProviderOut: {
+            /** Capabilities */
+            capabilities: string[];
+            /** Display Name */
+            display_name: string;
+            /** Provider Id */
+            provider_id: string;
+            /** Version */
+            version: string;
         };
         /** InternalNoteCreate */
         InternalNoteCreate: {
@@ -4948,6 +5341,154 @@ export interface operations {
             };
         };
     };
+    list_catalog_products_api_v1_catalog_products_get: {
+        parameters: {
+            query?: {
+                query?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogProductPageOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_catalog_product_api_v1_catalog_products__product_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                product_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogProductOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    catalog_status_api_v1_catalog_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogStatusOut"];
+                };
+            };
+        };
+    };
+    start_catalog_sync_api_v1_catalog_sync_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CatalogSyncRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogSyncJobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_catalog_sync_job_api_v1_catalog_sync_jobs__job_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogSyncJobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_commerce_actions_api_v1_commerce_actions_get: {
         parameters: {
             query?: {
@@ -7232,6 +7773,120 @@ export interface operations {
             };
         };
     };
+    list_connections_api_v1_integrations_connections_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntegrationConnectionListOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_connection_api_v1_integrations_connections__connection_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntegrationConnectionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    disconnect_connection_api_v1_integrations_connections__connection_id__disconnect_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntegrationConnectionEventOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_integration_providers_api_v1_integrations_providers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntegrationProviderOut"][];
+                };
+            };
+        };
+    };
     shopify_callback_api_v1_integrations_shopify_callback_get: {
         parameters: {
             query: {
@@ -8128,6 +8783,38 @@ export interface operations {
                 };
                 content: {
                     "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    shopify_catalog_webhook_api_v1_integrations_shopify_webhooks_catalog__organization_id___connection_id__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organization_id: string;
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogWebhookAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

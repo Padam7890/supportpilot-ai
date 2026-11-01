@@ -17,6 +17,30 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, require_roles
 from app.core.config import settings
 from app.db.session import get_db, set_tenant_context
+from app.integrations.connections.service import sync_shopify_connection
+from app.integrations.providers.shopify.client import (
+    ShopifyAPIError,
+    effective_shopify_scopes,
+    fetch_order_page,
+    fetch_orders,
+    log_shopify_api_event,
+    log_shopify_event,
+    request_client_credentials_token,
+    request_oauth_token,
+    resolve_token_scopes,
+)
+from app.integrations.providers.shopify.orders import lookup_authorized_order
+from app.integrations.providers.shopify.security import (
+    PRODUCT_CATALOG_SCOPES,
+    REQUIRED_SCOPES,
+    decrypt_credential,
+    encrypt_credential,
+    hash_oauth_state,
+    make_authorization_url,
+    normalize_shop_domain,
+    validate_callback_timestamp,
+    verify_callback_hmac,
+)
 from app.models import ShopifyAccessAudit, ShopifyInstallation, ShopifyOAuthState, User
 from app.schemas.errors import COMMON_ERROR_RESPONSES
 from app.schemas.shopify import (
@@ -29,31 +53,11 @@ from app.schemas.shopify import (
     ShopifyStatusOut,
     ShopifyTrackingOut,
 )
-from app.services.shopify_client import (
-    ShopifyAPIError,
-    effective_shopify_scopes,
-    fetch_order_page,
-    fetch_orders,
-    log_shopify_api_event,
-    log_shopify_event,
-    request_client_credentials_token,
-    request_oauth_token,
-    resolve_token_scopes,
-)
-from app.services.shopify_orders import lookup_authorized_order
-from app.services.shopify_security import (
-    REQUIRED_SCOPES,
-    decrypt_credential,
-    encrypt_credential,
-    hash_oauth_state,
-    make_authorization_url,
-    normalize_shop_domain,
-    validate_callback_timestamp,
-    verify_callback_hmac,
-)
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/integrations/shopify", tags=["Shopify integration"], responses=COMMON_ERROR_RESPONSES)
+router = APIRouter(
+    prefix="/integrations/shopify", tags=["Shopify integration"], responses=COMMON_ERROR_RESPONSES
+)
 OAUTH_STATE_TTL = timedelta(minutes=10)
 TOKEN_REFRESH_SKEW = timedelta(minutes=5)
 ORDER_NUMBER = re.compile(r"^#?[A-Za-z0-9-]+$")
@@ -114,22 +118,37 @@ def require_oauth_configuration() -> tuple[str, str]:
     ):
         raise HTTPException(status_code=503, detail="Shopify integration is not configured")
     redirect = urlsplit(settings.shopify_redirect_uri)
-    if redirect.scheme != "https" or not redirect.hostname or redirect.username or redirect.password or redirect.query or redirect.fragment:
-        raise HTTPException(status_code=503, detail="Shopify OAuth callback must be an HTTPS URL without credentials or query parameters")
+    if (
+        redirect.scheme != "https"
+        or not redirect.hostname
+        or redirect.username
+        or redirect.password
+        or redirect.query
+        or redirect.fragment
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail="Shopify OAuth callback must be an HTTPS URL without credentials or query parameters",
+        )
     return settings.shopify_client_id, settings.shopify_client_secret.get_secret_value()
 
 
 def oauth_is_configured() -> bool:
-    if not (
-        settings.shopify_client_id
-        and settings.shopify_client_secret
-        and settings.shopify_redirect_uri
-        and settings.shopify_encryption_key
-    ) or credentials_are_placeholders():
+    if (
+        not (
+            settings.shopify_client_id
+            and settings.shopify_client_secret
+            and settings.shopify_redirect_uri
+            and settings.shopify_encryption_key
+        )
+        or credentials_are_placeholders()
+    ):
         return False
     redirect = urlsplit(settings.shopify_redirect_uri)
-    return redirect.scheme == "https" and bool(redirect.hostname) and not any(
-        (redirect.username, redirect.password, redirect.query, redirect.fragment)
+    return (
+        redirect.scheme == "https"
+        and bool(redirect.hostname)
+        and not any((redirect.username, redirect.password, redirect.query, redirect.fragment))
     )
 
 
@@ -176,9 +195,11 @@ def map_order(order: dict) -> ShopifyOrderOut:
             continue
         for info in fulfillment.get("trackingInfo") or []:
             if isinstance(info, dict):
-                tracking.append(ShopifyTrackingOut(
-                    company=info.get("company"), number=info.get("number"), url=info.get("url")
-                ))
+                tracking.append(
+                    ShopifyTrackingOut(
+                        company=info.get("company"), number=info.get("number"), url=info.get("url")
+                    )
+                )
     return ShopifyOrderOut(
         id=str(order.get("id", "")),
         order_number=str(order.get("name", "")),
@@ -233,8 +254,14 @@ async def valid_access_token(db: AsyncSession, installation: ShopifyInstallation
         try:
             return decrypt_credential(installation.access_token_encrypted)
         except RuntimeError as exc:
-            logger.error("Shopify token decryption failed", extra={"organization_id": str(installation.organization_id)})
-            raise HTTPException(status_code=503, detail="Shopify credentials cannot be accessed; reconnect the store") from exc
+            logger.error(
+                "Shopify token decryption failed",
+                extra={"organization_id": str(installation.organization_id)},
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Shopify credentials cannot be accessed; reconnect the store",
+            ) from exc
 
     if installation.auth_mode == "client_credentials":
         try:
@@ -244,7 +271,9 @@ async def valid_access_token(db: AsyncSession, installation: ShopifyInstallation
         access_token = token.get("access_token")
         expires_in = token.get("expires_in")
         try:
-            granted_scopes, scope_source = await resolve_token_scopes(installation.shop_domain, token)
+            granted_scopes, scope_source = await resolve_token_scopes(
+                installation.shop_domain, token
+            )
         except ShopifyAPIError as exc:
             log_shopify_event(
                 "token_refresh_scope_check_failed",
@@ -258,13 +287,19 @@ async def valid_access_token(db: AsyncSession, installation: ShopifyInstallation
             raise HTTPException(status_code=502, detail="Shopify returned invalid token metadata")
         effective_scopes = effective_shopify_scopes(granted_scopes)
         if not set(REQUIRED_SCOPES).issubset(effective_scopes):
-            raise HTTPException(status_code=403, detail="Shopify did not grant the required read_orders and read_customers scopes")
+            raise HTTPException(
+                status_code=403,
+                detail="Shopify did not grant the required read_orders and read_customers scopes",
+            )
         try:
             installation.access_token_encrypted = encrypt_credential(access_token)
         except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail="Shopify credential encryption is unavailable") from exc
+            raise HTTPException(
+                status_code=503, detail="Shopify credential encryption is unavailable"
+            ) from exc
         installation.access_token_expires_at = now + timedelta(seconds=expires_in)
         installation.granted_scopes = granted_scopes
+        await sync_shopify_connection(db, installation)
         await db.commit()
         await set_tenant_context(db, installation.organization_id)
         return access_token
@@ -275,7 +310,9 @@ async def valid_access_token(db: AsyncSession, installation: ShopifyInstallation
     try:
         refresh_token = decrypt_credential(installation.refresh_token_encrypted)
     except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail="Shopify credentials cannot be accessed; reconnect the store") from exc
+        raise HTTPException(
+            status_code=503, detail="Shopify credentials cannot be accessed; reconnect the store"
+        ) from exc
     try:
         token = await request_oauth_token(
             installation.shop_domain,
@@ -291,24 +328,35 @@ async def valid_access_token(db: AsyncSession, installation: ShopifyInstallation
             installation.disconnected_at = now
             installation.access_token_encrypted = None
             installation.refresh_token_encrypted = None
+            await sync_shopify_connection(db, installation)
             await db.commit()
-            raise HTTPException(status_code=409, detail="The Shopify refresh token expired; reconnect the store") from exc
+            raise HTTPException(
+                status_code=409, detail="The Shopify refresh token expired; reconnect the store"
+            ) from exc
         raise to_api_error(exc) from exc
     access_token = token.get("access_token")
     new_refresh = token.get("refresh_token")
     expires_in = token.get("expires_in")
     refresh_expires_in = token.get("refresh_token_expires_in")
-    if not all(isinstance(value, str) and value for value in (access_token, new_refresh)) or not isinstance(expires_in, int) or not isinstance(refresh_expires_in, int):
+    if (
+        not all(isinstance(value, str) and value for value in (access_token, new_refresh))
+        or not isinstance(expires_in, int)
+        or not isinstance(refresh_expires_in, int)
+    ):
         raise HTTPException(status_code=502, detail="Shopify returned invalid token metadata")
     try:
         installation.access_token_encrypted = encrypt_credential(access_token)
         installation.refresh_token_encrypted = encrypt_credential(new_refresh)
     except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail="Shopify credential encryption is unavailable") from exc
+        raise HTTPException(
+            status_code=503, detail="Shopify credential encryption is unavailable"
+        ) from exc
     installation.access_token_expires_at = now + timedelta(seconds=expires_in)
     installation.refresh_token_expires_at = now + timedelta(seconds=refresh_expires_in)
     try:
-        installation.granted_scopes, scope_source = await resolve_token_scopes(installation.shop_domain, token)
+        installation.granted_scopes, scope_source = await resolve_token_scopes(
+            installation.shop_domain, token
+        )
     except ShopifyAPIError as exc:
         log_shopify_event(
             "token_refresh_scope_check_failed",
@@ -326,6 +374,7 @@ async def valid_access_token(db: AsyncSession, installation: ShopifyInstallation
         scope_source=scope_source,
     )
     # Persist the rotating pair before making a separate Admin API request.
+    await sync_shopify_connection(db, installation)
     await db.commit()
     await set_tenant_context(db, installation.organization_id)
     return access_token
@@ -352,14 +401,18 @@ async def shopify_status(
             configured=oauth_is_configured(),
             connected=False,
             client_credentials_available=client_credentials_is_available(),
-            configured_store_domain=settings.shopify_store_domain if client_credentials_is_available() else None,
+            configured_store_domain=settings.shopify_store_domain
+            if client_credentials_is_available()
+            else None,
         )
     missing_scopes = set(REQUIRED_SCOPES) - effective_shopify_scopes(installation.granted_scopes)
     return ShopifyStatusOut(
         configured=oauth_is_configured(),
         connected=True,
         client_credentials_available=client_credentials_is_available(),
-        configured_store_domain=settings.shopify_store_domain if client_credentials_is_available() else None,
+        configured_store_domain=settings.shopify_store_domain
+        if client_credentials_is_available()
+        else None,
         shop_domain=installation.shop_domain,
         granted_scopes=installation.granted_scopes,
         connected_at=installation.connected_at,
@@ -390,12 +443,17 @@ async def connect_configured_shopify_store(
             organization_id=str(user.organization_id),
             reason="development_credentials_unavailable",
         )
-        raise HTTPException(status_code=503, detail="Configured-store connection is available only with valid development credentials")
+        raise HTTPException(
+            status_code=503,
+            detail="Configured-store connection is available only with valid development credentials",
+        )
     try:
         shop_domain = normalize_shop_domain(settings.shopify_store_domain or "")
         token = await request_client_credentials_token(shop_domain)
     except ValueError as exc:
-        raise HTTPException(status_code=503, detail="Configured Shopify store domain is invalid") from exc
+        raise HTTPException(
+            status_code=503, detail="Configured Shopify store domain is invalid"
+        ) from exc
     except ShopifyAPIError as exc:
         log_shopify_event(
             "configured_connect_failed",
@@ -451,7 +509,10 @@ async def connect_configured_shopify_store(
             required_scopes=list(REQUIRED_SCOPES),
             missing_scopes=sorted(missing_scopes),
         )
-        raise HTTPException(status_code=403, detail="Shopify did not grant the required read_orders and read_customers scopes")
+        raise HTTPException(
+            status_code=403,
+            detail="Shopify did not grant the required read_orders and read_customers scopes",
+        )
     now = datetime.now(UTC)
     try:
         installation = await db.scalar(
@@ -472,15 +533,19 @@ async def connect_configured_shopify_store(
             "disconnected_at": None,
         }
         if installation is None:
-            db.add(ShopifyInstallation(organization_id=user.organization_id, **values))
+            installation = ShopifyInstallation(organization_id=user.organization_id, **values)
+            db.add(installation)
         else:
             for key, value in values.items():
                 setattr(installation, key, value)
         await db.flush()
+        await sync_shopify_connection(db, installation)
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
-        raise HTTPException(status_code=409, detail="This Shopify store is already connected to another workspace") from exc
+        raise HTTPException(
+            status_code=409, detail="This Shopify store is already connected to another workspace"
+        ) from exc
     except RuntimeError as exc:
         await db.rollback()
         log_shopify_event(
@@ -489,7 +554,9 @@ async def connect_configured_shopify_store(
             shop_domain=shop_domain,
             reason="credential_encryption_unavailable",
         )
-        raise HTTPException(status_code=503, detail="Shopify credential encryption is unavailable") from exc
+        raise HTTPException(
+            status_code=503, detail="Shopify credential encryption is unavailable"
+        ) from exc
     log_shopify_event(
         "configured_connect_completed",
         organization_id=str(user.organization_id),
@@ -533,7 +600,7 @@ async def connect_shopify(
         organization_id=str(user.organization_id),
         user_id=str(user.id),
         shop_domain=normalized_shop,
-        requested_scopes=list(REQUIRED_SCOPES),
+        requested_scopes=[*REQUIRED_SCOPES, *PRODUCT_CATALOG_SCOPES],
         redirect_host=urlsplit(settings.shopify_redirect_uri or "").hostname,
     )
     db.add(
@@ -569,7 +636,9 @@ async def shopify_callback(
         )
         raise HTTPException(status_code=403, detail="Shopify authorization callback expired")
     query_items = request.query_params.multi_items()
-    if len({key for key, _ in query_items}) != len(query_items) or not verify_callback_hmac(query_items, hmac_value):
+    if len({key for key, _ in query_items}) != len(query_items) or not verify_callback_hmac(
+        query_items, hmac_value
+    ):
         log_shopify_event(
             "oauth_callback_rejected",
             organization_id=str(user.organization_id),
@@ -605,7 +674,9 @@ async def shopify_callback(
             shop_domain=normalized_shop,
             reason="state_invalid_expired_or_reused",
         )
-        raise HTTPException(status_code=403, detail="Shopify authorization state is invalid or already used")
+        raise HTTPException(
+            status_code=403, detail="Shopify authorization state is invalid or already used"
+        )
     oauth_state.consumed_at = datetime.now(UTC)
     await db.commit()
     await set_tenant_context(db, user.organization_id)
@@ -659,7 +730,12 @@ async def shopify_callback(
         effective_scopes=sorted(effective_shopify_scopes(granted_scopes)),
         scope_source=scope_source,
     )
-    if not isinstance(access_token, str) or not isinstance(refresh_token, str) or not isinstance(expires_in, int) or not isinstance(refresh_expires_in, int):
+    if (
+        not isinstance(access_token, str)
+        or not isinstance(refresh_token, str)
+        or not isinstance(expires_in, int)
+        or not isinstance(refresh_expires_in, int)
+    ):
         log_shopify_event(
             "oauth_connect_failed",
             organization_id=str(user.organization_id),
@@ -669,7 +745,9 @@ async def shopify_callback(
             access_token_present=isinstance(access_token, str) and bool(access_token),
             refresh_token_present=isinstance(refresh_token, str) and bool(refresh_token),
         )
-        raise HTTPException(status_code=502, detail="Shopify returned invalid offline-token metadata")
+        raise HTTPException(
+            status_code=502, detail="Shopify returned invalid offline-token metadata"
+        )
     effective_scopes = effective_shopify_scopes(granted_scopes)
     missing_scopes = set(REQUIRED_SCOPES) - effective_scopes
     if missing_scopes:
@@ -683,7 +761,10 @@ async def shopify_callback(
             required_scopes=list(REQUIRED_SCOPES),
             missing_scopes=sorted(missing_scopes),
         )
-        raise HTTPException(status_code=403, detail="Shopify did not grant the required read_orders and read_customers scopes")
+        raise HTTPException(
+            status_code=403,
+            detail="Shopify did not grant the required read_orders and read_customers scopes",
+        )
     now = datetime.now(UTC)
     try:
         installation = await db.scalar(
@@ -704,15 +785,19 @@ async def shopify_callback(
             "disconnected_at": None,
         }
         if installation is None:
-            db.add(ShopifyInstallation(organization_id=user.organization_id, **values))
+            installation = ShopifyInstallation(organization_id=user.organization_id, **values)
+            db.add(installation)
         else:
             for key, value in values.items():
                 setattr(installation, key, value)
         await db.flush()
+        await sync_shopify_connection(db, installation)
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
-        raise HTTPException(status_code=409, detail="This Shopify store is already connected to another workspace") from exc
+        raise HTTPException(
+            status_code=409, detail="This Shopify store is already connected to another workspace"
+        ) from exc
     except RuntimeError as exc:
         await db.rollback()
         log_shopify_event(
@@ -721,7 +806,9 @@ async def shopify_callback(
             shop_domain=normalized_shop,
             reason="credential_encryption_unavailable",
         )
-        raise HTTPException(status_code=503, detail="Shopify credential encryption is unavailable") from exc
+        raise HTTPException(
+            status_code=503, detail="Shopify credential encryption is unavailable"
+        ) from exc
     log_shopify_event(
         "oauth_connect_completed",
         organization_id=str(user.organization_id),
@@ -748,7 +835,9 @@ async def disconnect_shopify(
         .with_for_update()
     )
     if installation is None or installation.disconnected_at is not None:
-        return ShopifyIntegrationEventOut(status="disconnected", message="No Shopify store is connected")
+        return ShopifyIntegrationEventOut(
+            status="disconnected", message="No Shopify store is connected"
+        )
     shop_domain = installation.shop_domain
     installation.disconnected_at = datetime.now(UTC)
     installation.access_token_encrypted = None
@@ -756,6 +845,7 @@ async def disconnect_shopify(
     installation.access_token_expires_at = None
     installation.refresh_token_expires_at = None
     installation.granted_scopes = []
+    await sync_shopify_connection(db, installation)
     return ShopifyIntegrationEventOut(
         status="disconnected",
         message="Shopify access credentials were removed",
@@ -793,22 +883,36 @@ async def verified_lookup(
         await set_tenant_context(db, user.organization_id)
 
     if not ORDER_NUMBER.fullmatch(normalized_order):
-        audit.details = {"shop_domain": installation.shop_domain, "verification": "invalid_order_number"}
+        audit.details = {
+            "shop_domain": installation.shop_domain,
+            "verification": "invalid_order_number",
+        }
         await persist_audit()
         raise HTTPException(status_code=422, detail="Enter a valid Shopify order number")
 
     try:
         access_token = await valid_access_token(db, installation)
     except ShopifyAPIError as exc:
-        audit.details = {"shop_domain": installation.shop_domain, "verification": "credential_error"}
+        audit.details = {
+            "shop_domain": installation.shop_domain,
+            "verification": "credential_error",
+        }
         await persist_audit()
         raise to_api_error(exc) from exc
     except RuntimeError as exc:
-        audit.details = {"shop_domain": installation.shop_domain, "verification": "credential_error"}
+        audit.details = {
+            "shop_domain": installation.shop_domain,
+            "verification": "credential_error",
+        }
         await persist_audit()
-        raise HTTPException(status_code=503, detail="Shopify credentials cannot be accessed") from exc
+        raise HTTPException(
+            status_code=503, detail="Shopify credentials cannot be accessed"
+        ) from exc
     except HTTPException:
-        audit.details = {"shop_domain": installation.shop_domain, "verification": "credential_error"}
+        audit.details = {
+            "shop_domain": installation.shop_domain,
+            "verification": "credential_error",
+        }
         await persist_audit()
         raise
 
@@ -822,9 +926,14 @@ async def verified_lookup(
             customer_email=normalized_email,
         )
         if matched is None:
-            audit.details = {"shop_domain": installation.shop_domain, "verification": "not_verified"}
+            audit.details = {
+                "shop_domain": installation.shop_domain,
+                "verification": "not_verified",
+            }
             await persist_audit()
-            raise HTTPException(status_code=404, detail="No order matched both the order number and customer email")
+            raise HTTPException(
+                status_code=404, detail="No order matched both the order number and customer email"
+            )
         history = await fetch_orders(
             installation.shop_domain,
             access_token,
@@ -842,19 +951,28 @@ async def verified_lookup(
         raise to_api_error(exc) from exc
 
     matching_history = [
-        item for item in history["nodes"]
+        item
+        for item in history["nodes"]
         if isinstance(item, dict)
         and isinstance(item.get("customer"), dict)
         and isinstance(item["customer"].get("email"), str)
         and item["customer"]["email"].casefold() == normalized_email.casefold()
     ]
     customer = matched.get("customer") or {}
-    if not isinstance(customer, dict) or customer.get("email", "").casefold() != normalized_email.casefold():
+    if (
+        not isinstance(customer, dict)
+        or customer.get("email", "").casefold() != normalized_email.casefold()
+    ):
         audit.details = {"shop_domain": installation.shop_domain, "verification": "not_verified"}
         await persist_audit()
-        raise HTTPException(status_code=404, detail="No order matched both the order number and customer email")
+        raise HTTPException(
+            status_code=404, detail="No order matched both the order number and customer email"
+        )
     audit.result_count = len(matching_history) + 1
-    audit.details = {"shop_domain": installation.shop_domain, "verification": "order_number_and_email"}
+    audit.details = {
+        "shop_domain": installation.shop_domain,
+        "verification": "order_number_and_email",
+    }
     return ShopifyOrderLookupOut(
         customer=ShopifyCustomerOut(
             display_name=customer.get("displayName"),
@@ -913,7 +1031,9 @@ async def list_shopify_orders(
             error_code="shopify_credentials_unavailable",
             error_type=type(exc).__name__,
         )
-        raise HTTPException(status_code=503, detail="Shopify credentials cannot be accessed") from exc
+        raise HTTPException(
+            status_code=503, detail="Shopify credentials cannot be accessed"
+        ) from exc
 
     items = [map_order_summary(item) for item in page["nodes"] if isinstance(item, dict)]
     cursor_fingerprint = cursor or "first-page"

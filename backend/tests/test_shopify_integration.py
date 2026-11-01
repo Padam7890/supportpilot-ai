@@ -13,8 +13,8 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.security import hash_password
 from app.db.session import SessionLocal, set_tenant_context
+from app.integrations.providers.shopify.security import decrypt_credential
 from app.models import PlatformOwner, ShopifyAccessAudit, ShopifyInstallation
-from app.services.shopify_security import decrypt_credential
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("TEST_DATABASE_URL"),
@@ -220,7 +220,7 @@ async def test_shopify_oauth_scope_tenant_isolation_lookup_verification_and_disc
         }
 
     monkeypatch.setattr("app.api.routes.integrations.fetch_orders", mock_orders)
-    monkeypatch.setattr("app.services.shopify_orders.fetch_orders", mock_orders)
+    monkeypatch.setattr("app.integrations.providers.shopify.orders.fetch_orders", mock_orders)
     lookup = await client.get(
         "/api/v1/integrations/shopify/orders",
         params={"customer_email": "morgan@example.com", "order_number": "1001"},

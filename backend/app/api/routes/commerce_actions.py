@@ -13,6 +13,11 @@ from sqlalchemy.orm import aliased
 from app.api.deps import get_current_user, require_roles
 from app.api.routes.integrations import installation_for, verified_lookup
 from app.db.session import get_db, set_tenant_context
+from app.integrations.providers.shopify.actions import (
+    ShopifyOrderActionError,
+    check_cancellation_eligibility,
+    check_cancellation_scope,
+)
 from app.models import CommerceAction, CommerceActionAudit, Customer, Ticket, User
 from app.schemas.commerce_action import (
     CommerceActionAuditOut,
@@ -22,11 +27,6 @@ from app.schemas.commerce_action import (
     CommerceActionPage,
 )
 from app.schemas.errors import COMMON_ERROR_RESPONSES
-from app.services.shopify_actions import (
-    ShopifyOrderActionError,
-    check_cancellation_eligibility,
-    check_cancellation_scope,
-)
 
 router = APIRouter(prefix="/commerce/actions", tags=["Commerce actions"], responses=COMMON_ERROR_RESPONSES)
 IDEMPOTENCY_KEY_MAX_LENGTH = 128

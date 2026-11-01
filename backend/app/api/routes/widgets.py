@@ -29,6 +29,13 @@ from app.api.routes.integrations import (
 from app.core.config import settings
 from app.core.security import create_widget_visitor_token, decode_widget_visitor_token
 from app.db.session import get_db, set_tenant_context
+from app.integrations.providers.shopify.actions import (
+    ShopifyOrderActionError,
+    check_cancellation_eligibility,
+    check_cancellation_scope,
+)
+from app.integrations.providers.shopify.orders import lookup_authorized_order
+from app.integrations.providers.shopify.security import decrypt_credential, encrypt_credential
 from app.models import (
     CommerceAction,
     CommerceActionAudit,
@@ -59,13 +66,6 @@ from app.schemas.widget import (
     WidgetStartOut,
 )
 from app.services.email_delivery import send_order_verification_code, smtp_is_configured
-from app.services.shopify_actions import (
-    ShopifyOrderActionError,
-    check_cancellation_eligibility,
-    check_cancellation_scope,
-)
-from app.services.shopify_orders import lookup_authorized_order
-from app.services.shopify_security import decrypt_credential, encrypt_credential
 from app.services.widget_ai import enqueue_widget_reply, format_verified_order_status
 
 management_router = APIRouter(

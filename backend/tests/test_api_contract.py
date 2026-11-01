@@ -70,3 +70,32 @@ async def test_openapi_documents_versioned_inbox_and_problem_contract(client):
         "#/components/schemas/ProblemDetails"
     )
     assert "application/json" not in problem_response["content"]
+
+
+@pytest.mark.anyio
+async def test_openapi_documents_tenant_integration_management_contract(client):
+    response = await client.get("/openapi.json")
+    assert response.status_code == 200
+    spec = response.json()
+    paths = spec["paths"]
+    assert "/api/v1/integrations/providers" in paths
+    assert "/api/v1/integrations/connections" in paths
+    assert "/api/v1/integrations/connections/{connection_id}" in paths
+    assert "/api/v1/integrations/connections/{connection_id}/disconnect" in paths
+    schema = spec["components"]["schemas"]["IntegrationConnectionOut"]["properties"]
+    assert "safe_configuration" in schema
+    assert not any("token" in field or "credential" in field for field in schema)
+
+
+@pytest.mark.anyio
+async def test_provider_catalog_advertises_only_implemented_shopify_catalog(client):
+    response = await client.get("/api/v1/integrations/providers")
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "provider_id": "shopify",
+            "display_name": "Shopify",
+            "version": "1",
+            "capabilities": ["product_catalog"],
+        }
+    ]

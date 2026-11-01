@@ -78,7 +78,7 @@ test("register, create customer and ticket, assign an agent, and exchange a mess
   await expect(page.getByText("Taylor Customer")).toBeVisible();
 
   await page.getByRole("link", { name: "Tickets" }).click();
-  await page.getByText("Create a ticket", { exact: true }).click();
+  await page.locator("details > summary").filter({ hasText: "Create a ticket" }).click();
   await page.getByLabel("Customer").selectOption({ index: 1 });
   await page.getByLabel("Subject").fill("Where is my order?");
   await page.getByRole("button", { name: "Create ticket" }).click();

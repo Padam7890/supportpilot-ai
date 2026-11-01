@@ -1,9 +1,11 @@
 from app.models.ai_evaluation import AIEvaluation
 from app.models.ai_execution import AIExecution
+from app.models.catalog import CatalogProduct, CatalogSyncJob, CatalogVariant, CatalogWebhookEvent
 from app.models.commerce_action import CommerceAction, CommerceActionAudit
 from app.models.conversation import Conversation
 from app.models.conversation_read_state import ConversationReadState
 from app.models.customer import Customer
+from app.models.integration import IntegrationConnection, IntegrationCredential
 from app.models.knowledge_document import (
     DocumentChunk,
     DocumentIngestionJob,
@@ -25,6 +27,10 @@ from app.models.user import User
 __all__ = [
     "AIEvaluation",
     "AIExecution",
+    "CatalogProduct",
+    "CatalogSyncJob",
+    "CatalogVariant",
+    "CatalogWebhookEvent",
     "CommerceAction",
     "CommerceActionAudit",
     "Conversation",
@@ -32,6 +38,8 @@ __all__ = [
     "Customer",
     "DocumentChunk",
     "DocumentIngestionJob",
+    "IntegrationConnection",
+    "IntegrationCredential",
     "KnowledgeDocument",
     "KnowledgeDocumentSource",
     "Message",

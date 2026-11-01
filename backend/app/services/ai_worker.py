@@ -111,8 +111,8 @@ async def verified_widget_order_reply(
 
     try:
         from app.api.routes.integrations import installation_for, map_order, valid_access_token
-        from app.services.shopify_orders import lookup_authorized_order
-        from app.services.shopify_security import decrypt_credential
+        from app.integrations.providers.shopify.orders import lookup_authorized_order
+        from app.integrations.providers.shopify.security import decrypt_credential
 
         email = decrypt_credential(email_encrypted)
         async with SessionLocal() as db:
@@ -223,7 +223,7 @@ async def load_execution_context(organization_id: UUID, execution_id: UUID) -> t
         question = execution.question
         integration_context: dict[str, object] = {}
         if execution.integration_context_encrypted:
-            from app.services.shopify_security import decrypt_credential
+            from app.integrations.providers.shopify.security import decrypt_credential
 
             decoded = json.loads(decrypt_credential(execution.integration_context_encrypted))
             if isinstance(decoded, dict):

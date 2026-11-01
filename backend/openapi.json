@@ -550,6 +550,408 @@
         "title": "AIUsageOut",
         "type": "object"
       },
+      "CatalogProductOut": {
+        "properties": {
+          "brand": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brand"
+          },
+          "canonical_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canonical Url"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "images": {
+            "items": {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            "title": "Images",
+            "type": "array"
+          },
+          "specifications": {
+            "additionalProperties": true,
+            "title": "Specifications",
+            "type": "object"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "draft",
+              "archived",
+              "unknown"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "synced_at": {
+            "format": "date-time",
+            "title": "Synced At",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "variants": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogVariantOut"
+            },
+            "title": "Variants",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "description",
+          "brand",
+          "category",
+          "images",
+          "canonical_url",
+          "status",
+          "specifications",
+          "synced_at",
+          "variants"
+        ],
+        "title": "CatalogProductOut",
+        "type": "object"
+      },
+      "CatalogProductPageOut": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogProductOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "CatalogProductPageOut",
+        "type": "object"
+      },
+      "CatalogStatusOut": {
+        "properties": {
+          "connected": {
+            "title": "Connected",
+            "type": "boolean"
+          },
+          "last_error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error Code"
+          },
+          "last_sync_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Sync At"
+          },
+          "product_count": {
+            "title": "Product Count",
+            "type": "integer"
+          },
+          "product_scope_granted": {
+            "title": "Product Scope Granted",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "connected",
+          "product_scope_granted",
+          "product_count",
+          "last_sync_at",
+          "last_error_code"
+        ],
+        "title": "CatalogStatusOut",
+        "type": "object"
+      },
+      "CatalogSyncJobOut": {
+        "properties": {
+          "attempt_count": {
+            "title": "Attempt Count",
+            "type": "integer"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error Code"
+          },
+          "max_attempts": {
+            "title": "Max Attempts",
+            "type": "integer"
+          },
+          "mode": {
+            "enum": [
+              "full",
+              "incremental",
+              "reconcile"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "records_seen": {
+            "title": "Records Seen",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed",
+              "cancelled"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "mode",
+          "status",
+          "attempt_count",
+          "max_attempts",
+          "records_seen",
+          "last_error_code",
+          "created_at",
+          "completed_at"
+        ],
+        "title": "CatalogSyncJobOut",
+        "type": "object"
+      },
+      "CatalogSyncRequest": {
+        "properties": {
+          "mode": {
+            "default": "full",
+            "enum": [
+              "full",
+              "incremental"
+            ],
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "title": "CatalogSyncRequest",
+        "type": "object"
+      },
+      "CatalogVariantOut": {
+        "properties": {
+          "attributes": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Attributes",
+            "type": "object"
+          },
+          "availability": {
+            "enum": [
+              "available",
+              "unavailable",
+              "unknown"
+            ],
+            "title": "Availability",
+            "type": "string"
+          },
+          "compare_at_price": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Compare At Price"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "external_variant_id": {
+            "title": "External Variant Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "inventory_quantity": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inventory Quantity"
+          },
+          "price": {
+            "title": "Price",
+            "type": "string"
+          },
+          "sku": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sku"
+          },
+          "synced_at": {
+            "format": "date-time",
+            "title": "Synced At",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "external_variant_id",
+          "title",
+          "sku",
+          "attributes",
+          "price",
+          "compare_at_price",
+          "currency",
+          "availability",
+          "inventory_quantity",
+          "synced_at"
+        ],
+        "title": "CatalogVariantOut",
+        "type": "object"
+      },
+      "CatalogWebhookAccepted": {
+        "properties": {
+          "accepted": {
+            "default": true,
+            "title": "Accepted",
+            "type": "boolean"
+          },
+          "duplicate": {
+            "default": false,
+            "title": "Duplicate",
+            "type": "boolean"
+          }
+        },
+        "title": "CatalogWebhookAccepted",
+        "type": "object"
+      },
       "CommerceActionAuditOut": {
         "properties": {
           "actor_name": {
@@ -1780,6 +2182,174 @@
           "created_at"
         ],
         "title": "IngestionJobOut",
+        "type": "object"
+      },
+      "IntegrationConnectionEventOut": {
+        "properties": {
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "status": {
+            "const": "disconnected",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "message"
+        ],
+        "title": "IntegrationConnectionEventOut",
+        "type": "object"
+      },
+      "IntegrationConnectionListOut": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/IntegrationConnectionOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "IntegrationConnectionListOut",
+        "type": "object"
+      },
+      "IntegrationConnectionOut": {
+        "properties": {
+          "connected_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connected At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "external_account_id": {
+            "title": "External Account Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_checked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Checked At"
+          },
+          "last_error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error Code"
+          },
+          "provider_id": {
+            "title": "Provider Id",
+            "type": "string"
+          },
+          "safe_configuration": {
+            "additionalProperties": true,
+            "title": "Safe Configuration",
+            "type": "object"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "connected",
+              "disconnected",
+              "error",
+              "reauthorization_required"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "provider_id",
+          "external_account_id",
+          "display_name",
+          "status",
+          "safe_configuration",
+          "connected_at",
+          "last_checked_at",
+          "last_error_code",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "IntegrationConnectionOut",
+        "type": "object"
+      },
+      "IntegrationProviderOut": {
+        "properties": {
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "provider_id": {
+            "title": "Provider Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider_id",
+          "display_name",
+          "version",
+          "capabilities"
+        ],
+        "title": "IntegrationProviderOut",
         "type": "object"
       },
       "InternalNoteCreate": {
@@ -6606,6 +7176,253 @@
         ]
       }
     },
+    "/api/v1/catalog/products": {
+      "get": {
+        "operationId": "list_catalog_products_api_v1_catalog_products_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 120,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Query"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 100000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogProductPageOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Catalog Products",
+        "tags": [
+          "commerce catalog"
+        ]
+      }
+    },
+    "/api/v1/catalog/products/{product_id}": {
+      "get": {
+        "operationId": "get_catalog_product_api_v1_catalog_products__product_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "product_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Product Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogProductOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Catalog Product",
+        "tags": [
+          "commerce catalog"
+        ]
+      }
+    },
+    "/api/v1/catalog/status": {
+      "get": {
+        "operationId": "catalog_status_api_v1_catalog_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogStatusOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Catalog Status",
+        "tags": [
+          "commerce catalog"
+        ]
+      }
+    },
+    "/api/v1/catalog/sync": {
+      "post": {
+        "operationId": "start_catalog_sync_api_v1_catalog_sync_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CatalogSyncRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogSyncJobOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Start Catalog Sync",
+        "tags": [
+          "commerce catalog"
+        ]
+      }
+    },
+    "/api/v1/catalog/sync-jobs/{job_id}": {
+      "get": {
+        "operationId": "get_catalog_sync_job_api_v1_catalog_sync_jobs__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogSyncJobOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Catalog Sync Job",
+        "tags": [
+          "commerce catalog"
+        ]
+      }
+    },
     "/api/v1/commerce/actions": {
       "get": {
         "operationId": "list_commerce_actions_api_v1_commerce_actions_get",
@@ -9677,6 +10494,186 @@
         ]
       }
     },
+    "/api/v1/integrations/connections": {
+      "get": {
+        "operationId": "list_connections_api_v1_integrations_connections_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntegrationConnectionListOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Connections",
+        "tags": [
+          "Integration management"
+        ]
+      }
+    },
+    "/api/v1/integrations/connections/{connection_id}": {
+      "get": {
+        "operationId": "get_connection_api_v1_integrations_connections__connection_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Connection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntegrationConnectionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Connection",
+        "tags": [
+          "Integration management"
+        ]
+      }
+    },
+    "/api/v1/integrations/connections/{connection_id}/disconnect": {
+      "post": {
+        "operationId": "disconnect_connection_api_v1_integrations_connections__connection_id__disconnect_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Connection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntegrationConnectionEventOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Disconnect Connection",
+        "tags": [
+          "Integration management"
+        ]
+      }
+    },
+    "/api/v1/integrations/providers": {
+      "get": {
+        "description": "Return only providers with a registered, real adapter.",
+        "operationId": "list_integration_providers_api_v1_integrations_providers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/IntegrationProviderOut"
+                  },
+                  "title": "Response List Integration Providers Api V1 Integrations Providers Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Integration Providers",
+        "tags": [
+          "Integration management"
+        ]
+      }
+    },
     "/api/v1/integrations/shopify/callback": {
       "get": {
         "operationId": "shopify_callback_api_v1_integrations_shopify_callback_get",
@@ -10855,6 +11852,59 @@
         "summary": "Shopify Status",
         "tags": [
           "Shopify integration"
+        ]
+      }
+    },
+    "/api/v1/integrations/shopify/webhooks/catalog/{organization_id}/{connection_id}": {
+      "post": {
+        "operationId": "shopify_catalog_webhook_api_v1_integrations_shopify_webhooks_catalog__organization_id___connection_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "organization_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Organization Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Connection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogWebhookAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Shopify Catalog Webhook",
+        "tags": [
+          "Shopify webhooks"
         ]
       }
     },

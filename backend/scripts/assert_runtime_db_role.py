@@ -65,15 +65,19 @@ async def main() -> None:
     try:
         async with engine.connect() as connection:
             identity = (
-                await connection.execute(
-                    text(
-                        """SELECT current_user AS role_name, current_database() AS database_name,
+                (
+                    await connection.execute(
+                        text(
+                            """SELECT current_user AS role_name, current_database() AS database_name,
                         role.rolsuper AS is_superuser, role.rolbypassrls AS bypasses_rls
                         FROM pg_roles AS role
                         WHERE role.rolname = current_user"""
+                        )
                     )
                 )
-            ).mappings().one()
+                .mappings()
+                .one()
+            )
             expected_role = os.environ.get("EXPECTED_RUNTIME_DB_ROLE", "supportpilot_app")
             expected_database = os.environ.get("EXPECTED_RUNTIME_DB_NAME", "supportpilot")
             if identity["role_name"] != expected_role:
@@ -88,17 +92,21 @@ async def main() -> None:
                 raise RuntimeError("Runtime database role must not be superuser or BYPASSRLS")
 
             migration_ledger_privileges = (
-                await connection.execute(
-                    text(
-                        """SELECT
+                (
+                    await connection.execute(
+                        text(
+                            """SELECT
                         has_table_privilege(current_user, 'public.alembic_version', 'SELECT') AS can_select,
                         has_table_privilege(current_user, 'public.alembic_version', 'INSERT') AS can_insert,
                         has_table_privilege(current_user, 'public.alembic_version', 'UPDATE') AS can_update,
                         has_table_privilege(current_user, 'public.alembic_version', 'DELETE') AS can_delete,
                         has_table_privilege(current_user, 'public.alembic_version', 'TRUNCATE') AS can_truncate"""
+                        )
                     )
                 )
-            ).mappings().one()
+                .mappings()
+                .one()
+            )
             if not has_read_only_migration_ledger_privileges(**migration_ledger_privileges):
                 raise RuntimeError(
                     "Runtime database role must have SELECT-only access to alembic_version"
@@ -128,14 +136,35 @@ async def main() -> None:
                 )
             ).all()
             expected_tables = {
-                "users", "customers", "tickets", "conversations", "messages",
-                "refresh_sessions", "team_invitations", "ticket_activities",
-                "conversation_read_states", "knowledge_documents",
-                "knowledge_document_sources", "document_chunks",
-                "document_ingestion_jobs", "ai_executions", "ai_evaluations",
-                "shopify_installations", "shopify_oauth_states", "shopify_access_audit",
-                "commerce_actions", "commerce_action_audits",
-                "support_widgets", "widget_order_verifications", "widget_submissions",
+                "users",
+                "customers",
+                "tickets",
+                "conversations",
+                "messages",
+                "refresh_sessions",
+                "team_invitations",
+                "ticket_activities",
+                "conversation_read_states",
+                "knowledge_documents",
+                "knowledge_document_sources",
+                "document_chunks",
+                "document_ingestion_jobs",
+                "ai_executions",
+                "ai_evaluations",
+                "shopify_installations",
+                "shopify_oauth_states",
+                "shopify_access_audit",
+                "commerce_actions",
+                "commerce_action_audits",
+                "support_widgets",
+                "widget_order_verifications",
+                "widget_submissions",
+                "integration_connections",
+                "integration_credentials",
+                "catalog_products",
+                "catalog_variants",
+                "catalog_sync_jobs",
+                "catalog_webhook_events",
             }
             actual_tables = {row.relname for row in rls_tables}
             if actual_tables != expected_tables:
@@ -150,7 +179,9 @@ async def main() -> None:
                             "WHERE schemaname = 'public' AND tablename = 'support_widgets'"
                         )
                     )
-                ).mappings().all()
+                )
+                .mappings()
+                .all()
             )
             if not has_safe_widget_policies([dict(policy) for policy in widget_policies]):
                 raise RuntimeError(

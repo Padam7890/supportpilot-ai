@@ -9,6 +9,7 @@ from app.api.deps import get_current_user, require_roles
 from app.api.routes.integrations import verified_lookup
 from app.core.config import settings
 from app.db.session import get_db
+from app.integrations.providers.shopify.security import encrypt_credential
 from app.models import AIExecution, Conversation, Customer, Message, Organization, Ticket, User
 from app.schemas.ai import (
     AIExecutionOut,
@@ -19,7 +20,6 @@ from app.schemas.ai import (
 )
 from app.schemas.errors import COMMON_ERROR_RESPONSES
 from app.services.ai_execution import is_provider_configured
-from app.services.shopify_security import encrypt_credential
 
 router = APIRouter(prefix="/ai", tags=["AI assistance"], responses=COMMON_ERROR_RESPONSES)
 MAX_ACTIVE_EXECUTIONS_PER_TENANT = 10

@@ -3,7 +3,7 @@ import pytest
 
 @pytest.mark.anyio
 async def test_authorized_order_lookup_requires_exact_number_and_customer_email(monkeypatch):
-    from app.services import shopify_orders
+    from app.integrations.providers.shopify import orders as shopify_orders
 
     calls = []
 
@@ -38,7 +38,7 @@ async def test_authorized_order_lookup_requires_exact_number_and_customer_email(
 
 @pytest.mark.anyio
 async def test_authorized_order_lookup_returns_none_for_non_matching_identity(monkeypatch):
-    from app.services import shopify_orders
+    from app.integrations.providers.shopify import orders as shopify_orders
 
     async def fake_fetch_orders(*_args, **_kwargs):
         return {
