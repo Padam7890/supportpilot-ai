@@ -3,7 +3,7 @@ from datetime import date
 import pytest
 from fastapi import HTTPException
 
-from app.api.routes.analytics import date_window
+from app.features.analytics.router import date_window
 
 
 def test_analytics_date_window_defaults_to_thirty_days():

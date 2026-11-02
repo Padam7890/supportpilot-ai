@@ -73,6 +73,33 @@ async def test_openapi_documents_versioned_inbox_and_problem_contract(client):
 
 
 @pytest.mark.anyio
+async def test_feature_migration_preserves_public_route_paths(client):
+    response = await client.get("/openapi.json")
+    assert response.status_code == 200
+    paths = response.json()["paths"]
+    expected = {
+        "/api/v1/auth/register",
+        "/api/v1/auth/login",
+        "/api/v1/auth/me",
+        "/api/v1/organization",
+        "/api/v1/customers",
+        "/api/v1/customers/{customer_id}/tickets",
+        "/api/v1/tickets",
+        "/api/v1/tickets/{ticket_id}/conversations",
+        "/api/v1/conversations/{conversation_id}/messages",
+        "/api/v1/inbox",
+        "/api/v1/analytics/ai-usage",
+        "/api/v1/analytics/recommendations",
+        "/api/v1/integrations/widget",
+        "/api/v1/widget/{public_id}/config",
+        "/api/v1/widget/{public_id}/messages",
+        "/api/v1/widget/conversations/{conversation_id}/messages",
+    }
+
+    assert expected <= paths.keys()
+
+
+@pytest.mark.anyio
 async def test_openapi_documents_tenant_integration_management_contract(client):
     response = await client.get("/openapi.json")
     assert response.status_code == 200
@@ -88,7 +115,7 @@ async def test_openapi_documents_tenant_integration_management_contract(client):
 
 
 @pytest.mark.anyio
-async def test_provider_catalog_advertises_only_implemented_shopify_catalog(client):
+async def test_provider_catalog_advertises_only_implemented_shopify_capabilities(client):
     response = await client.get("/api/v1/integrations/providers")
     assert response.status_code == 200
     assert response.json() == [
@@ -96,6 +123,6 @@ async def test_provider_catalog_advertises_only_implemented_shopify_catalog(clie
             "provider_id": "shopify",
             "display_name": "Shopify",
             "version": "1",
-            "capabilities": ["product_catalog"],
+            "capabilities": ["product_catalog", "webhooks"],
         }
     ]

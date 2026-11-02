@@ -1,26 +1,33 @@
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, or_, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_current_user, require_roles
 from app.db.session import get_db, set_tenant_context
+from app.integrations.core import (
+    IntegrationCapability,
+    IntegrationError,
+    IntegrationErrorCode,
+    WebhookCapability,
+)
 from app.integrations.providers.shopify.client import (
     effective_shopify_scopes,
     log_shopify_api_event,
     log_shopify_event,
 )
-from app.integrations.providers.shopify.security import normalize_shop_domain, verify_webhook_hmac
 from app.models import (
     CatalogProduct,
     CatalogSyncJob,
     CatalogWebhookEvent,
     IntegrationConnection,
+    IntegrationWebhookEvent,
     ShopifyInstallation,
     User,
 )
@@ -37,7 +44,6 @@ from app.services.catalog import MAX_SYNC_ATTEMPTS, connected_shopify_connection
 router = APIRouter(tags=["commerce catalog"])
 webhook_router = APIRouter(prefix="/integrations/shopify/webhooks", tags=["Shopify webhooks"])
 MAX_WEBHOOK_BYTES = 256 * 1024
-SUPPORTED_PRODUCT_TOPICS = {"products/create", "products/update", "products/delete"}
 
 
 @router.get("/catalog/status", response_model=CatalogStatusOut)
@@ -292,22 +298,24 @@ async def shopify_catalog_webhook(
             raise HTTPException(status_code=413, detail="Webhook payload exceeds the size limit")
         body.extend(chunk)
     raw = bytes(body)
-    supplied = request.headers.get("x-shopify-hmac-sha256", "")
-    if not verify_webhook_hmac(raw, supplied):
-        raise HTTPException(status_code=401, detail="Invalid Shopify webhook signature")
-    topic = request.headers.get("x-shopify-topic", "").lower()
-    event_key = request.headers.get("x-shopify-webhook-id", "")[:512]
-    shop_header = request.headers.get("x-shopify-shop-domain", "")
-    if topic not in SUPPORTED_PRODUCT_TOPICS or not event_key:
-        raise HTTPException(status_code=400, detail="Unsupported or incomplete Shopify product webhook")
     try:
-        shop_domain = normalize_shop_domain(shop_header)
-        payload = json.loads(raw)
-        external_id = str(payload["id"])
-        if not external_id.isdigit():
-            raise ValueError("invalid_product_id")
-    except (ValueError, KeyError, TypeError, json.JSONDecodeError):
-        raise HTTPException(status_code=400, detail="Invalid Shopify product webhook payload") from None
+        registry = request.app.state.integration_registry
+        verifier = registry.get_capability(
+            "shopify", IntegrationCapability.WEBHOOKS, WebhookCapability
+        )
+        normalized_event = verifier.verify_and_normalize(
+            headers=dict(request.headers.items()), raw_body=raw
+        )
+    except IntegrationError as exc:
+        if exc.code is IntegrationErrorCode.PERMISSION_DENIED:
+            raise HTTPException(status_code=401, detail="Invalid Shopify webhook signature") from None
+        if exc.code is IntegrationErrorCode.INVALID_PAYLOAD:
+            raise HTTPException(status_code=400, detail="Invalid Shopify product webhook payload") from None
+        raise HTTPException(status_code=503, detail="Shopify webhook verification is unavailable") from None
+    topic = normalized_event.event_type
+    event_key = normalized_event.external_event_id
+    shop_domain = normalized_event.external_account_id
+    external_product_id = normalized_event.normalized_payload["external_product_id"]
     await set_tenant_context(db, organization_id)
     connection = await db.scalar(
         select(IntegrationConnection).where(
@@ -320,36 +328,56 @@ async def shopify_catalog_webhook(
     )
     if connection is None:
         raise HTTPException(status_code=404, detail="Shopify webhook connection not found")
-    existing = await db.scalar(
-        select(CatalogWebhookEvent).where(
-            CatalogWebhookEvent.organization_id == organization_id,
-            CatalogWebhookEvent.connection_id == connection_id,
-            CatalogWebhookEvent.provider_id == "shopify",
-            CatalogWebhookEvent.external_event_id == event_key,
+    payload_fingerprint = hashlib.sha256(
+        json.dumps(
+            {
+                "event_type": topic,
+                "external_account_id": shop_domain,
+                "normalized_payload": normalized_event.normalized_payload,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    durable_event_id = await db.scalar(
+        pg_insert(IntegrationWebhookEvent)
+        .values(
+            organization_id=organization_id,
+            connection_id=connection_id,
+            provider_id=normalized_event.provider_id,
+            external_event_id=event_key,
+            event_type=topic,
+            occurred_at=normalized_event.occurred_at,
+            payload_fingerprint=payload_fingerprint,
+            normalized_payload=normalized_event.normalized_payload,
         )
+        .on_conflict_do_nothing(constraint="uq_integration_webhook_events_dedupe")
+        .returning(IntegrationWebhookEvent.id)
     )
-    if existing:
+    if durable_event_id is None:
         return CatalogWebhookAccepted(duplicate=True)
-    from app.integrations.providers.shopify.catalog import _gid
-
-    event = CatalogWebhookEvent(
-        organization_id=organization_id,
-        connection_id=connection_id,
-        provider_id="shopify",
-        external_event_id=event_key,
-        event_type=topic,
-        external_product_id=_gid(external_id, "Product"),
-        payload={},
-        status="queued",
-        attempt_count=0,
-        max_attempts=MAX_SYNC_ATTEMPTS,
-        next_attempt_at=datetime.now(UTC),
+    queued_event_id = await db.scalar(
+        pg_insert(CatalogWebhookEvent)
+        .values(
+            organization_id=organization_id,
+            connection_id=connection_id,
+            provider_id="shopify",
+            external_event_id=event_key,
+            event_type=topic,
+            external_product_id=external_product_id,
+            payload={},
+            status="queued",
+            attempt_count=0,
+            max_attempts=MAX_SYNC_ATTEMPTS,
+            next_attempt_at=datetime.now(UTC),
+            occurred_at=normalized_event.occurred_at,
+        )
+        .on_conflict_do_nothing(constraint="uq_catalog_webhook_events_dedupe")
+        .returning(CatalogWebhookEvent.id)
     )
-    db.add(event)
-    try:
-        await db.flush()
-    except IntegrityError:
+    if queued_event_id is None:
         await db.rollback()
         await set_tenant_context(db, organization_id)
         return CatalogWebhookAccepted(duplicate=True)
+    await db.flush()
     return CatalogWebhookAccepted()

@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.api.deps import get_current_user, require_roles
-from app.api.routes.integrations import installation_for, verified_lookup
 from app.db.session import get_db, set_tenant_context
 from app.integrations.providers.shopify.actions import (
     ShopifyOrderActionError,
@@ -27,8 +26,12 @@ from app.schemas.commerce_action import (
     CommerceActionPage,
 )
 from app.schemas.errors import COMMON_ERROR_RESPONSES
+from app.services.shopify_access import installation_for
+from app.services.shopify_order_lookup import verified_lookup
 
-router = APIRouter(prefix="/commerce/actions", tags=["Commerce actions"], responses=COMMON_ERROR_RESPONSES)
+router = APIRouter(
+    prefix="/commerce/actions", tags=["Commerce actions"], responses=COMMON_ERROR_RESPONSES
+)
 IDEMPOTENCY_KEY_MAX_LENGTH = 128
 ACTION_TTL = timedelta(days=7)
 
@@ -40,7 +43,9 @@ def fingerprint(payload: CommerceActionCreate) -> str:
             "order_number": payload.order_number.strip().lstrip("#").casefold(),
             "action_type": payload.action_type,
             "provider": payload.provider,
-            "refund_amount": str(payload.refund_amount) if payload.refund_amount is not None else None,
+            "refund_amount": str(payload.refund_amount)
+            if payload.refund_amount is not None
+            else None,
             "cancel_refund": payload.cancel_refund,
             "cancel_restock": payload.cancel_restock,
             "cancel_notify_customer": payload.cancel_notify_customer,
@@ -57,14 +62,18 @@ def idempotency_hash(key: str) -> str:
     return hashlib.sha256(key.strip().encode()).hexdigest()
 
 
-def action_out(action: CommerceAction, requested_by_name: str, reviewed_by_name: str | None) -> CommerceActionOut:
+def action_out(
+    action: CommerceAction, requested_by_name: str, reviewed_by_name: str | None
+) -> CommerceActionOut:
     fields = CommerceActionOut.model_fields
     values = {name: getattr(action, name) for name in fields if hasattr(action, name)}
     values.update(requested_by_name=requested_by_name, reviewed_by_name=reviewed_by_name)
     return CommerceActionOut.model_validate(values)
 
 
-async def get_action(db: AsyncSession, organization_id: UUID, action_id: UUID, *, lock: bool = False) -> CommerceAction:
+async def get_action(
+    db: AsyncSession, organization_id: UUID, action_id: UUID, *, lock: bool = False
+) -> CommerceAction:
     statement = select(CommerceAction).where(
         CommerceAction.organization_id == organization_id,
         CommerceAction.id == action_id,
@@ -124,7 +133,9 @@ def add_audit(
 @router.post("", response_model=CommerceActionOut, status_code=status.HTTP_201_CREATED)
 async def create_commerce_action(
     data: CommerceActionCreate,
-    idempotency_key: str = Header(alias="Idempotency-Key", min_length=16, max_length=IDEMPOTENCY_KEY_MAX_LENGTH),
+    idempotency_key: str = Header(
+        alias="Idempotency-Key", min_length=16, max_length=IDEMPOTENCY_KEY_MAX_LENGTH
+    ),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_roles("owner", "admin", "agent")),
 ) -> CommerceActionOut:
@@ -139,7 +150,9 @@ async def create_commerce_action(
     )
     if existing is not None:
         if existing.request_fingerprint != request_digest:
-            raise HTTPException(status_code=409, detail="Idempotency-Key was already used for a different request")
+            raise HTTPException(
+                status_code=409, detail="Idempotency-Key was already used for a different request"
+            )
         return await serialize_action(db, existing)
 
     ticket_customer = await db.execute(
@@ -159,16 +172,23 @@ async def create_commerce_action(
         raise HTTPException(status_code=404, detail="Ticket not found")
     _ticket, customer = row
     if not customer.email:
-        raise HTTPException(status_code=409, detail="This ticket has no customer email to verify the order")
+        raise HTTPException(
+            status_code=409, detail="This ticket has no customer email to verify the order"
+        )
 
     if data.provider == "shopify":
         if data.action_type != "cancel":
-            raise HTTPException(status_code=422, detail="Only cancellation actions can execute against Shopify")
+            raise HTTPException(
+                status_code=422, detail="Only cancellation actions can execute against Shopify"
+            )
         installation = await installation_for(db, user.organization_id)
         try:
             check_cancellation_scope(installation.granted_scopes)
         except ShopifyOrderActionError:
-            raise HTTPException(status_code=403, detail="Shopify has not granted write_orders for order cancellation")
+            raise HTTPException(
+                status_code=403,
+                detail="Shopify has not granted write_orders for order cancellation",
+            )
 
     # A ticket's CRM customer email plus Shopify order number must verify before
     # an action can be requested. The client cannot supply another customer's email.
@@ -183,11 +203,13 @@ async def create_commerce_action(
     order = verified.matched_order
     if data.provider == "shopify":
         try:
-            check_cancellation_eligibility({
-                "cancelledAt": order.cancelled_at,
-                "closed": order.closed,
-                "returnStatus": order.return_status,
-            })
+            check_cancellation_eligibility(
+                {
+                    "cancelledAt": order.cancelled_at,
+                    "closed": order.closed,
+                    "returnStatus": order.return_status,
+                }
+            )
         except ShopifyOrderActionError as exc:
             detail = {
                 "shopify_order_already_cancelled": "This Shopify order is already cancelled.",
@@ -198,12 +220,18 @@ async def create_commerce_action(
     try:
         order_total = Decimal(order.total_amount)
     except InvalidOperation as exc:
-        raise HTTPException(status_code=502, detail="Shopify returned an invalid order total") from exc
+        raise HTTPException(
+            status_code=502, detail="Shopify returned an invalid order total"
+        ) from exc
     if data.action_type == "refund":
         if data.refund_amount is None or data.refund_amount > order_total:
-            raise HTTPException(status_code=422, detail="Refund amount cannot exceed the verified order total")
+            raise HTTPException(
+                status_code=422, detail="Refund amount cannot exceed the verified order total"
+            )
         if (order.financial_status or "").casefold() not in {"paid", "partially_refunded"}:
-            raise HTTPException(status_code=409, detail="Only paid orders can be submitted for refund review")
+            raise HTTPException(
+                status_code=409, detail="Only paid orders can be submitted for refund review"
+            )
     now = datetime.now(UTC)
     action = CommerceAction(
         organization_id=user.organization_id,
@@ -243,9 +271,13 @@ async def create_commerce_action(
             )
         )
         if existing is None:
-            raise HTTPException(status_code=409, detail="A conflicting commerce action was submitted")
+            raise HTTPException(
+                status_code=409, detail="A conflicting commerce action was submitted"
+            )
         if existing.request_fingerprint != request_digest:
-            raise HTTPException(status_code=409, detail="Idempotency-Key was already used for a different request")
+            raise HTTPException(
+                status_code=409, detail="Idempotency-Key was already used for a different request"
+            )
         return await serialize_action(db, existing)
     add_audit(
         db,
@@ -272,8 +304,12 @@ async def create_commerce_action(
 @router.get("", response_model=CommerceActionPage)
 async def list_commerce_actions(
     ticket_id: UUID | None = None,
-    approval_status: str | None = Query(default=None, pattern="^(pending|approved|rejected|expired|cancelled)$"),
-    execution_status: str | None = Query(default=None, pattern="^(not_started|queued|running|succeeded|failed)$"),
+    approval_status: str | None = Query(
+        default=None, pattern="^(pending|approved|rejected|expired|cancelled)$"
+    ),
+    execution_status: str | None = Query(
+        default=None, pattern="^(not_started|queued|running|succeeded|failed)$"
+    ),
     limit: int = Query(default=25, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -342,9 +378,9 @@ async def list_commerce_action_audit(
         CommerceActionAudit.organization_id == user.organization_id,
         CommerceActionAudit.commerce_action_id == action_id,
     ]
-    total = await db.scalar(
-        select(func.count()).select_from(CommerceActionAudit).where(*filters)
-    ) or 0
+    total = (
+        await db.scalar(select(func.count()).select_from(CommerceActionAudit).where(*filters)) or 0
+    )
     rows = await db.execute(
         select(CommerceActionAudit, User.full_name)
         .outerjoin(
@@ -387,7 +423,13 @@ async def approve_commerce_action(
         raise HTTPException(status_code=409, detail="Only pending actions can be approved")
     if action.expires_at <= now:
         action.approval_status = "expired"
-        add_audit(db, action, actor_user_id=None, event_type="expired", details={"reason": "approval_window_elapsed"})
+        add_audit(
+            db,
+            action,
+            actor_user_id=None,
+            event_type="expired",
+            details={"reason": "approval_window_elapsed"},
+        )
         await db.commit()
         await set_tenant_context(db, user.organization_id)
         raise HTTPException(status_code=409, detail="This action expired before approval")
@@ -440,7 +482,9 @@ async def cancel_commerce_action(
     if action.approval_status != "pending":
         raise HTTPException(status_code=409, detail="Only pending actions can be cancelled")
     if action.requested_by_user_id != user.id and user.role not in {"owner", "admin"}:
-        raise HTTPException(status_code=403, detail="Agents can cancel only their own pending requests")
+        raise HTTPException(
+            status_code=403, detail="Agents can cancel only their own pending requests"
+        )
     now = datetime.now(UTC)
     action.approval_status = "cancelled"
     action.cancelled_by_user_id = user.id

@@ -10,6 +10,7 @@ from app.integrations.core import (
     IntegrationError,
     IntegrationErrorCode,
     IntegrationRegistry,
+    OutboundMessagingCapability,
     ProviderDescriptor,
 )
 
@@ -97,3 +98,59 @@ def test_incoming_message_contract_is_strict_and_provider_scoped():
     assert event.external_message_id == "message-1"
     with pytest.raises(ValueError):
         IncomingMessage.model_validate({**event.model_dump(), "untrusted_org_id": "other"})
+
+
+def test_shopify_provider_registers_only_catalog_and_verified_webhook_capabilities():
+    from app.integrations.providers.shopify.provider import ShopifyCatalogProvider
+
+    provider = ShopifyCatalogProvider(lambda connection: None)
+    assert provider.descriptor.capabilities == frozenset(
+        {IntegrationCapability.PRODUCT_CATALOG, IntegrationCapability.WEBHOOKS}
+    )
+    assert provider.get_capability(IntegrationCapability.WEBHOOKS) is not None
+    assert provider.get_capability(IntegrationCapability.MESSAGING) is None
+
+
+def test_shopify_webhook_adapter_verifies_then_normalizes_minimal_product_event(monkeypatch):
+    from app.integrations.providers.shopify.webhooks import ShopifyWebhookAdapter
+
+    monkeypatch.setattr(
+        "app.integrations.providers.shopify.webhooks.verify_webhook_hmac",
+        lambda raw, signature: signature == "verified",
+    )
+    event = ShopifyWebhookAdapter().verify_and_normalize(
+        headers={
+            "X-Shopify-Hmac-Sha256": "verified",
+            "X-Shopify-Topic": "products/update",
+            "X-Shopify-Webhook-Id": "event-1",
+            "X-Shopify-Shop-Domain": "sample.myshopify.com",
+        },
+        raw_body=b'{"id": "42", "title": "not retained"}',
+    )
+    assert event.external_account_id == "sample.myshopify.com"
+    assert event.deduplication_key == "shopify:event-1"
+    assert event.normalized_payload == {
+        "external_product_id": "gid://shopify/Product/42",
+        "shop_domain": "sample.myshopify.com",
+    }
+
+
+def test_shopify_webhook_adapter_rejects_invalid_signature(monkeypatch):
+    from app.integrations.providers.shopify.webhooks import ShopifyWebhookAdapter
+
+    monkeypatch.setattr(
+        "app.integrations.providers.shopify.webhooks.verify_webhook_hmac",
+        lambda raw, signature: False,
+    )
+    with pytest.raises(IntegrationError) as error:
+        ShopifyWebhookAdapter().verify_and_normalize(headers={}, raw_body=b"{}")
+    assert error.value.code is IntegrationErrorCode.PERMISSION_DENIED
+    assert error.value.retryable is False
+
+
+def test_messaging_capability_is_explicit_and_provider_neutral():
+    class FakeOutbound:
+        async def send_message(self, connection, *, external_conversation_id, message, idempotency_key):
+            raise NotImplementedError
+
+    assert isinstance(FakeOutbound(), OutboundMessagingCapability)

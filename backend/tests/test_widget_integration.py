@@ -1,3 +1,4 @@
+import asyncio
 import os
 from datetime import UTC, datetime, timedelta
 from typing import ClassVar
@@ -10,6 +11,7 @@ from sqlalchemy import func, select
 from app.core.config import settings
 from app.core.security import hash_password
 from app.db.session import SessionLocal, set_tenant_context
+from app.features.widgets.retention import purge_expired_order_verifications
 from app.models import (
     AIExecution,
     Conversation,
@@ -17,16 +19,104 @@ from app.models import (
     KnowledgeDocument,
     Message,
     PlatformOwner,
+    SupportWidget,
     Ticket,
     WidgetOrderVerification,
     WidgetSubmission,
 )
+from app.services import ai_worker
 from app.services.ai_worker import claim_ai_execution, finish_widget_reply, process_ai_execution
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("TEST_DATABASE_URL"),
     reason="Storefront widget integration tests require isolated PostgreSQL",
 )
+
+
+@pytest.mark.anyio
+async def test_expired_order_verification_cleanup_is_bounded_and_tenant_scoped(client):
+    _auth_a, organization_a, public_id_a = await setup_widget(
+        client, "widget-retention-a", "https://retention-a.example"
+    )
+    _auth_b, organization_b, public_id_b = await setup_widget(
+        client, "widget-retention-b", "https://retention-b.example"
+    )
+
+    async def create_conversation(public_id: str, origin: str) -> tuple[UUID, UUID]:
+        created = await client.post(
+            f"/api/v1/widget/{public_id}/messages",
+            headers={"Origin": origin, "Idempotency-Key": f"retention-{uuid4().hex}"},
+            json={"content": "Need order help"},
+        )
+        assert created.status_code == 201, created.text
+        return UUID(created.json()["conversation_id"]), UUID(created.json()["ticket_id"])
+
+    conversation_a, _ticket_a = await create_conversation(
+        public_id_a, "https://retention-a.example"
+    )
+    conversation_b, _ticket_b = await create_conversation(
+        public_id_b, "https://retention-b.example"
+    )
+    now = datetime.now(UTC)
+    async with SessionLocal() as db:
+        for organization_id, public_id, conversation_id, suffix in (
+            (organization_a, public_id_a, conversation_a, "a-old"),
+            (organization_b, public_id_b, conversation_b, "b-old"),
+        ):
+            await set_tenant_context(db, organization_id)
+            widget = await db.scalar(
+                select(SupportWidget).where(
+                    SupportWidget.organization_id == organization_id,
+                    SupportWidget.public_id == public_id,
+                )
+            )
+            assert widget is not None
+            db.add(
+                WidgetOrderVerification(
+                    organization_id=organization_id,
+                    widget_id=widget.id,
+                    conversation_id=conversation_id,
+                    order_number="#1001",
+                    shopify_order_id="gid://shopify/Order/1001",
+                    customer_email_encrypted="encrypted-email",
+                    code_digest="a" * 64,
+                    status="verified",
+                    attempt_count=0,
+                    expires_at=now - timedelta(days=2),
+                    verified_at=now - timedelta(days=2),
+                )
+            )
+            if organization_id == organization_a:
+                db.add(
+                    WidgetOrderVerification(
+                        organization_id=organization_a,
+                        widget_id=widget.id,
+                        conversation_id=conversation_a,
+                        order_number="#1002",
+                        shopify_order_id="gid://shopify/Order/1002",
+                        customer_email_encrypted="encrypted-recent-email",
+                        code_digest="b" * 64,
+                        status="expired",
+                        attempt_count=0,
+                        expires_at=now - timedelta(minutes=30),
+                    )
+                )
+            await db.flush()
+        await db.commit()
+
+    assert await purge_expired_order_verifications(organization_a) == 1
+    assert await purge_expired_order_verifications(organization_b) == 1
+    async with SessionLocal() as db:
+        await set_tenant_context(db, organization_a)
+        remaining = list(
+            await db.scalars(
+                select(WidgetOrderVerification).where(
+                    WidgetOrderVerification.organization_id == organization_a
+                )
+            )
+        )
+        assert len(remaining) == 1
+        assert remaining[0].order_number == "#1002"
 
 
 def bearer(token: str) -> dict[str, str]:
@@ -77,12 +167,19 @@ async def approved_workspace(client, label: str):
     return login.json(), UUID(tenant_id)
 
 
-async def setup_widget(client, label: str, origin: str, *, ai_enabled: bool = False, ai_reply_mode: str = "draft_only"):
+async def setup_widget(
+    client, label: str, origin: str, *, ai_enabled: bool = False, ai_reply_mode: str = "draft_only"
+):
     auth, organization_id = await approved_workspace(client, label)
     created = await client.post(
         "/api/v1/integrations/widget",
         headers=bearer(auth["access_token"]),
-        json={"allowed_origins": [origin], "collect_contact": True, "ai_enabled": ai_enabled, "ai_reply_mode": ai_reply_mode},
+        json={
+            "allowed_origins": [origin],
+            "collect_contact": True,
+            "ai_enabled": ai_enabled,
+            "ai_reply_mode": ai_reply_mode,
+        },
     )
     assert created.status_code == 201, created.text
     return auth, organization_id, created.json()["public_id"]
@@ -97,14 +194,22 @@ async def test_widget_creates_ticket_once_and_reuses_same_visitor_conversation(c
     first = await client.post(
         f"/api/v1/widget/{public_id}/messages",
         headers={**origin, "Idempotency-Key": "first-widget-message-key-01"},
-        json={"content": "Where is order 1001?", "visitor_email": "shopper@example.com", "contact_consent": True},
+        json={
+            "content": "Where is order 1001?",
+            "visitor_email": "shopper@example.com",
+            "contact_consent": True,
+        },
     )
     assert first.status_code == 201, first.text
     started = first.json()
     duplicate = await client.post(
         f"/api/v1/widget/{public_id}/messages",
         headers={**origin, "Idempotency-Key": "first-widget-message-key-01"},
-        json={"content": "Where is order 1001?", "visitor_email": "shopper@example.com", "contact_consent": True},
+        json={
+            "content": "Where is order 1001?",
+            "visitor_email": "shopper@example.com",
+            "contact_consent": True,
+        },
     )
     assert duplicate.status_code == 201, duplicate.text
     assert duplicate.json()["ticket_id"] == started["ticket_id"]
@@ -140,11 +245,27 @@ async def test_widget_creates_ticket_once_and_reuses_same_visitor_conversation(c
 
     async with SessionLocal() as db:
         await set_tenant_context(db, organization_id)
-        tickets = list(await db.scalars(select(Ticket).where(Ticket.organization_id == organization_id)))
-        conversations = list(await db.scalars(select(Conversation).where(Conversation.organization_id == organization_id)))
-        messages = list(await db.scalars(select(Message).where(Message.organization_id == organization_id)))
-        executions = list(await db.scalars(select(AIExecution).where(AIExecution.organization_id == organization_id)))
-        receipts = list(await db.scalars(select(WidgetSubmission).where(WidgetSubmission.organization_id == organization_id)))
+        tickets = list(
+            await db.scalars(select(Ticket).where(Ticket.organization_id == organization_id))
+        )
+        conversations = list(
+            await db.scalars(
+                select(Conversation).where(Conversation.organization_id == organization_id)
+            )
+        )
+        messages = list(
+            await db.scalars(select(Message).where(Message.organization_id == organization_id))
+        )
+        executions = list(
+            await db.scalars(
+                select(AIExecution).where(AIExecution.organization_id == organization_id)
+            )
+        )
+        receipts = list(
+            await db.scalars(
+                select(WidgetSubmission).where(WidgetSubmission.organization_id == organization_id)
+            )
+        )
         assert len(tickets) == len(conversations) == len(receipts) == 1
         assert tickets[0].source == "shopify_widget"
         assert tickets[0].status == "open"
@@ -163,7 +284,10 @@ async def test_widget_ai_setting_enqueues_one_execution_per_new_message(client):
         ai_enabled=True,
         ai_reply_mode="auto_reply",
     )
-    headers = {"Origin": "https://store-ai.example", "Idempotency-Key": "widget-ai-first-message-01"}
+    headers = {
+        "Origin": "https://store-ai.example",
+        "Idempotency-Key": "widget-ai-first-message-01",
+    }
     first = await client.post(
         f"/api/v1/widget/{public_id}/messages",
         headers=headers,
@@ -442,6 +566,91 @@ async def test_widget_draft_only_saves_grounded_result_without_sending(client, m
 
 
 @pytest.mark.anyio
+async def test_widget_human_takeover_during_generation_prevents_late_ai_reply(client, monkeypatch):
+    auth, organization_id, public_id = await setup_widget(
+        client,
+        "widget-concurrent-takeover",
+        "https://store-concurrent-takeover.example",
+        ai_enabled=True,
+        ai_reply_mode="auto_reply",
+    )
+    async with SessionLocal() as db:
+        await set_tenant_context(db, organization_id)
+        document = KnowledgeDocument(
+            organization_id=organization_id,
+            name="returns.txt",
+            content_type="text/plain",
+            size_bytes=32,
+            status="ready",
+            uploaded_by_user_id=UUID(auth["user"]["id"]),
+        )
+        db.add(document)
+        await db.flush()
+        db.add(
+            DocumentChunk(
+                organization_id=organization_id,
+                document_id=document.id,
+                chunk_index=0,
+                content="Unused items can be returned within thirty days.",
+            )
+        )
+        await db.commit()
+
+    started_generation = asyncio.Event()
+    finish_generation = asyncio.Event()
+
+    async def delayed_generation(**_kwargs):
+        started_generation.set()
+        await finish_generation.wait()
+        return {
+            "draft": "You can return this within thirty days.",
+            "usage": {"total_tokens": 4},
+            "model_name": "test-model",
+        }
+
+    monkeypatch.setattr(ai_worker, "create_grounded_draft", delayed_generation)
+    origin = "https://store-concurrent-takeover.example"
+    started = await client.post(
+        f"/api/v1/widget/{public_id}/messages",
+        headers={"Origin": origin, "Idempotency-Key": "widget-takeover-during-ai-01"},
+        json={"content": "Can I return an unused product?"},
+    )
+    assert started.status_code == 201, started.text
+    execution_id = await claim_ai_execution(organization_id)
+    assert execution_id is not None
+
+    task = asyncio.create_task(process_ai_execution(organization_id, execution_id))
+    await asyncio.wait_for(started_generation.wait(), timeout=2)
+    takeover = await client.patch(
+        f"/api/v1/conversations/{started.json()['conversation_id']}/ai-mode",
+        headers=bearer(auth["access_token"]),
+        json={"mode": "human"},
+    )
+    assert takeover.status_code == 200, takeover.text
+    finish_generation.set()
+    await asyncio.wait_for(task, timeout=5)
+
+    history = await client.get(
+        f"/api/v1/widget/conversations/{started.json()['conversation_id']}",
+        headers={
+            "Origin": origin,
+            "Authorization": f"Bearer {started.json()['visitor_token']}",
+        },
+    )
+    assert [message["sender_type"] for message in history.json()["messages"]] == ["customer"]
+    async with SessionLocal() as db:
+        await set_tenant_context(db, organization_id)
+        execution = await db.scalar(
+            select(AIExecution).where(
+                AIExecution.organization_id == organization_id,
+                AIExecution.id == execution_id,
+            )
+        )
+        assert execution.reply_status == "escalated"
+        assert execution.draft is None
+
+
+@pytest.mark.anyio
 async def test_widget_sensitive_auto_reply_escalates_without_model_call(client, monkeypatch):
     auth, organization_id, public_id = await setup_widget(
         client,
@@ -472,12 +681,17 @@ async def test_widget_sensitive_auto_reply_escalates_without_model_call(client, 
         f"/api/v1/widget/conversations/{started.json()['conversation_id']}",
         headers={"Origin": origin, "Authorization": f"Bearer {started.json()['visitor_token']}"},
     )
-    assert [message["sender_type"] for message in history.json()["messages"]] == ["customer", "assistant"]
+    assert [message["sender_type"] for message in history.json()["messages"]] == [
+        "customer",
+        "assistant",
+    ]
     assert "one-time code" in history.json()["messages"][-1]["content"]
 
 
 @pytest.mark.anyio
-async def test_widget_auto_reply_answers_standalone_greeting_without_knowledge_or_model(client, monkeypatch):
+async def test_widget_auto_reply_answers_standalone_greeting_without_knowledge_or_model(
+    client, monkeypatch
+):
     auth, organization_id, public_id = await setup_widget(
         client,
         "widget-greeting-ai",
@@ -511,7 +725,10 @@ async def test_widget_auto_reply_answers_standalone_greeting_without_knowledge_o
         f"/api/v1/widget/conversations/{started.json()['conversation_id']}",
         headers={"Origin": origin, "Authorization": f"Bearer {started.json()['visitor_token']}"},
     )
-    assert [message["sender_type"] for message in history.json()["messages"]] == ["customer", "assistant"]
+    assert [message["sender_type"] for message in history.json()["messages"]] == [
+        "customer",
+        "assistant",
+    ]
     assert history.json()["messages"][-1]["content"] == (
         "Hi there! I’m your store’s support assistant. I can help with order updates, product questions, "
         "and store policies. What can I help you with?"
@@ -583,7 +800,10 @@ async def test_widget_origin_honeypot_and_visitor_token_are_enforced(client):
     assert denied_origin.status_code == 403
     spam = await client.post(
         f"/api/v1/widget/{public_id}/messages",
-        headers={"Origin": "https://store-allowed.example", "Idempotency-Key": "honeypot-message-key-0001"},
+        headers={
+            "Origin": "https://store-allowed.example",
+            "Idempotency-Key": "honeypot-message-key-0001",
+        },
         json={"content": "This is spam", "website": "spam.example"},
     )
     assert spam.status_code == 422
@@ -618,7 +838,9 @@ async def test_widget_visitor_token_cannot_access_another_tenant_conversation(cl
 
 
 @pytest.mark.anyio
-async def test_widget_order_lookup_requires_email_code_and_returns_only_verified_tracking(client, monkeypatch):
+async def test_widget_order_lookup_requires_email_code_and_returns_only_verified_tracking(
+    client, monkeypatch
+):
     _auth, organization_id, public_id = await setup_widget(
         client,
         "widget-order-otp",
@@ -626,18 +848,26 @@ async def test_widget_order_lookup_requires_email_code_and_returns_only_verified
         ai_enabled=True,
         ai_reply_mode="auto_reply",
     )
-    monkeypatch.setattr("app.api.routes.widgets.smtp_is_configured", lambda: True)
-    monkeypatch.setattr("app.api.routes.widgets.encrypt_credential", lambda value: f"encrypted:{value}")
-    monkeypatch.setattr("app.api.routes.widgets.decrypt_credential", lambda value: value.removeprefix("encrypted:"))
+    monkeypatch.setattr("app.features.widgets.order_actions.smtp_is_configured", lambda: True)
+    monkeypatch.setattr(
+        "app.features.widgets.order_actions.encrypt_credential", lambda value: f"encrypted:{value}"
+    )
+    monkeypatch.setattr(
+        "app.features.widgets.order_actions.decrypt_credential",
+        lambda value: value.removeprefix("encrypted:"),
+    )
     monkeypatch.setattr(
         "app.integrations.providers.shopify.security.decrypt_credential",
         lambda value: value.removeprefix("encrypted:"),
     )
+
     async def get_installation(db, org_id):
         return _installation()
 
-    monkeypatch.setattr("app.api.routes.widgets.installation_for", get_installation)
-    monkeypatch.setattr("app.api.routes.widgets.valid_access_token", lambda db, installation: _token())
+    monkeypatch.setattr("app.features.widgets.order_actions.installation_for", get_installation)
+    monkeypatch.setattr(
+        "app.features.widgets.order_actions.valid_access_token", lambda db, installation: _token()
+    )
     captured = {}
 
     async def send_code(email, code):
@@ -655,14 +885,24 @@ async def test_widget_order_lookup_requires_email_code_and_returns_only_verified
             "displayFinancialStatus": "PAID",
             "displayFulfillmentStatus": "FULFILLED",
             "currentTotalPriceSet": {"shopMoney": {"amount": "42.50", "currencyCode": "USD"}},
-            "fulfillments": [{"trackingInfo": [{"company": "Parcel Co", "number": "TRACK-1001", "url": "https://tracking.example/1001"}]}],
+            "fulfillments": [
+                {
+                    "trackingInfo": [
+                        {
+                            "company": "Parcel Co",
+                            "number": "TRACK-1001",
+                            "url": "https://tracking.example/1001",
+                        }
+                    ]
+                }
+            ],
         }
 
     async def _send(email, code):
         return await send_code(email, code)
 
-    monkeypatch.setattr("app.api.routes.widgets.send_order_verification_code", _send)
-    monkeypatch.setattr("app.api.routes.widgets.lookup_authorized_order", find_order)
+    monkeypatch.setattr("app.features.widgets.order_actions.send_order_verification_code", _send)
+    monkeypatch.setattr("app.features.widgets.order_actions.lookup_authorized_order", find_order)
     origin = "https://store-order-otp.example"
     started = await client.post(
         f"/api/v1/widget/{public_id}/messages",
@@ -670,7 +910,10 @@ async def test_widget_order_lookup_requires_email_code_and_returns_only_verified
         json={"content": "Where is my order?"},
     )
     assert started.status_code == 201, started.text
-    visitor_headers = {"Origin": origin, "Authorization": f"Bearer {started.json()['visitor_token']}"}
+    visitor_headers = {
+        "Origin": origin,
+        "Authorization": f"Bearer {started.json()['visitor_token']}",
+    }
     initial_execution = await claim_ai_execution(organization_id)
     assert initial_execution is not None
     await process_ai_execution(organization_id, initial_execution)
@@ -691,9 +934,13 @@ async def test_widget_order_lookup_requires_email_code_and_returns_only_verified
     assert confirmed.json()["verified"] is True
     assert confirmed.json()["tracking"][0]["number"] == "TRACK-1001"
     assert "https://tracking.example/1001" in confirmed.json()["message"]
-    monkeypatch.setattr("app.api.routes.integrations.installation_for", get_installation)
-    monkeypatch.setattr("app.api.routes.integrations.valid_access_token", lambda db, installation: _token())
-    monkeypatch.setattr("app.integrations.providers.shopify.orders.lookup_authorized_order", find_order)
+    monkeypatch.setattr("app.services.shopify_access.installation_for", get_installation)
+    monkeypatch.setattr(
+        "app.services.shopify_tokens.valid_access_token", lambda db, installation: _token()
+    )
+    monkeypatch.setattr(
+        "app.integrations.providers.shopify.orders.lookup_authorized_order", find_order
+    )
     followup = await client.post(
         f"/api/v1/widget/conversations/{started.json()['conversation_id']}/messages",
         headers={**visitor_headers, "Idempotency-Key": "widget-order-followup-status-1"},
@@ -708,13 +955,20 @@ async def test_widget_order_lookup_requires_email_code_and_returns_only_verified
         headers=visitor_headers,
     )
     assert history_after_followup.status_code == 200
-    assert history_after_followup.json()["messages"][-1]["content"].startswith("I checked your verified order #1001.")
+    assert history_after_followup.json()["messages"][-1]["content"].startswith(
+        "I checked your verified order #1001."
+    )
     conversation_after_verification = await client.get(
         f"/api/v1/widget/conversations/{started.json()['conversation_id']}",
         headers=visitor_headers,
     )
     assert conversation_after_verification.status_code == 200
     assert conversation_after_verification.json()["order_verified"] is True
+    monkeypatch.setattr("app.features.widgets.cancellation.installation_for", get_installation)
+    monkeypatch.setattr(
+        "app.features.widgets.cancellation.valid_access_token", lambda db, installation: _token()
+    )
+    monkeypatch.setattr("app.features.widgets.cancellation.lookup_authorized_order", find_order)
     cancellation = await client.post(
         f"/api/v1/widget/conversations/{started.json()['conversation_id']}/cancellation-request",
         headers={**visitor_headers, "Idempotency-Key": "widget-cancel-order-0001"},
@@ -735,8 +989,10 @@ async def test_widget_email_failure_expires_otp_without_losing_tenant_context(cl
     _auth, organization_id, public_id = await setup_widget(
         client, "widget-otp-email-failure", "https://store-otp-failure.example", ai_enabled=True
     )
-    monkeypatch.setattr("app.api.routes.widgets.smtp_is_configured", lambda: True)
-    monkeypatch.setattr("app.api.routes.widgets.encrypt_credential", lambda value: f"encrypted:{value}")
+    monkeypatch.setattr("app.features.widgets.order_actions.smtp_is_configured", lambda: True)
+    monkeypatch.setattr(
+        "app.features.widgets.order_actions.encrypt_credential", lambda value: f"encrypted:{value}"
+    )
 
     async def get_installation(db, org_id):
         return _installation()
@@ -747,10 +1003,14 @@ async def test_widget_email_failure_expires_otp_without_losing_tenant_context(cl
     async def fail_email(email, code):
         raise OSError("mock SMTP failure")
 
-    monkeypatch.setattr("app.api.routes.widgets.installation_for", get_installation)
-    monkeypatch.setattr("app.api.routes.widgets.valid_access_token", lambda db, installation: _token())
-    monkeypatch.setattr("app.api.routes.widgets.lookup_authorized_order", find_order)
-    monkeypatch.setattr("app.api.routes.widgets.send_order_verification_code", fail_email)
+    monkeypatch.setattr("app.features.widgets.order_actions.installation_for", get_installation)
+    monkeypatch.setattr(
+        "app.features.widgets.order_actions.valid_access_token", lambda db, installation: _token()
+    )
+    monkeypatch.setattr("app.features.widgets.order_actions.lookup_authorized_order", find_order)
+    monkeypatch.setattr(
+        "app.features.widgets.order_actions.send_order_verification_code", fail_email
+    )
 
     origin = "https://store-otp-failure.example"
     started = await client.post(

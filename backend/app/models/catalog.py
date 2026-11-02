@@ -33,7 +33,15 @@ class CatalogProduct(UUIDPrimaryKey, TimestampMixin, Base):
         ),
         UniqueConstraint("organization_id", "id", name="uq_catalog_products_org_id"),
         UniqueConstraint(
-            "organization_id", "connection_id", "external_product_id",
+            "organization_id",
+            "id",
+            "connection_id",
+            name="uq_catalog_products_org_id_connection",
+        ),
+        UniqueConstraint(
+            "organization_id",
+            "connection_id",
+            "external_product_id",
             name="uq_catalog_products_external",
         ),
         ForeignKeyConstraint(
@@ -65,7 +73,9 @@ class CatalogProduct(UUIDPrimaryKey, TimestampMixin, Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     variants: Mapped[list["CatalogVariant"]] = relationship(
-        back_populates="product", cascade="all, delete-orphan"
+        back_populates="product",
+        cascade="all, delete-orphan",
+        foreign_keys=lambda: [CatalogVariant.organization_id, CatalogVariant.product_id],
     )
 
 
@@ -82,13 +92,25 @@ class CatalogVariant(UUIDPrimaryKey, TimestampMixin, Base):
             name="ck_catalog_variants_compare_price_nonnegative",
         ),
         UniqueConstraint(
-            "organization_id", "connection_id", "external_variant_id",
+            "organization_id",
+            "connection_id",
+            "external_variant_id",
             name="uq_catalog_variants_external",
         ),
         ForeignKeyConstraint(
             ["organization_id", "product_id"],
             ["catalog_products.organization_id", "catalog_products.id"],
             name="fk_catalog_variants_org_product",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "product_id", "connection_id"],
+            [
+                "catalog_products.organization_id",
+                "catalog_products.id",
+                "catalog_products.connection_id",
+            ],
+            name="fk_catalog_variants_org_product_connection",
             ondelete="CASCADE",
         ),
         ForeignKeyConstraint(
@@ -119,18 +141,25 @@ class CatalogVariant(UUIDPrimaryKey, TimestampMixin, Base):
     synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    product: Mapped[CatalogProduct] = relationship(back_populates="variants")
+    product: Mapped[CatalogProduct] = relationship(
+        back_populates="variants",
+        foreign_keys=lambda: [CatalogVariant.organization_id, CatalogVariant.product_id],
+    )
 
 
 class CatalogSyncJob(UUIDPrimaryKey, TimestampMixin, Base):
     __tablename__ = "catalog_sync_jobs"
     __table_args__ = (
-        CheckConstraint("mode IN ('full', 'incremental', 'reconcile')", name="ck_catalog_sync_mode"),
+        CheckConstraint(
+            "mode IN ('full', 'incremental', 'reconcile')", name="ck_catalog_sync_mode"
+        ),
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
             name="ck_catalog_sync_status",
         ),
-        CheckConstraint("attempt_count >= 0 AND attempt_count <= max_attempts", name="ck_catalog_sync_attempts"),
+        CheckConstraint(
+            "attempt_count >= 0 AND attempt_count <= max_attempts", name="ck_catalog_sync_attempts"
+        ),
         CheckConstraint("max_attempts > 0", name="ck_catalog_sync_max_attempts"),
         ForeignKeyConstraint(
             ["organization_id", "connection_id"],
@@ -138,8 +167,16 @@ class CatalogSyncJob(UUIDPrimaryKey, TimestampMixin, Base):
             name="fk_catalog_sync_jobs_org_connection",
             ondelete="CASCADE",
         ),
-        Index("ix_catalog_sync_jobs_queue", "organization_id", "status", "next_attempt_at", "created_at"),
-        Index("ix_catalog_sync_jobs_org_connection", "organization_id", "connection_id", "created_at"),
+        Index(
+            "ix_catalog_sync_jobs_queue",
+            "organization_id",
+            "status",
+            "next_attempt_at",
+            "created_at",
+        ),
+        Index(
+            "ix_catalog_sync_jobs_org_connection", "organization_id", "connection_id", "created_at"
+        ),
     )
 
     organization_id: Mapped[uuid.UUID] = mapped_column(
@@ -168,9 +205,15 @@ class CatalogWebhookEvent(UUIDPrimaryKey, TimestampMixin, Base):
             "status IN ('queued', 'running', 'succeeded', 'failed')",
             name="ck_catalog_webhook_events_status",
         ),
-        CheckConstraint("attempt_count >= 0 AND attempt_count <= max_attempts", name="ck_catalog_webhook_attempts"),
+        CheckConstraint(
+            "attempt_count >= 0 AND attempt_count <= max_attempts",
+            name="ck_catalog_webhook_attempts",
+        ),
         UniqueConstraint(
-            "organization_id", "connection_id", "provider_id", "external_event_id",
+            "organization_id",
+            "connection_id",
+            "provider_id",
+            "external_event_id",
             name="uq_catalog_webhook_events_dedupe",
         ),
         ForeignKeyConstraint(
@@ -179,7 +222,13 @@ class CatalogWebhookEvent(UUIDPrimaryKey, TimestampMixin, Base):
             name="fk_catalog_webhook_events_org_connection",
             ondelete="CASCADE",
         ),
-        Index("ix_catalog_webhook_events_queue", "organization_id", "status", "next_attempt_at", "created_at"),
+        Index(
+            "ix_catalog_webhook_events_queue",
+            "organization_id",
+            "status",
+            "next_attempt_at",
+            "created_at",
+        ),
     )
 
     organization_id: Mapped[uuid.UUID] = mapped_column(

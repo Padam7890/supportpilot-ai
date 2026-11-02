@@ -1,3 +1,4 @@
+import asyncio
 import os
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
@@ -154,9 +155,10 @@ async def test_document_processing_search_reprocess_and_tenant_isolation(client)
     assert refused_reprocess.status_code == 404
     async with SessionLocal() as session:
         await set_tenant_context(session, organization_id)
-        assert await session.get(
-            KnowledgeDocumentSource, (organization_id, UUID(document["id"]))
-        ) is None
+        assert (
+            await session.get(KnowledgeDocumentSource, (organization_id, UUID(document["id"])))
+            is None
+        )
         chunk_count = await session.scalar(
             select(DocumentChunk.id).where(
                 DocumentChunk.organization_id == organization_id,
@@ -208,9 +210,7 @@ async def test_ingestion_retry_limit_and_reprocess_history(client):
         async with SessionLocal() as session:
             await set_tenant_context(session, organization_id)
             job = await session.scalar(
-                select(DocumentIngestionJob).where(
-                    DocumentIngestionJob.document_id == document_id
-                )
+                select(DocumentIngestionJob).where(DocumentIngestionJob.document_id == document_id)
             )
             assert job is not None
             assert job.attempt_count == attempt
@@ -232,3 +232,61 @@ async def test_ingestion_retry_limit_and_reprocess_history(client):
     assert reprocessed.status_code == 202
     assert len(reprocessed.json()["jobs"]) == 2
     assert reprocessed.json()["jobs"][0]["attempt_count"] == 0
+
+
+@pytest.mark.anyio
+async def test_ingestion_claims_are_exclusive_and_stale_leases_are_recovered(client):
+    owner = await approved_workspace(client, "knowledge-lease")
+    uploaded = await upload_text(client, owner, "lease.txt", b"A durable lease test document.")
+    assert uploaded.status_code == 202, uploaded.text
+    document_id = UUID(uploaded.json()["id"])
+    organization_id = UUID(owner["user"]["organization_id"])
+
+    first, second = await asyncio.gather(
+        claim_one(organization_id),
+        claim_one(organization_id),
+    )
+    assert sum(claim is not None for claim in (first, second)) == 1
+    claimed = first or second
+    assert claimed is not None and claimed[1] == document_id
+
+    async with SessionLocal() as session:
+        await set_tenant_context(session, organization_id)
+        job = await session.scalar(
+            select(DocumentIngestionJob).where(
+                DocumentIngestionJob.organization_id == organization_id,
+                DocumentIngestionJob.id == claimed[0],
+            )
+        )
+        assert job is not None
+        job.status = "running"
+        job.updated_at = datetime.now(UTC) - timedelta(minutes=6)
+        await session.commit()
+
+    reclaimed = await claim_one(organization_id)
+    assert reclaimed == claimed
+    async with SessionLocal() as session:
+        await set_tenant_context(session, organization_id)
+        job = await session.scalar(
+            select(DocumentIngestionJob).where(
+                DocumentIngestionJob.organization_id == organization_id,
+                DocumentIngestionJob.id == claimed[0],
+            )
+        )
+        assert job is not None and job.attempt_count == 2
+        await session.rollback()
+
+
+@pytest.mark.anyio
+async def test_ingestion_claim_is_tenant_scoped(client):
+    owner_a = await approved_workspace(client, "knowledge-tenant-a")
+    owner_b = await approved_workspace(client, "knowledge-tenant-b")
+    uploaded_a = await upload_text(client, owner_a, "a.txt", b"Tenant A document")
+    uploaded_b = await upload_text(client, owner_b, "b.txt", b"Tenant B document")
+    assert uploaded_a.status_code == uploaded_b.status_code == 202
+
+    organization_a = UUID(owner_a["user"]["organization_id"])
+    claimed = await claim_one(organization_a)
+    assert claimed is not None
+    assert claimed[1] == UUID(uploaded_a.json()["id"])
+    assert claimed[1] != UUID(uploaded_b.json()["id"])

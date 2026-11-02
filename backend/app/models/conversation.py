@@ -30,6 +30,18 @@ class Conversation(UUIDPrimaryKey, TimestampMixin, Base):
             "external_conversation_id",
         ),
         UniqueConstraint("organization_id", "id", name="uq_conversations_org_id"),
+        UniqueConstraint(
+            "organization_id",
+            "id",
+            "integration_connection_id",
+            name="uq_conversations_org_id_connection",
+        ),
+        UniqueConstraint(
+            "organization_id",
+            "integration_connection_id",
+            "external_conversation_id",
+            name="uq_conversations_provider_external",
+        ),
         ForeignKeyConstraint(
             ["organization_id", "ticket_id"],
             ["tickets.organization_id", "tickets.id"],
@@ -61,7 +73,12 @@ class Conversation(UUIDPrimaryKey, TimestampMixin, Base):
     shopping_state_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     ticket = relationship("Ticket", back_populates="conversations")
-    messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
+    messages = relationship(
+        "Message",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        foreign_keys="Message.conversation_id,Message.organization_id",
+    )
 
     @property
     def shopping_context(self) -> dict | None:

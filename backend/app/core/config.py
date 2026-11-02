@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     ai_model: str | None = None
     ai_provider_timeout_seconds: int = Field(default=45, ge=5, le=120)
     ai_provider_max_attempts: int = Field(default=2, ge=1, le=3)
+    worker_concurrency: int = Field(default=4, ge=1, le=32)
+    worker_job_timeout_seconds: int = Field(default=110, ge=10, le=150)
     ai_input_cost_per_million: float | None = Field(default=None, ge=0)
     ai_output_cost_per_million: float | None = Field(default=None, ge=0)
     shopify_client_id: str | None = None

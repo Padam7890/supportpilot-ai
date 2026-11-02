@@ -1,13 +1,13 @@
 """Tenant-scoped catalog persistence and durable provider sync operations."""
 
 import logging
-import random
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from fastapi import HTTPException
 from sqlalchemy import and_, func, or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,6 +29,7 @@ from app.models import (
     ShopifyInstallation,
 )
 from app.services.integration_connections import sync_shopify_connection
+from app.workers.domain.retry_policy import retry_delay_seconds
 
 PAGE_SIZE = 20
 MAX_SYNC_ATTEMPTS = 5
@@ -48,7 +49,8 @@ async def resolve_shopify_credentials(connection_ref: IntegrationConnectionRef) 
         )
         if installation is None or installation.shop_domain != connection_ref.external_account_id:
             raise ShopifyAPIError("catalog_not_connected", status_code=409)
-        from app.api.routes.integrations import valid_access_token
+        from app.services.shopify_tokens import valid_access_token
+
         token_was_current = bool(
             installation.access_token_expires_at
             and installation.access_token_expires_at > datetime.now(UTC) + timedelta(minutes=5)
@@ -58,7 +60,8 @@ async def resolve_shopify_credentials(connection_ref: IntegrationConnectionRef) 
         except HTTPException as exc:
             code = (
                 "shopify_required_scopes_missing"
-                if exc.status_code == 403 and "did not grant the required" in str(exc.detail).casefold()
+                if exc.status_code == 403
+                and "did not grant the required" in str(exc.detail).casefold()
                 else "shopify_access_denied"
                 if exc.status_code == 403
                 else "shopify_reauthorization_required"
@@ -129,15 +132,32 @@ async def upsert_product_snapshot(
         .with_for_update()
     )
     if product is None:
-        product = CatalogProduct(
-            organization_id=organization_id,
-            connection_id=connection_id,
-            external_product_id=snapshot.external_product_id,
-            title=snapshot.title,
-            synced_at=now,
+        await db.execute(
+            pg_insert(CatalogProduct)
+            .values(
+                id=uuid.uuid4(),
+                organization_id=organization_id,
+                connection_id=connection_id,
+                external_product_id=snapshot.external_product_id,
+                title=snapshot.title,
+                status="unknown",
+                images=[],
+                specifications={},
+                synced_at=now,
+            )
+            .on_conflict_do_nothing(constraint="uq_catalog_products_external")
         )
-        db.add(product)
-        await db.flush()
+        product = await db.scalar(
+            select(CatalogProduct)
+            .where(
+                CatalogProduct.organization_id == organization_id,
+                CatalogProduct.connection_id == connection_id,
+                CatalogProduct.external_product_id == snapshot.external_product_id,
+            )
+            .with_for_update()
+        )
+        if product is None:
+            raise RuntimeError("Catalog product insert was not visible after conflict handling")
     product.title = snapshot.title
     product.description = snapshot.description
     product.brand = snapshot.brand
@@ -164,23 +184,42 @@ async def upsert_product_snapshot(
             .with_for_update()
         )
         if variant is None:
-            variant = CatalogVariant(
-                organization_id=organization_id,
-                connection_id=connection_id,
-                product_id=product.id,
-                external_variant_id=item.external_variant_id,
-                title=item.title,
-                price=Decimal(item.price),
-                currency=item.currency,
-                synced_at=now,
+            await db.execute(
+                pg_insert(CatalogVariant)
+                .values(
+                    id=uuid.uuid4(),
+                    organization_id=organization_id,
+                    connection_id=connection_id,
+                    product_id=product.id,
+                    external_variant_id=item.external_variant_id,
+                    title=item.title,
+                    price=Decimal(item.price),
+                    currency=item.currency,
+                    attributes={},
+                    availability="unknown",
+                    synced_at=now,
+                )
+                .on_conflict_do_nothing(constraint="uq_catalog_variants_external")
             )
-            db.add(variant)
+            variant = await db.scalar(
+                select(CatalogVariant)
+                .where(
+                    CatalogVariant.organization_id == organization_id,
+                    CatalogVariant.connection_id == connection_id,
+                    CatalogVariant.external_variant_id == item.external_variant_id,
+                )
+                .with_for_update()
+            )
+            if variant is None:
+                raise RuntimeError("Catalog variant insert was not visible after conflict handling")
         variant.product_id = product.id
         variant.title = item.title
         variant.sku = item.sku
         variant.attributes = item.attributes
         variant.price = Decimal(item.price)
-        variant.compare_at_price = Decimal(item.compare_at_price) if item.compare_at_price is not None else None
+        variant.compare_at_price = (
+            Decimal(item.compare_at_price) if item.compare_at_price is not None else None
+        )
         variant.currency = item.currency
         variant.availability = item.availability
         variant.provider_updated_at = item.provider_updated_at
@@ -282,7 +321,9 @@ async def run_catalog_sync_page(
             await set_tenant_context(db, organization_id)
             job = await db.scalar(
                 select(CatalogSyncJob)
-                .where(CatalogSyncJob.organization_id == organization_id, CatalogSyncJob.id == job_id)
+                .where(
+                    CatalogSyncJob.organization_id == organization_id, CatalogSyncJob.id == job_id
+                )
                 .with_for_update()
             )
             if job is None or job.status != "running":
@@ -308,7 +349,10 @@ async def run_catalog_sync_page(
                             CatalogProduct.organization_id == organization_id,
                             CatalogProduct.connection_id == job.connection_id,
                             CatalogProduct.deleted_at.is_(None),
-                            or_(CatalogProduct.last_seen_sync_id.is_(None), CatalogProduct.last_seen_sync_id != job.id),
+                            or_(
+                                CatalogProduct.last_seen_sync_id.is_(None),
+                                CatalogProduct.last_seen_sync_id != job.id,
+                            ),
                             CatalogProduct.synced_at <= job.sync_started_at,
                         )
                         .values(deleted_at=now)
@@ -344,24 +388,35 @@ async def run_catalog_sync_page(
             await set_tenant_context(db, organization_id)
             job = await db.scalar(
                 select(CatalogSyncJob)
-                .where(CatalogSyncJob.organization_id == organization_id, CatalogSyncJob.id == job_id)
+                .where(
+                    CatalogSyncJob.organization_id == organization_id, CatalogSyncJob.id == job_id
+                )
                 .with_for_update()
             )
             if job is None:
                 await db.rollback()
                 return False
-            job.last_error_code = exc.code if isinstance(exc, ShopifyAPIError) else "provider_unavailable"
+            job.last_error_code = (
+                exc.code if isinstance(exc, ShopifyAPIError) else "provider_unavailable"
+            )
             job.lease_expires_at = None
-            retryable = not isinstance(exc, ShopifyAPIError) or exc.status_code == 429 or exc.status_code >= 500
+            retryable = (
+                not isinstance(exc, ShopifyAPIError)
+                or exc.status_code == 429
+                or exc.status_code >= 500
+            )
             if retryable:
                 job.attempt_count += 1
             if not retryable or job.attempt_count >= job.max_attempts:
                 job.status = "failed"
                 job.completed_at = datetime.now(UTC)
             else:
-                delay = min(30 * (2 ** max(job.attempt_count - 1, 0)), 1800)
                 job.status = "queued"
-                job.next_attempt_at = datetime.now(UTC) + timedelta(seconds=delay + random.uniform(0, delay * 0.2))
+                job.next_attempt_at = datetime.now(UTC) + timedelta(
+                    seconds=retry_delay_seconds(
+                        job.attempt_count, base_seconds=30, cap_seconds=1800
+                    )
+                )
             log_shopify_api_event(
                 "catalog_sync_provider_failed",
                 level=logging.ERROR,
@@ -371,7 +426,9 @@ async def run_catalog_sync_page(
                 error_code=job.last_error_code,
                 provider_reason_code=exc.reason_code if isinstance(exc, ShopifyAPIError) else None,
                 provider_status_code=exc.status_code if isinstance(exc, ShopifyAPIError) else None,
-                provider_diagnostics=list(exc.diagnostics) if isinstance(exc, ShopifyAPIError) else [],
+                provider_diagnostics=list(exc.diagnostics)
+                if isinstance(exc, ShopifyAPIError)
+                else [],
                 retryable=retryable,
                 attempt_count=job.attempt_count,
                 max_attempts=job.max_attempts,
@@ -392,7 +449,10 @@ async def run_catalog_sync_page(
                 await set_tenant_context(db, organization_id)
                 job = await db.scalar(
                     select(CatalogSyncJob)
-                    .where(CatalogSyncJob.organization_id == organization_id, CatalogSyncJob.id == job_id)
+                    .where(
+                        CatalogSyncJob.organization_id == organization_id,
+                        CatalogSyncJob.id == job_id,
+                    )
                     .with_for_update()
                 )
                 if job is not None:
@@ -455,8 +515,14 @@ async def claim_catalog_webhook(organization_id: uuid.UUID) -> uuid.UUID | None:
             .where(
                 CatalogWebhookEvent.organization_id == organization_id,
                 or_(
-                    and_(CatalogWebhookEvent.status == "queued", CatalogWebhookEvent.next_attempt_at <= now),
-                    and_(CatalogWebhookEvent.status == "running", CatalogWebhookEvent.updated_at < now - JOB_LEASE),
+                    and_(
+                        CatalogWebhookEvent.status == "queued",
+                        CatalogWebhookEvent.next_attempt_at <= now,
+                    ),
+                    and_(
+                        CatalogWebhookEvent.status == "running",
+                        CatalogWebhookEvent.updated_at < now - JOB_LEASE,
+                    ),
                 ),
             )
             .order_by(CatalogWebhookEvent.created_at, CatalogWebhookEvent.id)
@@ -488,7 +554,10 @@ async def process_catalog_webhook(
         await set_tenant_context(db, organization_id)
         event = await db.scalar(
             select(CatalogWebhookEvent)
-            .where(CatalogWebhookEvent.organization_id == organization_id, CatalogWebhookEvent.id == event_id)
+            .where(
+                CatalogWebhookEvent.organization_id == organization_id,
+                CatalogWebhookEvent.id == event_id,
+            )
             .with_for_update()
         )
         if event is None or event.status not in {"queued", "running"}:
@@ -529,35 +598,66 @@ async def process_catalog_webhook(
                 await set_tenant_context(db, organization_id)
                 now = datetime.now(UTC)
                 product = await db.scalar(
-                    select(CatalogProduct).where(
+                    select(CatalogProduct)
+                    .where(
                         CatalogProduct.organization_id == organization_id,
                         CatalogProduct.connection_id == conn_id,
                         CatalogProduct.external_product_id == product_gid,
-                    ).with_for_update()
+                    )
+                    .with_for_update()
                 )
                 if product:
                     product.deleted_at = now
                     await db.execute(
                         CatalogVariant.__table__.update()
-                        .where(CatalogVariant.organization_id == organization_id, CatalogVariant.product_id == product.id)
+                        .where(
+                            CatalogVariant.organization_id == organization_id,
+                            CatalogVariant.product_id == product.id,
+                        )
                         .values(deleted_at=now)
                     )
-                event = await db.scalar(select(CatalogWebhookEvent).where(CatalogWebhookEvent.organization_id == organization_id, CatalogWebhookEvent.id == event_id).with_for_update())
+                event = await db.scalar(
+                    select(CatalogWebhookEvent)
+                    .where(
+                        CatalogWebhookEvent.organization_id == organization_id,
+                        CatalogWebhookEvent.id == event_id,
+                    )
+                    .with_for_update()
+                )
                 if event:
                     event.status = "succeeded"
                     event.completed_at = now
                 await db.commit()
             return True
-        snapshot = await ShopifyProductCatalogAdapter(resolve_credentials).get_product(ref, external_product_id=product_gid)
+        snapshot = await ShopifyProductCatalogAdapter(resolve_credentials).get_product(
+            ref, external_product_id=product_gid
+        )
         async with SessionLocal() as db:
             await set_tenant_context(db, organization_id)
             if snapshot is None:
-                existing = await db.scalar(select(CatalogProduct).where(CatalogProduct.organization_id == organization_id, CatalogProduct.connection_id == conn_id, CatalogProduct.external_product_id == product_gid).with_for_update())
+                existing = await db.scalar(
+                    select(CatalogProduct)
+                    .where(
+                        CatalogProduct.organization_id == organization_id,
+                        CatalogProduct.connection_id == conn_id,
+                        CatalogProduct.external_product_id == product_gid,
+                    )
+                    .with_for_update()
+                )
                 if existing:
                     existing.deleted_at = datetime.now(UTC)
             else:
-                await upsert_product_snapshot(db, organization_id=organization_id, connection_id=conn_id, snapshot=snapshot)
-            event = await db.scalar(select(CatalogWebhookEvent).where(CatalogWebhookEvent.organization_id == organization_id, CatalogWebhookEvent.id == event_id).with_for_update())
+                await upsert_product_snapshot(
+                    db, organization_id=organization_id, connection_id=conn_id, snapshot=snapshot
+                )
+            event = await db.scalar(
+                select(CatalogWebhookEvent)
+                .where(
+                    CatalogWebhookEvent.organization_id == organization_id,
+                    CatalogWebhookEvent.id == event_id,
+                )
+                .with_for_update()
+            )
             if event:
                 event.status = "succeeded"
                 event.completed_at = datetime.now(UTC)
@@ -566,10 +666,23 @@ async def process_catalog_webhook(
     except (ShopifyAPIError, TimeoutError, OSError) as exc:
         async with SessionLocal() as db:
             await set_tenant_context(db, organization_id)
-            event = await db.scalar(select(CatalogWebhookEvent).where(CatalogWebhookEvent.organization_id == organization_id, CatalogWebhookEvent.id == event_id).with_for_update())
+            event = await db.scalar(
+                select(CatalogWebhookEvent)
+                .where(
+                    CatalogWebhookEvent.organization_id == organization_id,
+                    CatalogWebhookEvent.id == event_id,
+                )
+                .with_for_update()
+            )
             if event:
-                event.last_error_code = exc.code if isinstance(exc, ShopifyAPIError) else "provider_unavailable"
-                retryable = not isinstance(exc, ShopifyAPIError) or exc.status_code == 429 or exc.status_code >= 500
+                event.last_error_code = (
+                    exc.code if isinstance(exc, ShopifyAPIError) else "provider_unavailable"
+                )
+                retryable = (
+                    not isinstance(exc, ShopifyAPIError)
+                    or exc.status_code == 429
+                    or exc.status_code >= 500
+                )
                 if retryable:
                     event.attempt_count += 1
                 if not retryable or event.attempt_count >= event.max_attempts:
@@ -577,8 +690,11 @@ async def process_catalog_webhook(
                     event.completed_at = datetime.now(UTC)
                 else:
                     event.status = "queued"
-                    delay = min(30 * 2 ** (event.attempt_count - 1), 1800)
-                    event.next_attempt_at = datetime.now(UTC) + timedelta(seconds=delay + random.uniform(0, delay * 0.2))
+                    event.next_attempt_at = datetime.now(UTC) + timedelta(
+                        seconds=retry_delay_seconds(
+                            event.attempt_count, base_seconds=30, cap_seconds=1800
+                        )
+                    )
                 await db.commit()
         return True
 
@@ -624,15 +740,17 @@ async def enqueue_reconciliation(organization_id: uuid.UUID) -> bool:
         if recent:
             await db.rollback()
             return False
-        db.add(CatalogSyncJob(
-            organization_id=organization_id,
-            connection_id=connection.id,
-            mode="reconcile",
-            status="queued",
-            attempt_count=0,
-            max_attempts=MAX_SYNC_ATTEMPTS,
-            next_attempt_at=now,
-            updated_after=None,
-        ))
+        db.add(
+            CatalogSyncJob(
+                organization_id=organization_id,
+                connection_id=connection.id,
+                mode="reconcile",
+                status="queued",
+                attempt_count=0,
+                max_attempts=MAX_SYNC_ATTEMPTS,
+                next_attempt_at=now,
+                updated_after=None,
+            )
+        )
         await db.commit()
         return True

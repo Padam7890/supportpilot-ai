@@ -5,7 +5,12 @@ from app.models.commerce_action import CommerceAction, CommerceActionAudit
 from app.models.conversation import Conversation
 from app.models.conversation_read_state import ConversationReadState
 from app.models.customer import Customer
-from app.models.integration import IntegrationConnection, IntegrationCredential
+from app.models.integration import (
+    IntegrationConnection,
+    IntegrationCredential,
+    IntegrationDeliveryJob,
+    IntegrationWebhookEvent,
+)
 from app.models.knowledge_document import (
     DocumentChunk,
     DocumentIngestionJob,
@@ -41,6 +46,8 @@ __all__ = [
     "DocumentIngestionJob",
     "IntegrationConnection",
     "IntegrationCredential",
+    "IntegrationDeliveryJob",
+    "IntegrationWebhookEvent",
     "KnowledgeDocument",
     "KnowledgeDocumentSource",
     "Message",

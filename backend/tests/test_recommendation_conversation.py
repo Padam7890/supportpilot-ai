@@ -35,7 +35,9 @@ def state_with_results(count: int = 2) -> ShoppingConversationState:
         required_constraints=["5g"],
         soft_preferences={"battery": 2},
     )
-    state.last_displayed_recommendations = [ToolReference(product_id=uuid4(), variant_id=uuid4()) for _ in range(count)]
+    state.last_displayed_recommendations = [
+        ToolReference(product_id=uuid4(), variant_id=uuid4()) for _ in range(count)
+    ]
     return state
 
 
@@ -77,18 +79,31 @@ def test_soft_preference_weight_changes_ranking_deterministically():
 
     def item(title: str, attributes: dict[str, str]) -> CatalogCandidate:
         product = SimpleNamespace(
-            id=uuid4(), title=title, description="", brand="Acme", category="phone",
-            specifications={}, images=[], canonical_url=None, updated_at=now,
+            id=uuid4(),
+            title=title,
+            description="",
+            brand="Acme",
+            category="phone",
+            specifications={},
+            images=[],
+            canonical_url=None,
+            updated_at=now,
         )
         variant = SimpleNamespace(
-            id=uuid4(), title="Base", attributes=attributes, price=Decimal(100),
-            currency="NPR", availability="available",
+            id=uuid4(),
+            title="Base",
+            attributes=attributes,
+            price=Decimal(100),
+            currency="NPR",
+            availability="available",
         )
         return CatalogCandidate(product, variant)
 
     camera = item("Phone camera", {"camera": "good"})
     battery = item("Phone battery", {"battery": "long"})
-    intent = RecommendationIntent(category="phone", optional_preferences=["camera", "battery"], result_count=2)
+    intent = RecommendationIntent(
+        category="phone", optional_preferences=["camera", "battery"], result_count=2
+    )
     result = build_recommendation_result(
         "phone", intent, [camera, battery], soft_preference_weights={"camera": 5, "battery": 1}
     )
@@ -108,7 +123,9 @@ def test_replacing_budget_category_and_brand_does_not_clear_other_slots():
     assert state.intent.budget_amount == 45000
     state, _, _, _ = apply_shopping_turn(
         state,
-        ShoppingTurnAnalysis(action="change_category", intent_patch=RecommendationIntent(category="laptop")),
+        ShoppingTurnAnalysis(
+            action="change_category", intent_patch=RecommendationIntent(category="laptop")
+        ),
     )
     assert state.intent.category == "laptop"
     assert state.intent.budget_amount == 45000
@@ -117,7 +134,8 @@ def test_replacing_budget_category_and_brand_does_not_clear_other_slots():
 def test_add_remove_preference_and_reset_clear_context():
     state = state_with_results()
     state, _, _, _ = apply_shopping_turn(
-        state, ShoppingTurnAnalysis(action="add_preference", preference="camera", preference_delta=2)
+        state,
+        ShoppingTurnAnalysis(action="add_preference", preference="camera", preference_delta=2),
     )
     assert state.soft_preferences["camera"] == 3
     state, _, _, _ = apply_shopping_turn(
@@ -126,7 +144,11 @@ def test_add_remove_preference_and_reset_clear_context():
     assert "battery" not in state.soft_preferences
     cleared, action, _, reply = apply_shopping_turn(state, ShoppingTurnAnalysis(action="reset"))
     assert action == "reset"
-    assert not cleared.active and not cleared.rejected_product_ids and not cleared.last_displayed_recommendations
+    assert (
+        not cleared.active
+        and not cleared.rejected_product_ids
+        and not cleared.last_displayed_recommendations
+    )
     assert reply
 
 
@@ -170,6 +192,23 @@ def test_compare_positions_support_two_through_four_products():
     assert state.selected_products_for_comparison == refs
 
 
+def test_tool_arguments_reject_model_injected_fields_and_unknown_tools():
+    with pytest.raises(ValueError):
+        validate_tool_input(
+            "compare_products",
+            {
+                "products": [
+                    {"product_id": str(uuid4()), "variant_id": str(uuid4())},
+                    {"product_id": str(uuid4()), "variant_id": str(uuid4())},
+                ],
+                "organization_id": str(uuid4()),
+                "sql": "select * from catalog_products",
+            },
+        )
+    with pytest.raises(ValueError, match="Unsupported recommendation tool"):
+        validate_tool_input("execute_sql", {"query": "select 1"})
+
+
 def test_alternatives_exclude_rejected_products_without_relaxing_hard_constraints():
     state = state_with_results(4)
     prior_intent = state.intent.model_copy(deep=True)
@@ -200,11 +239,22 @@ async def test_alternative_search_omits_rejected_products_and_keeps_strict_budge
 
     def item(title: str, price: str) -> CatalogCandidate:
         product = SimpleNamespace(
-            id=uuid4(), title=title, description="", brand="Acme", category="phone",
-            specifications={}, images=[], canonical_url="https://store.example/product", updated_at=now,
+            id=uuid4(),
+            title=title,
+            description="",
+            brand="Acme",
+            category="phone",
+            specifications={},
+            images=[],
+            canonical_url="https://store.example/product",
+            updated_at=now,
         )
         variant = SimpleNamespace(
-            id=uuid4(), title="Standard", attributes={}, price=Decimal(price), currency="NPR",
+            id=uuid4(),
+            title="Standard",
+            attributes={},
+            price=Decimal(price),
+            currency="NPR",
             availability="available",
         )
         return CatalogCandidate(product, variant)
@@ -215,10 +265,17 @@ async def test_alternative_search_omits_rejected_products_and_keeps_strict_budge
     async def fake_load_candidates(_db, _organization_id, _question):
         return [rejected, eligible], ["phone"], ["Acme"]
 
-    monkeypatch.setattr("app.services.recommendation_conversation.load_candidates", fake_load_candidates)
+    monkeypatch.setattr(
+        "app.services.recommendation_conversation.load_candidates", fake_load_candidates
+    )
     state = ShoppingConversationState(
         active=True,
-        intent=RecommendationIntent(category="phone", budget_amount=Decimal(25000), budget_currency="NPR", budget_strict=True),
+        intent=RecommendationIntent(
+            category="phone",
+            budget_amount=Decimal(25000),
+            budget_currency="NPR",
+            budget_strict=True,
+        ),
         rejected_product_ids=[rejected.product.id],
     )
     output, _refs = await invoke_recommend_products(None, uuid4(), "Show another phone", state)
@@ -229,9 +286,13 @@ async def test_alternative_search_omits_rejected_products_and_keeps_strict_budge
 def test_generic_alternatives_skip_every_product_in_previous_result():
     state = state_with_results(3)
     prior_intent = state.intent.model_copy(deep=True)
-    state, action, _, _ = apply_shopping_turn(state, ShoppingTurnAnalysis(action="find_alternatives"))
+    state, action, _, _ = apply_shopping_turn(
+        state, ShoppingTurnAnalysis(action="find_alternatives")
+    )
     assert action == "recommend"
-    assert set(state.rejected_product_ids) == {item.product_id for item in state.last_displayed_recommendations}
+    assert set(state.rejected_product_ids) == {
+        item.product_id for item in state.last_displayed_recommendations
+    }
     assert state.intent == prior_intent
 
 
@@ -324,11 +385,16 @@ def test_comparison_tool_accepts_two_to_four_distinct_products_only():
 def test_agent_conversation_contract_contains_only_safe_shopping_context():
     context = state_with_results().model_dump(mode="json")
     row = {
-        "id": uuid4(), "organization_id": uuid4(), "ticket_id": uuid4(), "channel": "shopify_widget",
-        "status": "active", "ai_mode": "ai", "created_at": datetime.now(UTC),
-        "updated_at": datetime.now(UTC), "shopping_context": context,
+        "id": uuid4(),
+        "organization_id": uuid4(),
+        "ticket_id": uuid4(),
+        "channel": "shopify_widget",
+        "status": "active",
+        "ai_mode": "ai",
+        "created_at": datetime.now(UTC),
+        "updated_at": datetime.now(UTC),
+        "shopping_context": context,
     }
     result = ConversationOut.model_validate(row)
     assert result.shopping_context is not None
     assert result.shopping_context.intent["category"] == "phone"
-

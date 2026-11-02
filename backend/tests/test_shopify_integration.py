@@ -95,25 +95,42 @@ class MockOrderProvider:
             "displayFinancialStatus": "PAID",
             "displayFulfillmentStatus": "FULFILLED",
             "currentTotalPriceSet": {"shopMoney": {"amount": "42.50", "currencyCode": "USD"}},
-            "customer": {"id": "gid://shopify/Customer/42", "displayName": "Morgan Buyer", "email": email},
-            "fulfillments": [{"trackingInfo": [{"company": "UPS", "number": "1Z999", "url": "https://track.example/1Z999"}]}],
+            "customer": {
+                "id": "gid://shopify/Customer/42",
+                "displayName": "Morgan Buyer",
+                "email": email,
+            },
+            "fulfillments": [
+                {
+                    "trackingInfo": [
+                        {"company": "UPS", "number": "1Z999", "url": "https://track.example/1Z999"}
+                    ]
+                }
+            ],
         }
 
 
 @pytest.mark.anyio
-async def test_shopify_oauth_scope_tenant_isolation_lookup_verification_and_disconnect(client, monkeypatch):
+async def test_shopify_oauth_scope_tenant_isolation_lookup_verification_and_disconnect(
+    client, monkeypatch
+):
     owner = await approved_workspace(client, "shopify")
     organization_id = UUID(owner["user"]["organization_id"])
     secret = "shopify-test-client-secret"
     encryption_key = ""
     try:
         from cryptography.fernet import Fernet
+
         encryption_key = Fernet.generate_key().decode("ascii")
     except ImportError:
         pytest.skip("cryptography dependency is required for Shopify credential tests")
     monkeypatch.setattr(settings, "shopify_client_id", "test-shopify-client")
     monkeypatch.setattr(settings, "shopify_client_secret", SecretStr(secret))
-    monkeypatch.setattr(settings, "shopify_redirect_uri", "https://supportpilot.example/api/integrations/shopify/callback")
+    monkeypatch.setattr(
+        settings,
+        "shopify_redirect_uri",
+        "https://supportpilot.example/api/integrations/shopify/callback",
+    )
     monkeypatch.setattr(settings, "shopify_encryption_key", SecretStr(encryption_key))
     monkeypatch.setattr(settings, "shopify_api_version", "2026-10")
 
@@ -154,14 +171,17 @@ async def test_shopify_oauth_scope_tenant_isolation_lookup_verification_and_disc
             "scope": "read_customers,read_orders",
         }
 
-    monkeypatch.setattr("app.api.routes.integrations.request_oauth_token", mock_token)
+    monkeypatch.setattr("app.services.shopify_oauth_flow.request_oauth_token", mock_token)
     callback = await client.get(
         "/api/v1/integrations/shopify/callback",
         params=signed_callback_params(state, "demo-store.myshopify.com", "one-time-code"),
         headers=bearer(owner["access_token"]),
     )
     assert callback.status_code == 303
-    assert callback.headers["location"] == "https://supportpilot.example/dashboard/settings?shopify=connected"
+    assert (
+        callback.headers["location"]
+        == "https://supportpilot.example/dashboard/settings?shopify=connected"
+    )
     replay = await client.get(
         "/api/v1/integrations/shopify/callback",
         params=signed_callback_params(state, "demo-store.myshopify.com", "one-time-code"),
@@ -203,23 +223,30 @@ async def test_shopify_oauth_scope_tenant_isolation_lookup_verification_and_disc
             "scope": "read_customers,read_orders",
         }
 
-    monkeypatch.setattr("app.api.routes.integrations.request_oauth_token", mock_refresh)
+    monkeypatch.setattr("app.services.shopify_tokens.request_oauth_token", mock_refresh)
 
     async def mock_orders(shop_domain, access_token, *, search_query, limit, cursor):
         assert shop_domain == "demo-store.myshopify.com"
         assert access_token == "shopify-rotated-access-secret"
         if 'name:"#1001"' in search_query:
-            return {"nodes": [MockOrderProvider.order("#1001", "morgan@example.com")], "page_info": {"hasNextPage": False, "endCursor": None}}
+            return {
+                "nodes": [MockOrderProvider.order("#1001", "morgan@example.com")],
+                "page_info": {"hasNextPage": False, "endCursor": None},
+            }
         return {
             "nodes": [
-                MockOrderProvider.order("#1002", "morgan@example.com", gid="gid://shopify/Order/1002"),
+                MockOrderProvider.order(
+                    "#1002", "morgan@example.com", gid="gid://shopify/Order/1002"
+                ),
                 MockOrderProvider.order("#1001", "morgan@example.com"),
-                MockOrderProvider.order("#1003", "someone-else@example.com", gid="gid://shopify/Order/1003"),
+                MockOrderProvider.order(
+                    "#1003", "someone-else@example.com", gid="gid://shopify/Order/1003"
+                ),
             ],
             "page_info": {"hasNextPage": True, "endCursor": "next-cursor"},
         }
 
-    monkeypatch.setattr("app.api.routes.integrations.fetch_orders", mock_orders)
+    monkeypatch.setattr("app.services.shopify_order_lookup.fetch_orders", mock_orders)
     monkeypatch.setattr("app.integrations.providers.shopify.orders.fetch_orders", mock_orders)
     lookup = await client.get(
         "/api/v1/integrations/shopify/orders",
@@ -242,22 +269,24 @@ async def test_shopify_oauth_scope_tenant_isolation_lookup_verification_and_disc
             "page_info": {"hasNextPage": True, "endCursor": "order-cursor"},
         }
 
-    monkeypatch.setattr("app.api.routes.integrations.fetch_order_page", mock_order_page)
+    monkeypatch.setattr("app.api.routes.shopify_orders.fetch_order_page", mock_order_page)
     listed = await client.get(
         "/api/v1/integrations/shopify/orders/list",
         headers=bearer(owner["access_token"]),
     )
     assert listed.status_code == 200, listed.text
     assert listed.json() == {
-        "items": [{
-            "id": "gid://shopify/Order/1001",
-            "order_number": "#1002",
-            "created_at": "2026-10-30T12:00:00Z",
-            "financial_status": "PAID",
-            "fulfillment_status": "FULFILLED",
-            "total_amount": "42.50",
-            "currency": "USD",
-        }],
+        "items": [
+            {
+                "id": "gid://shopify/Order/1001",
+                "order_number": "#1002",
+                "created_at": "2026-10-30T12:00:00Z",
+                "financial_status": "PAID",
+                "fulfillment_status": "FULFILLED",
+                "total_amount": "42.50",
+                "currency": "USD",
+            }
+        ],
         "has_next_page": True,
         "next_cursor": "order-cursor",
     }
@@ -284,8 +313,14 @@ async def test_shopify_oauth_scope_tenant_isolation_lookup_verification_and_disc
         assert "wrong@example.com" not in audit_data
         installation = await db.get(ShopifyInstallation, organization_id)
         assert installation is not None
-        assert decrypt_credential(installation.access_token_encrypted) == "shopify-rotated-access-secret"
-        assert decrypt_credential(installation.refresh_token_encrypted) == "shopify-rotated-refresh-secret"
+        assert (
+            decrypt_credential(installation.access_token_encrypted)
+            == "shopify-rotated-access-secret"
+        )
+        assert (
+            decrypt_credential(installation.refresh_token_encrypted)
+            == "shopify-rotated-refresh-secret"
+        )
         await db.rollback()
 
     other_owner = await approved_workspace(client, "shopify-other")
@@ -324,7 +359,11 @@ async def test_shopify_callback_rejects_invalid_hmac_and_shop_domain(client, mon
     secret = "shopify-test-client-secret"
     monkeypatch.setattr(settings, "shopify_client_id", "test-shopify-client")
     monkeypatch.setattr(settings, "shopify_client_secret", SecretStr(secret))
-    monkeypatch.setattr(settings, "shopify_redirect_uri", "https://supportpilot.example/api/integrations/shopify/callback")
+    monkeypatch.setattr(
+        settings,
+        "shopify_redirect_uri",
+        "https://supportpilot.example/api/integrations/shopify/callback",
+    )
     monkeypatch.setattr(settings, "shopify_encryption_key", SecretStr("not-used-until-exchange"))
     connect = await client.get(
         "/api/v1/integrations/shopify/connect?shop=demo-store.myshopify.com",
@@ -338,25 +377,31 @@ async def test_shopify_callback_rejects_invalid_hmac_and_shop_domain(client, mon
         calls += 1
         return {}
 
-    monkeypatch.setattr("app.api.routes.integrations.request_oauth_token", mock_token)
+    monkeypatch.setattr("app.services.shopify_oauth_flow.request_oauth_token", mock_token)
     params = signed_callback_params(state, "demo-store.myshopify.com", "code")
     params["hmac"] = "0" * 64
     invalid_signature = await client.get(
-        "/api/v1/integrations/shopify/callback", params=params, headers=bearer(owner["access_token"])
+        "/api/v1/integrations/shopify/callback",
+        params=params,
+        headers=bearer(owner["access_token"]),
     )
     assert invalid_signature.status_code == 403
     assert calls == 0
 
     tampered = signed_callback_params(state, "demo-store.myshopify.com.attacker.test", "code")
     invalid_domain = await client.get(
-        "/api/v1/integrations/shopify/callback", params=tampered, headers=bearer(owner["access_token"])
+        "/api/v1/integrations/shopify/callback",
+        params=tampered,
+        headers=bearer(owner["access_token"]),
     )
     assert invalid_domain.status_code == 403
     assert calls == 0
 
 
 @pytest.mark.anyio
-async def test_configured_store_connection_uses_server_credentials_and_encrypts_token(client, monkeypatch):
+async def test_configured_store_connection_uses_server_credentials_and_encrypts_token(
+    client, monkeypatch
+):
     pytest.importorskip("cryptography")
     owner = await approved_workspace(client, "shopify-configured")
     organization_id = UUID(owner["user"]["organization_id"])
@@ -367,7 +412,9 @@ async def test_configured_store_connection_uses_server_credentials_and_encrypts_
     monkeypatch.setattr(settings, "shopify_store_domain", configured_shop)
     monkeypatch.setattr(settings, "shopify_client_id", "real-test-client-id")
     monkeypatch.setattr(settings, "shopify_client_secret", SecretStr("real-test-client-secret"))
-    monkeypatch.setattr(settings, "shopify_encryption_key", SecretStr(Fernet.generate_key().decode("ascii")))
+    monkeypatch.setattr(
+        settings, "shopify_encryption_key", SecretStr(Fernet.generate_key().decode("ascii"))
+    )
     calls = []
 
     async def mock_client_credentials(shop_domain):
@@ -378,7 +425,10 @@ async def test_configured_store_connection_uses_server_credentials_and_encrypts_
             "scope": "read_customers,read_orders",
         }
 
-    monkeypatch.setattr("app.api.routes.integrations.request_client_credentials_token", mock_client_credentials)
+    monkeypatch.setattr(
+        "app.services.shopify_configured_connection.request_client_credentials_token",
+        mock_client_credentials,
+    )
     response = await client.post(
         "/api/v1/integrations/shopify/connect-configured-store",
         headers=bearer(owner["access_token"]),
@@ -395,5 +445,8 @@ async def test_configured_store_connection_uses_server_credentials_and_encrypts_
         assert installation.auth_mode == "client_credentials"
         assert installation.refresh_token_encrypted is None
         assert installation.access_token_encrypted != "private-short-lived-shopify-token"
-        assert decrypt_credential(installation.access_token_encrypted) == "private-short-lived-shopify-token"
+        assert (
+            decrypt_credential(installation.access_token_encrypted)
+            == "private-short-lived-shopify-token"
+        )
         await db.rollback()

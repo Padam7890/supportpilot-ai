@@ -32,7 +32,19 @@ class Message(UUIDPrimaryKey, TimestampMixin, Base):
             "created_at",
         ),
         UniqueConstraint("organization_id", "id", name="uq_messages_org_id"),
+        UniqueConstraint(
+            "organization_id",
+            "id",
+            "integration_connection_id",
+            name="uq_messages_org_id_connection",
+        ),
         UniqueConstraint("organization_id", "source_ai_execution_id", name="uq_messages_org_ai_execution"),
+        ForeignKeyConstraint(
+            ["organization_id", "integration_connection_id"],
+            ["integration_connections.organization_id", "integration_connections.id"],
+            name="fk_messages_org_integration_connection",
+            ondelete="RESTRICT",
+        ),
         ForeignKeyConstraint(
             ["organization_id", "source_ai_execution_id"],
             ["ai_executions.organization_id", "ai_executions.id"],
@@ -40,7 +52,7 @@ class Message(UUIDPrimaryKey, TimestampMixin, Base):
         ),
         UniqueConstraint(
             "organization_id",
-            "conversation_id",
+            "integration_connection_id",
             "external_message_id",
             name="uq_messages_provider_external_id",
         ),
@@ -57,6 +69,16 @@ class Message(UUIDPrimaryKey, TimestampMixin, Base):
             ondelete="CASCADE",
         ),
         ForeignKeyConstraint(
+            ["organization_id", "conversation_id", "integration_connection_id"],
+            [
+                "conversations.organization_id",
+                "conversations.id",
+                "conversations.integration_connection_id",
+            ],
+            name="fk_messages_org_conversation_connection",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
             ["organization_id", "sender_user_id"],
             ["users.organization_id", "users.id"],
             name="fk_messages_org_sender",
@@ -68,6 +90,7 @@ class Message(UUIDPrimaryKey, TimestampMixin, Base):
         Uuid(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
     )
     conversation_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    integration_connection_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
     sender_type: Mapped[str] = mapped_column(
         String(20), nullable=False
     )  # customer, agent, assistant, system, internal_note
@@ -80,4 +103,8 @@ class Message(UUIDPrimaryKey, TimestampMixin, Base):
     delivery_status: Mapped[str | None] = mapped_column(String(24))
     provider_metadata: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
 
-    conversation = relationship("Conversation", back_populates="messages")
+    conversation = relationship(
+        "Conversation",
+        back_populates="messages",
+        foreign_keys=[organization_id, conversation_id],
+    )

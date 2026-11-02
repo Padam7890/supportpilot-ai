@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -14,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from app.core.config import settings
 from app.core.security import hash_password
 from app.db.session import SessionLocal, set_tenant_context
+from app.integrations.core.contracts.catalog import CatalogProductSnapshot, CatalogVariantSnapshot
 from app.models import (
     AIExecution,
     CatalogProduct,
@@ -21,6 +23,7 @@ from app.models import (
     CatalogVariant,
     CatalogWebhookEvent,
     IntegrationConnection,
+    IntegrationWebhookEvent,
     PlatformOwner,
     ShopifyInstallation,
 )
@@ -55,7 +58,9 @@ async def create_approved_tenant(client, prefix: str) -> dict:
     platform_email = f"platform-{uuid4().hex[:10]}@example.com"
     platform_password = "catalog-test-platform-password"
     async with SessionLocal() as session:
-        session.add(PlatformOwner(email=platform_email, password_hash=hash_password(platform_password)))
+        session.add(
+            PlatformOwner(email=platform_email, password_hash=hash_password(platform_password))
+        )
         await session.commit()
     platform_login = await client.post(
         "/api/v1/platform/auth/login",
@@ -176,7 +181,9 @@ def product_node(price: str) -> dict:
 
 
 @pytest.mark.anyio
-async def test_catalog_reads_are_tenant_scoped_and_composite_fk_rejects_cross_tenant_product(client):
+async def test_catalog_reads_are_tenant_scoped_and_composite_fk_rejects_cross_tenant_product(
+    client,
+):
     owner_a = await create_approved_tenant(client, "catalog-a")
     owner_b = await create_approved_tenant(client, "catalog-b")
     async with SessionLocal() as session:
@@ -215,14 +222,111 @@ async def test_catalog_reads_are_tenant_scoped_and_composite_fk_rejects_cross_te
 
 
 @pytest.mark.anyio
-async def test_catalog_status_surfaces_missing_product_scope_and_logs_no_credentials(client, caplog):
+async def test_catalog_variant_cannot_reference_product_from_another_store_in_same_tenant(client):
+    owner = await create_approved_tenant(client, "catalog-connection-fk")
+    organization_id = UUID(owner["user"]["organization_id"])
+    async with SessionLocal() as session:
+        _connection_a, product_a = await create_catalog_product(session, owner, "store-a")
+        connection_b = IntegrationConnection(
+            organization_id=organization_id,
+            provider_id="shopify",
+            external_account_id=f"store-b-{uuid4().hex[:8]}.myshopify.com",
+            display_name="Second store",
+            status="connected",
+            connected_by_user_id=UUID(owner["user"]["id"]),
+        )
+        session.add(connection_b)
+        await session.flush()
+        foreign_variant = CatalogVariant(
+            organization_id=organization_id,
+            product_id=product_a.id,
+            connection_id=connection_b.id,
+            external_variant_id=f"foreign-{uuid4().hex}",
+            title="Cross-store variant",
+            price=Decimal("10.00"),
+            currency="USD",
+            availability="available",
+            attributes={},
+            synced_at=datetime.now(UTC),
+        )
+        session.add(foreign_variant)
+        with pytest.raises(IntegrityError):
+            await session.flush()
+        await session.rollback()
+
+
+@pytest.mark.anyio
+async def test_catalog_upsert_is_idempotent_under_concurrent_first_insert(client):
+    from app.services.catalog import upsert_product_snapshot
+
+    owner = await create_approved_tenant(client, "catalog-upsert-race")
+    organization_id = UUID(owner["user"]["organization_id"])
+    async with SessionLocal() as session:
+        connection = await create_connected_store(session, owner)
+        connection_id = connection.id
+        await session.commit()
+
+    snapshot = CatalogProductSnapshot(
+        external_product_id="gid://shopify/Product/concurrent",
+        title="Concurrent product",
+        status="active",
+        variants=[
+            CatalogVariantSnapshot(
+                external_variant_id="gid://shopify/ProductVariant/concurrent",
+                title="Default",
+                price=Decimal("19.99"),
+                currency="USD",
+                availability="available",
+            )
+        ],
+    )
+
+    async def write_snapshot() -> None:
+        async with SessionLocal() as session:
+            await set_tenant_context(session, organization_id)
+            await upsert_product_snapshot(
+                session,
+                organization_id=organization_id,
+                connection_id=connection_id,
+                snapshot=snapshot,
+            )
+            await session.commit()
+
+    await asyncio.gather(write_snapshot(), write_snapshot())
+    async with SessionLocal() as session:
+        await set_tenant_context(session, organization_id)
+        products = await session.scalars(
+            select(CatalogProduct).where(
+                CatalogProduct.organization_id == organization_id,
+                CatalogProduct.connection_id == connection_id,
+                CatalogProduct.external_product_id == snapshot.external_product_id,
+            )
+        )
+        product_rows = list(products.all())
+        assert len(product_rows) == 1
+        variants = await session.scalars(
+            select(CatalogVariant).where(
+                CatalogVariant.organization_id == organization_id,
+                CatalogVariant.connection_id == connection_id,
+                CatalogVariant.external_variant_id == "gid://shopify/ProductVariant/concurrent",
+            )
+        )
+        assert len(list(variants.all())) == 1
+
+
+@pytest.mark.anyio
+async def test_catalog_status_surfaces_missing_product_scope_and_logs_no_credentials(
+    client, caplog
+):
     caplog.set_level(logging.INFO, logger="app.integrations.providers.shopify.client")
     owner = await create_approved_tenant(client, "catalog-scope")
     organization_id = UUID(owner["user"]["organization_id"])
     async with SessionLocal() as session:
         await create_catalog_product(session, owner, "catalog-scope")
         installation = await session.scalar(
-            select(ShopifyInstallation).where(ShopifyInstallation.organization_id == organization_id)
+            select(ShopifyInstallation).where(
+                ShopifyInstallation.organization_id == organization_id
+            )
         )
         assert installation is not None
         installation.granted_scopes = ["read_customers", "write_orders"]
@@ -240,7 +344,9 @@ async def test_catalog_status_surfaces_missing_product_scope_and_logs_no_credent
 
 
 @pytest.mark.anyio
-async def test_catalog_sync_updates_price_and_partial_failure_preserves_last_good_data(client, monkeypatch):
+async def test_catalog_sync_updates_price_and_partial_failure_preserves_last_good_data(
+    client, monkeypatch
+):
     from app.integrations.providers.shopify import catalog as shopify_catalog
 
     owner = await create_approved_tenant(client, "catalog-sync")
@@ -312,7 +418,9 @@ async def test_catalog_sync_updates_price_and_partial_failure_preserves_last_goo
         session.add(next_job)
         await session.commit()
         next_job_id = next_job.id
-    assert await run_catalog_sync_page(organization_id, next_job_id, resolve_credentials=credentials)
+    assert await run_catalog_sync_page(
+        organization_id, next_job_id, resolve_credentials=credentials
+    )
 
     async with SessionLocal() as session:
         await set_tenant_context(session, organization_id)
@@ -351,7 +459,9 @@ async def test_catalog_sync_updates_price_and_partial_failure_preserves_last_goo
         raise ShopifyAPIError("shopify_unavailable", status_code=503)
 
     monkeypatch.setattr(shopify_catalog, "graphql", fail_graphql)
-    assert await run_catalog_sync_page(organization_id, failed_job_id, resolve_credentials=credentials)
+    assert await run_catalog_sync_page(
+        organization_id, failed_job_id, resolve_credentials=credentials
+    )
     async with SessionLocal() as session:
         await set_tenant_context(session, organization_id)
         product = await session.scalar(
@@ -392,7 +502,9 @@ async def test_catalog_sync_updates_price_and_partial_failure_preserves_last_goo
         return {"products": {"nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}}
 
     monkeypatch.setattr(shopify_catalog, "graphql", empty_graphql)
-    assert await run_catalog_sync_page(organization_id, empty_job_id, resolve_credentials=credentials)
+    assert await run_catalog_sync_page(
+        organization_id, empty_job_id, resolve_credentials=credentials
+    )
     async with SessionLocal() as session:
         await set_tenant_context(session, organization_id)
         empty_job_result = await session.scalar(
@@ -405,7 +517,9 @@ async def test_catalog_sync_updates_price_and_partial_failure_preserves_last_goo
         assert empty_job_result.status == "succeeded"
         assert empty_job_result.records_seen == 0
         assert empty_job_result.last_error_code is None
-    status_response = await client.get("/api/v1/catalog/status", headers=bearer(owner["access_token"]))
+    status_response = await client.get(
+        "/api/v1/catalog/status", headers=bearer(owner["access_token"])
+    )
     assert status_response.status_code == 200, status_response.text
     assert status_response.json()["product_count"] == 0
     assert status_response.json()["last_error_code"] is None
@@ -469,7 +583,9 @@ async def test_verified_shopify_product_webhook_is_deduplicated(client, monkeypa
         type("Secret", (), {"get_secret_value": lambda self: secret_value})(),
     )
     body = b'{"id":61003,"title":"Incoming product"}'
-    signature = base64.b64encode(hmac.new(secret_value.encode(), body, hashlib.sha256).digest()).decode()
+    signature = base64.b64encode(
+        hmac.new(secret_value.encode(), body, hashlib.sha256).digest()
+    ).decode()
     headers = {
         "x-shopify-hmac-sha256": signature,
         "x-shopify-topic": "products/create",
@@ -486,6 +602,22 @@ async def test_verified_shopify_product_webhook_is_deduplicated(client, monkeypa
     assert first.json() == {"accepted": True, "duplicate": False}
     assert duplicate.status_code == 200, duplicate.text
     assert duplicate.json() == {"accepted": True, "duplicate": True}
+    async with SessionLocal() as session:
+        await set_tenant_context(session, organization_id)
+        events = await session.scalars(
+            select(IntegrationWebhookEvent).where(
+                IntegrationWebhookEvent.organization_id == organization_id,
+                IntegrationWebhookEvent.connection_id == connection_id,
+                IntegrationWebhookEvent.external_event_id == "catalog-webhook-delivery-1",
+            )
+        )
+        event_rows = list(events.all())
+        assert len(event_rows) == 1
+        assert event_rows[0].normalized_payload == {
+            "external_product_id": "gid://shopify/Product/61003",
+            "shop_domain": shop_domain,
+        }
+        assert "Incoming product" not in str(event_rows[0].normalized_payload)
 
 
 @pytest.mark.anyio
@@ -503,22 +635,26 @@ async def test_recommendation_execution_and_catalog_candidates_are_tenant_scoped
             product.title = "Camera smartphone"
             product.brand = "Example"
             product.category = "Smartphones"
-            session.add(CatalogVariant(
-                organization_id=organization_id,
-                product_id=product.id,
-                connection_id=product.connection_id,
-                external_variant_id=f"variant-{uuid4().hex}",
-                title="Standard",
-                attributes={"feature": "camera"},
-                price=Decimal(25000),
-                currency="NPR",
-                availability="available",
-                synced_at=datetime.now(UTC),
-            ))
+            session.add(
+                CatalogVariant(
+                    organization_id=organization_id,
+                    product_id=product.id,
+                    connection_id=product.connection_id,
+                    external_variant_id=f"variant-{uuid4().hex}",
+                    title="Standard",
+                    attributes={"feature": "camera"},
+                    price=Decimal(25000),
+                    currency="NPR",
+                    availability="available",
+                    synced_at=datetime.now(UTC),
+                )
+            )
             await session.commit()
     async with SessionLocal() as session:
         await set_tenant_context(session, organization_b)
-        visible, _, _ = await load_candidates(session, organization_b, "recommend smartphone camera")
+        visible, _, _ = await load_candidates(
+            session, organization_b, "recommend smartphone camera"
+        )
         assert visible
         assert {item.product.id for item in visible} == {product_b.id}
 
@@ -531,12 +667,16 @@ async def test_recommendation_execution_and_catalog_candidates_are_tenant_scoped
     execution_id = created.json()["id"]
     async with SessionLocal() as session:
         await set_tenant_context(session, organization_a)
-        execution = await session.scalar(select(AIExecution).where(AIExecution.id == UUID(execution_id)))
-        assert execution is not None and execution.kind == "recommendation" and execution.status == "queued"
+        execution = await session.scalar(
+            select(AIExecution).where(AIExecution.id == UUID(execution_id))
+        )
+        assert (
+            execution is not None
+            and execution.kind == "recommendation"
+            and execution.status == "queued"
+        )
     denied = await client.get(
         f"/api/v1/recommendations/{execution_id}",
         headers=bearer(owner_b["access_token"]),
     )
     assert denied.status_code == 404
-
-

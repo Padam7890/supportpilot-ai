@@ -8,14 +8,20 @@ from app.integrations.core.contracts.catalog import (
     CatalogProductSnapshot,
     CatalogVariantSnapshot,
 )
-from app.integrations.core.contracts.messaging import DeliveryReceipt, OutboundMessage
+from app.integrations.core.contracts.messaging import (
+    DeliveryReceipt,
+    IncomingMessage,
+    OutboundMessage,
+)
 from app.integrations.core.contracts.provider import IntegrationConnectionRef
 from app.integrations.core.contracts.synchronization import SyncResult
 from app.integrations.core.contracts.webhooks import VerifiedWebhookEvent
 
 
 @runtime_checkable
-class MessagingCapability(Protocol):
+class OutboundMessagingCapability(Protocol):
+    """Send normalized messages to one provider conversation."""
+
     async def send_message(
         self,
         connection: IntegrationConnectionRef,
@@ -24,6 +30,20 @@ class MessagingCapability(Protocol):
         message: OutboundMessage,
         idempotency_key: str,
     ) -> DeliveryReceipt: ...
+
+
+@runtime_checkable
+class MessagingCapability(OutboundMessagingCapability, Protocol):
+    """Compatibility name for providers that implement outbound messaging."""
+
+
+@runtime_checkable
+class InboundMessagingCapability(Protocol):
+    def normalize_inbound_message(
+        self,
+        connection: IntegrationConnectionRef,
+        event: VerifiedWebhookEvent,
+    ) -> IncomingMessage: ...
 
 
 @runtime_checkable

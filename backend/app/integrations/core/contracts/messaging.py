@@ -28,7 +28,7 @@ class IncomingMessage(BaseModel):
     external_sender_id: str = Field(min_length=1, max_length=512)
     sender_display_name: str | None = Field(default=None, max_length=255)
     content: str = Field(min_length=1, max_length=100_000)
-    content_type: str = Field(default="text", min_length=1, max_length=40)
+    content_type: str = Field(default="text", min_length=1, max_length=30)
     attachments: list[MessageAttachment] = Field(default_factory=list, max_length=20)
     occurred_at: datetime
     provider_metadata: dict[str, Any] = Field(default_factory=dict)

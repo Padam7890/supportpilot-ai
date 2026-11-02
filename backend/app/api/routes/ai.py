@@ -6,7 +6,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_roles
-from app.api.routes.integrations import verified_lookup
 from app.core.config import settings
 from app.db.session import get_db
 from app.integrations.providers.shopify.security import encrypt_credential
@@ -20,6 +19,7 @@ from app.schemas.ai import (
 )
 from app.schemas.errors import COMMON_ERROR_RESPONSES
 from app.services.ai_execution import is_provider_configured
+from app.services.shopify_order_lookup import verified_lookup
 
 router = APIRouter(prefix="/ai", tags=["AI assistance"], responses=COMMON_ERROR_RESPONSES)
 MAX_ACTIVE_EXECUTIONS_PER_TENANT = 10
@@ -43,18 +43,19 @@ async def enqueue_execution(
     # Serialize active-count checks and inserts for this tenant. Concurrent
     # requests otherwise can all observe spare capacity and exceed the limit.
     organization_id = await db.scalar(
-        select(Organization.id)
-        .where(Organization.id == user.organization_id)
-        .with_for_update()
+        select(Organization.id).where(Organization.id == user.organization_id).with_for_update()
     )
     if organization_id is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
-    active = await db.scalar(
-        select(func.count(AIExecution.id)).where(
-            AIExecution.organization_id == user.organization_id,
-            AIExecution.status.in_(["queued", "running"]),
+    active = (
+        await db.scalar(
+            select(func.count(AIExecution.id)).where(
+                AIExecution.organization_id == user.organization_id,
+                AIExecution.status.in_(["queued", "running"]),
+            )
         )
-    ) or 0
+        or 0
+    )
     if active >= MAX_ACTIVE_EXECUTIONS_PER_TENANT:
         raise HTTPException(status_code=429, detail="Too many AI requests are already in progress")
     execution = AIExecution(
@@ -109,14 +110,21 @@ async def create_reply_draft(
                 Ticket.organization_id == user.organization_id,
             )
         )
-        customer = await db.scalar(
-            select(Customer).where(
-                Customer.id == ticket.customer_id,
-                Customer.organization_id == user.organization_id,
+        customer = (
+            await db.scalar(
+                select(Customer).where(
+                    Customer.id == ticket.customer_id,
+                    Customer.organization_id == user.organization_id,
+                )
             )
-        ) if ticket else None
+            if ticket
+            else None
+        )
         if customer is None or not customer.email:
-            raise HTTPException(status_code=409, detail="This conversation has no customer email to verify the order")
+            raise HTTPException(
+                status_code=409,
+                detail="This conversation has no customer email to verify the order",
+            )
         # Verify against the CRM email tied to this conversation, never an email supplied by the caller.
         verified = await verified_lookup(
             db=db,
@@ -135,14 +143,21 @@ async def create_reply_draft(
             "total_amount": order.total_amount,
             "currency": order.currency,
             "tracking": [
-                {"company": tracking.company, "status": "tracking_available" if tracking.number else "pending"}
+                {
+                    "company": tracking.company,
+                    "status": "tracking_available" if tracking.number else "pending",
+                }
                 for tracking in order.tracking
             ],
         }
         try:
-            encrypted_context = encrypt_credential(json.dumps(safe_order_facts, separators=(",", ":")))
+            encrypted_context = encrypt_credential(
+                json.dumps(safe_order_facts, separators=(",", ":"))
+            )
         except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail="Shopify order context encryption is unavailable") from exc
+            raise HTTPException(
+                status_code=503, detail="Shopify order context encryption is unavailable"
+            ) from exc
     return await enqueue_execution(
         db=db,
         user=user,

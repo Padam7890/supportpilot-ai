@@ -6,7 +6,6 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 from pydantic import SecretStr
 
-from app.api.routes.integrations import shopify_query_fingerprint
 from app.core.config import settings
 from app.integrations.providers.shopify.security import (
     hash_oauth_state,
@@ -15,6 +14,7 @@ from app.integrations.providers.shopify.security import (
     validate_callback_timestamp,
     verify_callback_hmac,
 )
+from app.services.shopify_order_lookup import shopify_query_fingerprint
 
 
 @pytest.mark.parametrize(
@@ -55,13 +55,19 @@ def test_shop_domain_validation_blocks_host_confusion():
 
 def test_authorization_url_requests_only_read_scopes_and_unique_state(monkeypatch):
     monkeypatch.setattr(settings, "shopify_client_id", "client-id")
-    monkeypatch.setattr(settings, "shopify_redirect_uri", "https://support.example/api/integrations/shopify/callback")
+    monkeypatch.setattr(
+        settings,
+        "shopify_redirect_uri",
+        "https://support.example/api/integrations/shopify/callback",
+    )
     first = make_authorization_url("demo-shop.myshopify.com", "state-one")
     second = make_authorization_url("demo-shop.myshopify.com", "state-two")
     first_params = parse_qs(urlsplit(first).query)
     second_params = parse_qs(urlsplit(second).query)
     assert first_params["scope"] == ["read_orders,read_customers,read_products"]
-    assert first_params["redirect_uri"] == ["https://support.example/api/integrations/shopify/callback"]
+    assert first_params["redirect_uri"] == [
+        "https://support.example/api/integrations/shopify/callback"
+    ]
     assert first_params["state"] != second_params["state"]
     assert hash_oauth_state("state-one") != "state-one"
 
@@ -69,7 +75,12 @@ def test_authorization_url_requests_only_read_scopes_and_unique_state(monkeypatc
 def test_callback_hmac_is_signed_and_timestamp_is_bounded(monkeypatch):
     secret = "shopify-client-secret"
     monkeypatch.setattr(settings, "shopify_client_secret", SecretStr(secret))
-    items = [("code", "one-time-code"), ("shop", "demo-shop.myshopify.com"), ("state", "nonce"), ("timestamp", str(int(time.time())))]
+    items = [
+        ("code", "one-time-code"),
+        ("shop", "demo-shop.myshopify.com"),
+        ("state", "nonce"),
+        ("timestamp", str(int(time.time()))),
+    ]
     canonical = "&".join(f"{key}={value}" for key, value in sorted(items))
     signature = hmac.new(secret.encode(), canonical.encode(), hashlib.sha256).hexdigest()
     assert verify_callback_hmac([*items, ("hmac", signature)], signature)
@@ -109,7 +120,9 @@ def test_shopify_credential_encryption_round_trip(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_client_credentials_exchange_is_server_side_and_requests_no_extra_scope(monkeypatch, caplog):
+async def test_client_credentials_exchange_is_server_side_and_requests_no_extra_scope(
+    monkeypatch, caplog
+):
     from app.integrations.providers.shopify import client as shopify_client
 
     monkeypatch.setattr(settings, "shopify_client_id", "configured-client")
@@ -147,7 +160,9 @@ async def test_client_credentials_exchange_is_server_side_and_requests_no_extra_
 
     monkeypatch.setattr(shopify_client.httpx, "AsyncClient", Client)
     with caplog.at_level("INFO", logger=shopify_client.__name__):
-        response = await shopify_client.request_client_credentials_token("configured-store.myshopify.com")
+        response = await shopify_client.request_client_credentials_token(
+            "configured-store.myshopify.com"
+        )
 
     assert response["access_token"] == "private-token"
     assert '"event": "request"' in caplog.text
@@ -159,15 +174,17 @@ async def test_client_credentials_exchange_is_server_side_and_requests_no_extra_
     assert "private-token" not in caplog.text
     assert "private-refresh-token" not in caplog.text
     assert "read_orders,read_customers" in caplog.text
-    assert calls == [(
-        "https://configured-store.myshopify.com/admin/oauth/access_token",
-        {
-            "grant_type": "client_credentials",
-            "client_id": "configured-client",
-            "client_secret": "configured-secret",
-        },
-        {"accept": "application/json"},
-    )]
+    assert calls == [
+        (
+            "https://configured-store.myshopify.com/admin/oauth/access_token",
+            {
+                "grant_type": "client_credentials",
+                "client_id": "configured-client",
+                "client_secret": "configured-secret",
+            },
+            {"accept": "application/json"},
+        )
+    ]
 
 
 @pytest.mark.anyio
@@ -201,7 +218,10 @@ async def test_client_credentials_exchange_preserves_only_shopify_error_code(mon
             return Response()
 
     monkeypatch.setattr(shopify_client.httpx, "AsyncClient", Client)
-    with caplog.at_level("INFO", logger=shopify_client.__name__), pytest.raises(shopify_client.ShopifyAPIError) as error:
+    with (
+        caplog.at_level("INFO", logger=shopify_client.__name__),
+        pytest.raises(shopify_client.ShopifyAPIError) as error,
+    ):
         await shopify_client.request_client_credentials_token("configured-store.myshopify.com")
 
     assert error.value.code == "shopify_authorization_failed"
@@ -212,7 +232,7 @@ async def test_client_credentials_exchange_preserves_only_shopify_error_code(mon
     assert "contains provider details that should not be shown" in caplog.text
     assert "configured-secret" not in caplog.text
 
-    from app.api.routes.integrations import to_api_error
+    from app.services.shopify_errors import to_api_error
 
     api_error = to_api_error(error.value)
     assert api_error.status_code == 403
@@ -273,14 +293,18 @@ async def test_fetch_order_page_maps_shopify_connection_page_without_customer_fi
         calls.append((shop_domain, access_token, query, variables))
         return {
             "orders": {
-                "nodes": [{
-                    "id": "gid://shopify/Order/1001",
-                    "name": "#1001",
-                    "createdAt": "2026-10-30T12:00:00Z",
-                    "displayFinancialStatus": "PAID",
-                    "displayFulfillmentStatus": "FULFILLED",
-                    "currentTotalPriceSet": {"shopMoney": {"amount": "42.50", "currencyCode": "USD"}},
-                }],
+                "nodes": [
+                    {
+                        "id": "gid://shopify/Order/1001",
+                        "name": "#1001",
+                        "createdAt": "2026-10-30T12:00:00Z",
+                        "displayFinancialStatus": "PAID",
+                        "displayFulfillmentStatus": "FULFILLED",
+                        "currentTotalPriceSet": {
+                            "shopMoney": {"amount": "42.50", "currencyCode": "USD"}
+                        },
+                    }
+                ],
                 "pageInfo": {"hasNextPage": True, "endCursor": "opaque-next"},
             }
         }
@@ -297,7 +321,9 @@ async def test_fetch_order_page_maps_shopify_connection_page_without_customer_fi
 
 
 @pytest.mark.anyio
-async def test_graphql_logs_provider_error_codes_without_tokens_or_response_text(monkeypatch, caplog):
+async def test_graphql_logs_provider_error_codes_without_tokens_or_response_text(
+    monkeypatch, caplog
+):
     from app.integrations.providers.shopify import client as shopify_client
 
     class Response:
@@ -310,10 +336,12 @@ async def test_graphql_logs_provider_error_codes_without_tokens_or_response_text
         def json():
             return {
                 "data": None,
-                "errors": [{
-                    "message": "No order access for private.customer@example.test",
-                    "extensions": {"code": "ACCESS_DENIED"},
-                }],
+                "errors": [
+                    {
+                        "message": "No order access for private.customer@example.test",
+                        "extensions": {"code": "ACCESS_DENIED"},
+                    }
+                ],
             }
 
     class Client:
@@ -330,7 +358,10 @@ async def test_graphql_logs_provider_error_codes_without_tokens_or_response_text
             return Response()
 
     monkeypatch.setattr(shopify_client.httpx, "AsyncClient", Client)
-    with caplog.at_level("INFO", logger=shopify_client.__name__), pytest.raises(shopify_client.ShopifyAPIError) as error:
+    with (
+        caplog.at_level("INFO", logger=shopify_client.__name__),
+        pytest.raises(shopify_client.ShopifyAPIError) as error,
+    ):
         await shopify_client.graphql(
             "configured-store.myshopify.com",
             "private-shopify-token",
@@ -364,11 +395,13 @@ async def test_graphql_validation_errors_are_not_misreported_as_missing_scopes(m
         @staticmethod
         def json():
             return {
-                "errors": [{
-                    "message": "Field doesNotExist is not defined on Product",
-                    "path": ["products"],
-                    "extensions": {"code": "GRAPHQL_VALIDATION_FAILED"},
-                }],
+                "errors": [
+                    {
+                        "message": "Field doesNotExist is not defined on Product",
+                        "path": ["products"],
+                        "extensions": {"code": "GRAPHQL_VALIDATION_FAILED"},
+                    }
+                ],
             }
 
     class Client:
@@ -385,7 +418,10 @@ async def test_graphql_validation_errors_are_not_misreported_as_missing_scopes(m
             return Response()
 
     monkeypatch.setattr(shopify_client.httpx, "AsyncClient", Client)
-    with caplog.at_level("INFO", logger=shopify_client.__name__), pytest.raises(shopify_client.ShopifyAPIError) as error:
+    with (
+        caplog.at_level("INFO", logger=shopify_client.__name__),
+        pytest.raises(shopify_client.ShopifyAPIError) as error,
+    ):
         await shopify_client.graphql(
             "configured-store.myshopify.com",
             "private-shopify-token",
@@ -432,7 +468,9 @@ def test_shopify_cancellation_rejects_missing_scope_and_ineligible_orders():
 
 
 @pytest.mark.anyio
-async def test_shopify_cancellation_passes_explicit_consequences_and_returns_safe_result(monkeypatch):
+async def test_shopify_cancellation_passes_explicit_consequences_and_returns_safe_result(
+    monkeypatch,
+):
     from app.integrations.providers.shopify import actions as shopify_actions
 
     calls = []
@@ -486,7 +524,9 @@ async def test_shopify_cancellation_maps_permission_and_provider_errors(monkeypa
         raise ShopifyAPIError("shopify_scope_or_data_access_required", status_code=403)
 
     monkeypatch.setattr(shopify_actions, "graphql", forbidden)
-    with pytest.raises(shopify_actions.ShopifyOrderActionError, match="shopify_cancel_permission_denied"):
+    with pytest.raises(
+        shopify_actions.ShopifyOrderActionError, match="shopify_cancel_permission_denied"
+    ):
         await shopify_actions.cancel_shopify_order(
             shop_domain="configured-store.myshopify.com",
             access_token="private-token",
@@ -502,7 +542,9 @@ async def test_shopify_cancellation_maps_permission_and_provider_errors(monkeypa
         raise ShopifyAPIError("shopify_unavailable", status_code=502)
 
     monkeypatch.setattr(shopify_actions, "graphql", unavailable)
-    with pytest.raises(shopify_actions.ShopifyOrderActionError, match="shopify_cancel_provider_error"):
+    with pytest.raises(
+        shopify_actions.ShopifyOrderActionError, match="shopify_cancel_provider_error"
+    ):
         await shopify_actions.cancel_shopify_order(
             shop_domain="configured-store.myshopify.com",
             access_token="private-token",

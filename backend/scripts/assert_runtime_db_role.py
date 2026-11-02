@@ -161,6 +161,8 @@ async def main() -> None:
                 "widget_submissions",
                 "integration_connections",
                 "integration_credentials",
+                "integration_webhook_events",
+                "integration_delivery_jobs",
                 "catalog_products",
                 "catalog_variants",
                 "catalog_sync_jobs",
