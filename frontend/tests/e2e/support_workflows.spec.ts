@@ -1,6 +1,34 @@
 import { expect, test, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
+async function readEmailCode(page: Page, email: string): Promise<string> {
+  const mailpitUrl = process.env.E2E_MAILPIT_URL ?? "http://127.0.0.1:8025";
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const list = await page.request.get(`${mailpitUrl}/api/v1/messages?limit=50`);
+    if (list.ok()) {
+      const payload = (await list.json()) as {
+        messages?: Array<{ ID?: string; Created?: string; To?: Array<{ Address?: string }> }>;
+      };
+      const message = payload.messages
+        ?.filter((candidate) =>
+          candidate.To?.some((recipient) => recipient.Address?.toLowerCase() === email.toLowerCase()),
+        )
+        .sort((left, right) => Date.parse(right.Created ?? "") - Date.parse(left.Created ?? ""))[0];
+      if (message?.ID) {
+        const detail = await page.request.get(`${mailpitUrl}/api/v1/message/${message.ID}`);
+        if (detail.ok()) {
+          const body = (await detail.json()) as { Text?: string; HTML?: string[] };
+          const content = [body.Text ?? "", ...(body.HTML ?? [])].join(" ");
+          const code = content.match(/\b\d{6}\b/)?.[0];
+          if (code) return code;
+        }
+      }
+    }
+    await page.waitForTimeout(500);
+  }
+  throw new Error(`No verification email arrived for ${email}`);
+}
+
 async function expectAccessible(page: Page) {
   const result = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
@@ -22,14 +50,16 @@ test("register, create customer and ticket, assign an agent, and exchange a mess
   await page.getByLabel("Work email").fill(ownerEmail);
   await page.getByLabel("Password").fill(ownerPassword);
   await page.getByRole("button", { name: "Submit for approval" }).click();
+  await expect(page.getByRole("heading", { name: "Verify your email" })).toBeVisible();
+  await page.getByLabel("6-digit verification code").fill(await readEmailCode(page, ownerEmail));
+  await page.getByRole("button", { name: "Verify and continue" }).click();
   await expect(page.getByRole("heading", { name: "Your workspace is awaiting review" })).toBeVisible();
 
   await page.goto("/login");
-  await page.getByLabel("Organization slug").fill(organizationSlug);
   await page.getByLabel("Work email").fill(ownerEmail);
   await page.getByLabel("Password").fill(ownerPassword);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.locator('p[role="alert"]')).toContainText("pending approval");
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.locator('p[role="alert"]')).toContainText("Invalid email or password");
   expect((await page.context().cookies()).some((cookie) => cookie.name === "supportpilot_access")).toBe(false);
 
   const platformEmail = process.env.E2E_PLATFORM_OWNER_EMAIL;
@@ -50,10 +80,12 @@ test("register, create customer and ticket, assign an agent, and exchange a mess
   await platformContext.close();
 
   await page.goto("/login");
-  await page.getByLabel("Organization slug").fill(organizationSlug);
   await page.getByLabel("Work email").fill(ownerEmail);
   await page.getByLabel("Password").fill(ownerPassword);
-  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByRole("heading", { name: "Verify it’s you" })).toBeVisible();
+  await page.getByLabel("6-digit verification code").fill(await readEmailCode(page, ownerEmail));
+  await page.getByRole("button", { name: "Verify and continue" }).click();
   await expect(page.getByRole("heading", { name: "Good work starts here." })).toBeVisible();
   await page.getByRole("link", { name: "Operations" }).click();
   await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
@@ -88,6 +120,8 @@ test("register, create customer and ticket, assign an agent, and exchange a mess
   const ticketId = new URL(page.url()).pathname.split("/").at(-1);
   expect(ticketId).toBeTruthy();
   await page.getByRole("link", { name: "Inbox" }).click();
+  await expect(page.getByRole("button", { name: "Search workspace" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Inbox" })).toHaveAttribute("aria-current", "page");
   await page.getByRole("button", { name: /Taylor Customer.*Where is my order\?/ }).click();
   await page.getByRole("button", { name: "Assign to me" }).click();
   await expect(page.getByRole("button", { name: "Assign to me" })).toHaveCount(0);
@@ -295,6 +329,9 @@ test("rejected tenant remains blocked from workspace login", async ({ page, brow
   await page.getByLabel("Work email").fill(email);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Submit for approval" }).click();
+  await expect(page.getByRole("heading", { name: "Verify your email" })).toBeVisible();
+  await page.getByLabel("6-digit verification code").fill(await readEmailCode(page, email));
+  await page.getByRole("button", { name: "Verify and continue" }).click();
   await expect(page.getByRole("heading", { name: "Your workspace is awaiting review" })).toBeVisible();
 
   const platformContext = await browser.newContext();
@@ -310,12 +347,104 @@ test("rejected tenant remains blocked from workspace login", async ({ page, brow
   await platformContext.close();
 
   await page.goto("/login");
-  await page.getByLabel("Organization slug").fill(slug);
   await page.getByLabel("Work email").fill(email);
   await page.getByLabel("Password").fill(password);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.locator('p[role="alert"]')).toContainText("rejected");
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.locator('p[role="alert"]')).toContainText("Invalid email or password");
   expect((await page.context().cookies()).some((cookie) => cookie.name === "supportpilot_access")).toBe(false);
+});
+
+test("shared account selects the correct workspace and verifies sign-in with email OTP", async ({ page, browser }) => {
+  const unique = Date.now().toString();
+  const email = `shared-${unique}@example.com`;
+  const initialPassword = "initial-shared-password";
+  const workspaces = [
+    { name: `Shared First ${unique}`, slug: `shared-first-${unique}`, password: initialPassword },
+    { name: `Shared Second ${unique}`, slug: `shared-second-${unique}`, password: "ignored-second-password" },
+  ];
+
+  for (const workspace of workspaces) {
+    await page.goto("/register");
+    await page.getByLabel("Organization name").fill(workspace.name);
+    await page.getByLabel("Organization slug").fill(workspace.slug);
+    await page.getByLabel("Your name").fill("Shared User");
+    await page.getByLabel("Work email").fill(email);
+    await page.getByLabel("Password").fill(workspace.password);
+    await page.getByRole("button", { name: "Submit for approval" }).click();
+    await page.getByLabel("6-digit verification code").fill(await readEmailCode(page, email));
+    await page.getByRole("button", { name: "Verify and continue" }).click();
+    await expect(page.getByRole("heading", { name: "Your workspace is awaiting review" })).toBeVisible();
+  }
+
+  const platformContext = await browser.newContext();
+  const platform = await platformContext.newPage();
+  await platform.goto("/platform/login");
+  await platform.getByLabel("Platform owner email").fill(process.env.E2E_PLATFORM_OWNER_EMAIL!);
+  await platform.getByLabel("Password").fill(process.env.E2E_PLATFORM_OWNER_PASSWORD!);
+  await platform.getByRole("button", { name: "Sign in to platform" }).click();
+  await expect(platform.getByRole("heading", { name: "Tenant approvals" })).toBeVisible();
+  for (const workspace of workspaces) {
+    const row = platform.getByRole("row").filter({ hasText: workspace.slug });
+    await expect(row).toBeVisible();
+    await row.getByRole("button", { name: "Approve" }).click();
+  }
+  await platformContext.close();
+
+  await page.goto("/login");
+  await page.getByLabel("Work email").fill(email);
+  await page.getByLabel("Password").fill(initialPassword);
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByRole("heading", { name: "Choose a workspace" })).toBeVisible();
+  expect((await page.context().cookies()).some((cookie) => cookie.name === "supportpilot_access")).toBe(false);
+  await page.getByRole("button", { name: new RegExp(workspaces[0].name) }).click();
+  await page.getByLabel("6-digit verification code").fill(await readEmailCode(page, email));
+  await page.getByRole("button", { name: "Verify and continue" }).click();
+  await expect(page.getByRole("heading", { name: "Good work starts here." })).toBeVisible();
+});
+
+test("password recovery verifies email and permits a new OTP sign-in", async ({ page, browser }) => {
+  const unique = Date.now().toString();
+  const email = `recovery-${unique}@example.com`;
+  const password = "initial-recovery-password";
+  const slug = `recovery-${unique}`;
+  await page.goto("/register");
+  await page.getByLabel("Organization name").fill(`Recovery ${unique}`);
+  await page.getByLabel("Organization slug").fill(slug);
+  await page.getByLabel("Your name").fill("Recovery Owner");
+  await page.getByLabel("Work email").fill(email);
+  await page.getByLabel("Password").fill(password);
+  await page.getByRole("button", { name: "Submit for approval" }).click();
+  await page.getByLabel("6-digit verification code").fill(await readEmailCode(page, email));
+  await page.getByRole("button", { name: "Verify and continue" }).click();
+
+  const platformContext = await browser.newContext();
+  const platform = await platformContext.newPage();
+  await platform.goto("/platform/login");
+  await platform.getByLabel("Platform owner email").fill(process.env.E2E_PLATFORM_OWNER_EMAIL!);
+  await platform.getByLabel("Password").fill(process.env.E2E_PLATFORM_OWNER_PASSWORD!);
+  await platform.getByRole("button", { name: "Sign in to platform" }).click();
+  const row = platform.getByRole("row").filter({ hasText: slug });
+  await expect(row).toBeVisible();
+  await row.getByRole("button", { name: "Approve" }).click();
+  await platformContext.close();
+
+  await page.goto("/login");
+  await page.getByRole("button", { name: "Forgot password?" }).click();
+  await page.getByLabel("Work email").fill(email);
+  await page.getByRole("button", { name: "Send recovery code" }).click();
+  await page.getByLabel("Verification code").fill(await readEmailCode(page, email));
+  const recoveredPassword = "recovered-shared-password";
+  await page.getByLabel("New password").fill(recoveredPassword);
+  await page.getByRole("button", { name: "Update password" }).click();
+  await expect(page.getByRole("status")).toContainText("Password updated");
+
+  await page.goto("/login");
+  await page.getByLabel("Work email").fill(email);
+  await page.getByLabel("Password").fill(recoveredPassword);
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByLabel("6-digit verification code").fill(await readEmailCode(page, email));
+  await page.getByRole("button", { name: "Verify and continue" }).click();
+  await expect(page.getByRole("heading", { name: "Good work starts here." })).toBeVisible();
 });
 
 test("BFF exposes real readiness and rejects cross-origin mutations with Problem Details", async ({ page }) => {

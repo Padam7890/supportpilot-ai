@@ -58,7 +58,7 @@ async def platform_login(
     db: AsyncSession = Depends(get_db),
 ) -> PlatformTokenOut:
     email = str(data.email).lower()
-    await limit_auth_attempts(request, email, limit=10, window_seconds=900)
+    await limit_auth_attempts(request, email, limit=20, window_seconds=900)
     owner = await db.scalar(
         select(PlatformOwner).where(PlatformOwner.email == email, PlatformOwner.is_active.is_(True))
     )

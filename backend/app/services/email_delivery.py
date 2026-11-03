@@ -12,14 +12,16 @@ logger = logging.getLogger(__name__)
 
 
 def _log_email_event(level: int, event: str, **fields: object) -> None:
-    logger.log(level, "transactional_email %s", json.dumps({"event": event, **fields}, sort_keys=True))
+    logger.log(
+        level, "transactional_email %s", json.dumps({"event": event, **fields}, sort_keys=True)
+    )
 
 
 def smtp_is_configured() -> bool:
     return bool(settings.email_smtp_host and settings.email_from_address)
 
 
-def _send_sync(message: EmailMessage) -> None:
+def _send_sync(message: EmailMessage, email_kind: str) -> None:
     host = settings.email_smtp_host
     if not host:
         raise RuntimeError("SMTP is not configured")
@@ -27,7 +29,7 @@ def _send_sync(message: EmailMessage) -> None:
     _log_email_event(
         logging.INFO,
         "smtp_connecting",
-        email_kind="shopify_order_verification",
+        email_kind=email_kind,
         smtp_host=host,
         smtp_port=settings.email_smtp_port,
         smtp_tls_mode="implicit_tls" if settings.email_use_ssl else "starttls",
@@ -42,14 +44,16 @@ def _send_sync(message: EmailMessage) -> None:
                 stage = "authentication"
                 client.login(
                     settings.email_smtp_username,
-                    settings.email_smtp_password.get_secret_value() if settings.email_smtp_password else "",
+                    settings.email_smtp_password.get_secret_value()
+                    if settings.email_smtp_password
+                    else "",
                 )
             stage = "send_message"
             client.send_message(message)
         _log_email_event(
             logging.INFO,
             "smtp_accepted",
-            email_kind="shopify_order_verification",
+            email_kind=email_kind,
             smtp_host=host,
             smtp_port=settings.email_smtp_port,
         )
@@ -57,7 +61,7 @@ def _send_sync(message: EmailMessage) -> None:
         _log_email_event(
             logging.ERROR,
             "smtp_failed",
-            email_kind="shopify_order_verification",
+            email_kind=email_kind,
             smtp_host=host,
             smtp_port=settings.email_smtp_port,
             smtp_stage=stage,
@@ -89,4 +93,36 @@ async def send_order_verification_code(email: str, code: str) -> None:
         f"Your order verification code is {code}. It expires in 10 minutes. "
         "If you did not request this code, you can ignore this email."
     )
-    await asyncio.to_thread(_send_sync, message)
+    await asyncio.to_thread(_send_sync, message, "shopify_order_verification")
+
+
+async def send_auth_code(email: str, code: str, purpose: str) -> None:
+    purpose_copy = {
+        "login": ("Your SupportPilot sign-in code", "Use this code to finish signing in"),
+        "registration": ("Verify your SupportPilot email", "Use this code to verify your email"),
+        "password_reset": (
+            "Reset your SupportPilot password",
+            "Use this code to reset your password",
+        ),
+    }
+    if purpose not in purpose_copy:
+        raise ValueError("Unsupported authentication email purpose")
+    if not smtp_is_configured():
+        _log_email_event(
+            logging.ERROR,
+            "smtp_not_configured",
+            email_kind=f"auth_{purpose}",
+            smtp_host_present=bool(settings.email_smtp_host),
+            from_address_present=bool(settings.email_from_address),
+        )
+        raise RuntimeError("Transactional email is not configured")
+    subject, intro = purpose_copy[purpose]
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = settings.email_from_address
+    message["To"] = email
+    message.set_content(
+        f"{intro}: {code}. It expires in 10 minutes. If you did not request this, ignore this email."
+    )
+    _log_email_event(logging.INFO, "send_requested", email_kind=f"auth_{purpose}")
+    await asyncio.to_thread(_send_sync, message, f"auth_{purpose}")

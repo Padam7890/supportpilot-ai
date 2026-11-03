@@ -184,12 +184,23 @@ jobs:
           --health-timeout 3s
           --health-retries 5
 
+      mailpit:
+        image: axllent/mailpit:v1.27
+        ports:
+          - 1025:1025
+          - 8025:8025
+
     env:
       APP_ENV: test
       APP_NAME: SupportPilot E2E
       DATABASE_URL: postgresql+asyncpg://supportpilot_app:app_test_password@localhost:5432/supportpilot
       REDIS_URL: redis://localhost:6379/0
       JWT_SECRET: ci-e2e-only-secret-that-is-long-enough-and-randomized-${{ github.run_id }}
+      EMAIL_SMTP_HOST: 127.0.0.1
+      EMAIL_SMTP_PORT: "1025"
+      EMAIL_FROM_ADDRESS: supportpilot-e2e@example.test
+      EMAIL_USE_SSL: "false"
+      E2E_MAILPIT_URL: http://127.0.0.1:8025
       ACCESS_TOKEN_EXPIRE_MINUTES: "15"
       CORS_ORIGINS: '["http://127.0.0.1:3000"]'
       BACKEND_API_URL: http://127.0.0.1:8000

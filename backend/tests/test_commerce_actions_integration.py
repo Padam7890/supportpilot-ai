@@ -6,10 +6,16 @@ import pytest
 from sqlalchemy import select
 
 from app.core.security import hash_password
-from app.db.session import SessionLocal, set_tenant_context
-from app.models import CommerceAction, PlatformOwner, User
+from app.db.session import (
+    SessionLocal,
+    set_auth_email_context,
+    set_auth_identity_context,
+    set_tenant_context,
+)
+from app.models import AuthIdentity, AuthIdentityMembership, CommerceAction, PlatformOwner, User
 from app.schemas.shopify import ShopifyOrderLookupOut
 from app.services.commerce_action_worker import claim_commerce_action, process_commerce_action
+from tests.auth_helpers import verify_registration, workspace_login
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("TEST_DATABASE_URL"),
@@ -36,6 +42,7 @@ async def register_owner(client, label: str):
         },
     )
     assert registration.status_code == 202, registration.text
+    await verify_registration(client, registration, email)
 
     platform_email = f"platform-{suffix}@example.com"
     platform_password = "commerce-platform-test-password"
@@ -52,7 +59,8 @@ async def register_owner(client, label: str):
         headers=auth(platform_login.json()["access_token"]),
     )
     tenant_id = next(
-        item["id"] for item in pending.json()["items"]
+        item["id"]
+        for item in pending.json()["items"]
         if item["slug"] == registration.json()["organization_slug"]
     )
     approved = await client.post(
@@ -60,16 +68,7 @@ async def register_owner(client, label: str):
         headers=auth(platform_login.json()["access_token"]),
     )
     assert approved.status_code == 200, approved.text
-    login = await client.post(
-        "/api/v1/auth/login",
-        json={
-            "organization_slug": registration.json()["organization_slug"],
-            "email": email,
-            "password": password,
-        },
-    )
-    assert login.status_code == 200, login.text
-    return login.json()
+    return await workspace_login(client, email, password, registration.json()["organization_slug"])
 
 
 async def create_ticket(client, owner_tokens):
@@ -92,7 +91,11 @@ async def create_ticket(client, owner_tokens):
 def verified_shopify_order(customer_email: str) -> ShopifyOrderLookupOut:
     return ShopifyOrderLookupOut.model_validate(
         {
-            "customer": {"display_name": "Morgan Buyer", "email": customer_email, "verified_by": "order_number_and_email"},
+            "customer": {
+                "display_name": "Morgan Buyer",
+                "email": customer_email,
+                "verified_by": "order_number_and_email",
+            },
             "matched_order": {
                 "id": "gid://shopify/Order/1001",
                 "order_number": "#1001",
@@ -115,14 +118,28 @@ async def add_teammate(organization_id: UUID, role: str) -> tuple[str, str]:
     password = "commerce-teammate-test-password"
     async with SessionLocal() as db:
         await set_tenant_context(db, organization_id)
+        await set_auth_email_context(db, email)
+        identity = AuthIdentity(
+            email_normalized=email,
+            password_hash=hash_password(password),
+            password_reset_required=False,
+        )
+        db.add(identity)
+        await db.flush()
+        user = User(
+            organization_id=organization_id,
+            email=email,
+            full_name=f"Commerce {role.title()}",
+            password_hash=identity.password_hash,
+            role=role,
+            is_active=True,
+        )
+        db.add(user)
+        await db.flush()
+        await set_auth_identity_context(db, identity.id)
         db.add(
-            User(
-                organization_id=organization_id,
-                email=email,
-                full_name=f"Commerce {role.title()}",
-                password_hash=hash_password(password),
-                role=role,
-                is_active=True,
+            AuthIdentityMembership(
+                identity_id=identity.id, organization_id=organization_id, user_id=user.id
             )
         )
         await db.commit()
@@ -130,22 +147,21 @@ async def add_teammate(organization_id: UUID, role: str) -> tuple[str, str]:
 
 
 async def login_teammate(client, slug: str, email: str, password: str):
-    response = await client.post(
-        "/api/v1/auth/login",
-        json={"organization_slug": slug, "email": email, "password": password},
-    )
-    assert response.status_code == 200, response.text
-    return response.json()
+    return await workspace_login(client, email, password, slug)
 
 
 @pytest.mark.anyio
-async def test_agent_request_is_idempotent_owner_approval_executes_mock_and_audits(client, monkeypatch):
+async def test_agent_request_is_idempotent_owner_approval_executes_mock_and_audits(
+    client, monkeypatch
+):
     owner = await register_owner(client, "commerce")
     profile = await client.get("/api/v1/auth/me", headers=auth(owner["access_token"]))
     organization_id = UUID(profile.json()["organization_id"])
     ticket_id = await create_ticket(client, owner)
     agent_email, agent_password = await add_teammate(organization_id, "agent")
-    agent = await login_teammate(client, profile.json()["organization"]["slug"], agent_email, agent_password)
+    agent = await login_teammate(
+        client, profile.json()["organization"]["slug"], agent_email, agent_password
+    )
     verified_emails = []
 
     async def fake_verified_lookup(*, db, user, customer_email, order_number, limit, cursor):
@@ -208,18 +224,25 @@ async def test_agent_request_is_idempotent_owner_approval_executes_mock_and_audi
         f"/api/v1/commerce/actions/{action_id}/audit", headers=auth(owner["access_token"])
     )
     assert [item["event_type"] for item in audit.json()["items"]] == [
-        "requested", "approved", "execution_started", "execution_succeeded"
+        "requested",
+        "approved",
+        "execution_started",
+        "execution_succeeded",
     ]
 
 
 @pytest.mark.anyio
-async def test_viewer_cannot_request_or_approve_and_other_tenants_cannot_read_action(client, monkeypatch):
+async def test_viewer_cannot_request_or_approve_and_other_tenants_cannot_read_action(
+    client, monkeypatch
+):
     owner = await register_owner(client, "commercepermissions")
     profile = await client.get("/api/v1/auth/me", headers=auth(owner["access_token"]))
     organization_id = UUID(profile.json()["organization_id"])
     ticket_id = await create_ticket(client, owner)
     viewer_email, viewer_password = await add_teammate(organization_id, "viewer")
-    viewer = await login_teammate(client, profile.json()["organization"]["slug"], viewer_email, viewer_password)
+    viewer = await login_teammate(
+        client, profile.json()["organization"]["slug"], viewer_email, viewer_password
+    )
 
     async def fake_verified_lookup(*, db, user, customer_email, order_number, limit, cursor):
         return verified_shopify_order(customer_email)
@@ -232,7 +255,9 @@ async def test_viewer_cannot_request_or_approve_and_other_tenants_cannot_read_ac
         "reason": "Customer changed their mind",
     }
     viewer_headers = {**auth(viewer["access_token"]), "Idempotency-Key": "commerce-cancel-key-0001"}
-    denied_create = await client.post("/api/v1/commerce/actions", headers=viewer_headers, json=payload)
+    denied_create = await client.post(
+        "/api/v1/commerce/actions", headers=viewer_headers, json=payload
+    )
     assert denied_create.status_code == 403
 
     owner_headers = {**auth(owner["access_token"]), "Idempotency-Key": "commerce-cancel-key-0001"}
@@ -269,7 +294,12 @@ async def test_rejection_and_expiry_are_terminal_and_audited(client, monkeypatch
         return await client.post(
             "/api/v1/commerce/actions",
             headers={**auth(owner["access_token"]), "Idempotency-Key": key},
-            json={"ticket_id": ticket_id, "order_number": "1001", "action_type": "cancel", "reason": "Please cancel this order"},
+            json={
+                "ticket_id": ticket_id,
+                "order_number": "1001",
+                "action_type": "cancel",
+                "reason": "Please cancel this order",
+            },
         )
 
     rejected = await request_cancel("commerce-reject-key-0001")
@@ -286,7 +316,9 @@ async def test_rejection_and_expiry_are_terminal_and_audited(client, monkeypatch
     assert expired.status_code == 201, expired.text
     async with SessionLocal() as db:
         await set_tenant_context(db, UUID(owner["user"]["organization_id"]))
-        row = await db.scalar(select(CommerceAction).where(CommerceAction.id == UUID(expired.json()["id"])))
+        row = await db.scalar(
+            select(CommerceAction).where(CommerceAction.id == UUID(expired.json()["id"]))
+        )
         row.expires_at = datetime.now(UTC) - timedelta(seconds=1)
         await db.commit()
     approval = await client.post(
@@ -302,7 +334,9 @@ async def test_rejection_and_expiry_are_terminal_and_audited(client, monkeypatch
 
 
 @pytest.mark.anyio
-async def test_transient_mock_execution_failure_retries_within_bound_and_audits(client, monkeypatch):
+async def test_transient_mock_execution_failure_retries_within_bound_and_audits(
+    client, monkeypatch
+):
     owner = await register_owner(client, "commerceretry")
     profile = await client.get("/api/v1/auth/me", headers=auth(owner["access_token"]))
     organization_id = UUID(profile.json()["organization_id"])
@@ -327,7 +361,9 @@ async def test_transient_mock_execution_failure_retries_within_bound_and_audits(
             "order_number": kwargs["order_number"],
         }
 
-    monkeypatch.setattr("app.services.commerce_action_worker.MockCommerceService.execute", flaky_execute)
+    monkeypatch.setattr(
+        "app.services.commerce_action_worker.MockCommerceService.execute", flaky_execute
+    )
     requested = await client.post(
         "/api/v1/commerce/actions",
         headers={**auth(owner["access_token"]), "Idempotency-Key": "commerce-retry-key-0001"},
@@ -348,17 +384,27 @@ async def test_transient_mock_execution_failure_retries_within_bound_and_audits(
 
     first_claim = await claim_commerce_action(organization_id)
     await process_commerce_action(organization_id, first_claim)
-    pending_retry = await client.get(f"/api/v1/commerce/actions/{action_id}", headers=auth(owner["access_token"]))
+    pending_retry = await client.get(
+        f"/api/v1/commerce/actions/{action_id}", headers=auth(owner["access_token"])
+    )
     assert pending_retry.json()["execution_status"] == "queued"
     assert pending_retry.json()["execution_attempt_count"] == 1
 
     second_claim = await claim_commerce_action(organization_id)
     await process_commerce_action(organization_id, second_claim)
-    succeeded = await client.get(f"/api/v1/commerce/actions/{action_id}", headers=auth(owner["access_token"]))
+    succeeded = await client.get(
+        f"/api/v1/commerce/actions/{action_id}", headers=auth(owner["access_token"])
+    )
     assert succeeded.json()["execution_status"] == "succeeded"
     assert succeeded.json()["execution_attempt_count"] == 2
-    audit = await client.get(f"/api/v1/commerce/actions/{action_id}/audit", headers=auth(owner["access_token"]))
+    audit = await client.get(
+        f"/api/v1/commerce/actions/{action_id}/audit", headers=auth(owner["access_token"])
+    )
     assert [item["event_type"] for item in audit.json()["items"]] == [
-        "requested", "approved", "execution_started", "execution_retry_scheduled", "execution_started", "execution_succeeded"
+        "requested",
+        "approved",
+        "execution_started",
+        "execution_retry_scheduled",
+        "execution_started",
+        "execution_succeeded",
     ]
-

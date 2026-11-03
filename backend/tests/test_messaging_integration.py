@@ -30,6 +30,7 @@ from app.models import (
     PlatformOwner,
     Ticket,
 )
+from tests.auth_helpers import verify_registration, workspace_login
 
 
 class FakeMessagingProvider:
@@ -59,6 +60,7 @@ class FakeMessagingProvider:
             provider_status="sent",
         )
 
+
 pytestmark = pytest.mark.skipif(
     not os.environ.get("TEST_DATABASE_URL"),
     reason="Messaging persistence integration requires isolated PostgreSQL",
@@ -84,6 +86,7 @@ async def approved_owner(client, label: str) -> dict:
         },
     )
     assert registration.status_code == 202, registration.text
+    await verify_registration(client, registration, email)
     platform_email = f"platform-{uuid4().hex[:10]}@example.test"
     platform_password = "messaging-platform-integration-password"
     async with SessionLocal() as session:
@@ -105,12 +108,7 @@ async def approved_owner(client, label: str) -> dict:
         f"/api/v1/platform/tenants/{tenant['id']}/approve", headers=bearer(platform_token)
     )
     assert approval.status_code == 200, approval.text
-    login = await client.post(
-        "/api/v1/auth/login",
-        json={"organization_slug": slug, "email": email, "password": password},
-    )
-    assert login.status_code == 200, login.text
-    return login.json()
+    return await workspace_login(client, email, password, slug)
 
 
 @pytest.mark.anyio
@@ -218,12 +216,15 @@ async def test_inbound_idempotency_tenant_boundaries_and_transactional_outbox(cl
         assert first_contact_conversation is not None
         assert first_contact_conversation.external_conversation_id == "first-contact-thread"
         assert first_contact_conversation.integration_connection_id == connection.id
-        assert await session.scalar(
-            select(func.count(IntegrationDeliveryJob.id)).where(
-                IntegrationDeliveryJob.organization_id == organization_a,
-                IntegrationDeliveryJob.message_id == outgoing.id,
+        assert (
+            await session.scalar(
+                select(func.count(IntegrationDeliveryJob.id)).where(
+                    IntegrationDeliveryJob.organization_id == organization_a,
+                    IntegrationDeliveryJob.message_id == outgoing.id,
+                )
             )
-        ) == 1
+            == 1
+        )
         connection_id = connection.id
         await session.commit()
 

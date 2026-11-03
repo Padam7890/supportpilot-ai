@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -20,8 +21,60 @@ class RegistrationPendingOut(BaseModel):
     organization_slug: str
 
 
-class LoginRequest(BaseModel):
+class RegistrationStartOut(BaseModel):
+    status: Literal["email_verification_required"] = "email_verification_required"
+    challenge_token: str
+    organization_name: str
     organization_slug: str
+    expires_in: int = 600
+
+
+class AuthWorkspaceOut(BaseModel):
+    membership_id: uuid.UUID
+    organization_name: str
+    organization_slug: str
+
+
+class LoginStartOut(BaseModel):
+    status: Literal["workspace_selection_required", "otp_required"]
+    challenge_token: str
+    workspaces: list[AuthWorkspaceOut] = Field(default_factory=list)
+    email_hint: str | None = None
+    expires_in: int = 600
+
+
+class LoginWorkspaceRequest(BaseModel):
+    membership_id: uuid.UUID
+    challenge_token: str = Field(min_length=32, max_length=128)
+
+
+class AuthCodeRequest(BaseModel):
+    code: str = Field(min_length=6, max_length=6, pattern=r"^[0-9]{6}$")
+    challenge_token: str = Field(min_length=32, max_length=128)
+
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetComplete(AuthCodeRequest):
+    new_password: str = Field(min_length=12, max_length=128)
+
+
+class AuthChallengeToken(BaseModel):
+    challenge_token: str = Field(min_length=32, max_length=128)
+
+
+class AuthFlowStatus(BaseModel):
+    status: str
+    message: str
+    challenge_token: str | None = None
+    email_hint: str | None = None
+    expires_in: int | None = None
+
+
+class LoginRequest(BaseModel):
+    organization_slug: str | None = Field(default=None, deprecated=True)
     email: EmailStr
     password: str
 

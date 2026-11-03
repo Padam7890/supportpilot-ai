@@ -106,24 +106,9 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const links = [...navigation, { href: "/dashboard/settings", label: canManage ? "Settings & team" : "Settings", icon: Building2 }];
 
   return (
-    <div className={isInbox ? "flex h-dvh overflow-hidden bg-slate-50 text-slate-900" : "flex min-h-screen bg-slate-50 text-slate-900"}>
+    <div className="flex min-h-screen bg-slate-50 text-slate-900">
       {mobileOpen && <button aria-label="Close navigation" className="fixed inset-0 z-30 bg-slate-950/40 lg:hidden" onClick={() => setMobileOpen(false)} />}
-      {isInbox ? <aside aria-label="Workspace navigation" className={`z-30 flex h-full shrink-0 flex-col border-r border-slate-800 bg-[#171922] py-3 text-slate-400 shadow-lg transition-[width] duration-200 ${sidebarCollapsed ? "w-[58px]" : "w-64"}`}>
-        <div className={`mb-5 flex items-center ${sidebarCollapsed ? "justify-center" : "justify-between px-3"}`}>
-          <Link href="/dashboard/inbox" title="SupportPilot Inbox" aria-label="SupportPilot Inbox" className="grid size-10 shrink-0 place-items-center rounded-xl bg-indigo-500 text-lg font-black text-slate-50 shadow-md">S</Link>
-          {!sidebarCollapsed && <span className="min-w-0 flex-1 px-3 text-sm font-bold text-slate-50">SupportPilot<span className="mt-0.5 block text-xs font-normal text-slate-400">Support workspace</span></span>}
-          <button type="button" onClick={toggleSidebar} aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"} title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"} className="grid size-9 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-[#222530] hover:text-slate-50">{sidebarCollapsed ? <PanelLeftOpen size={17}/> : <PanelLeftClose size={17}/>}</button>
-        </div>
-        {!sidebarCollapsed && <div className="mb-4 px-4"><p className="truncate text-xs font-semibold text-slate-200">{user.organization?.name ?? "Your organization"}</p><p className="mt-0.5 truncate text-[11px] text-slate-400">{user.organization?.slug}</p></div>}
-        <nav aria-label="Main navigation" className={`flex flex-1 flex-col gap-1.5 ${sidebarCollapsed ? "items-center" : "items-stretch px-3"}`}>
-          {links.map(({ href, label, icon: Icon, exact }) => {
-            const active = exact ? pathname === href : pathname.startsWith(href);
-            return <Link key={href} href={href} title={sidebarCollapsed ? label : undefined} aria-label={label} aria-current={active ? "page" : undefined} className={`relative rounded-xl transition ${sidebarCollapsed ? "grid size-10 place-items-center" : "flex h-10 w-full items-center gap-3 px-3"} ${active ? "bg-[#292c39] text-slate-50" : "text-slate-400 hover:bg-[#222530] hover:text-slate-50"}`}><Icon size={19}/>{!sidebarCollapsed && <span className="truncate text-sm font-medium">{label}</span>}{active && <span className={`absolute h-5 w-1 rounded-r-full bg-indigo-400 ${sidebarCollapsed ? "-left-3" : "-left-3"}`}/>}</Link>;
-          })}
-        </nav>
-        <button onClick={toggleTheme} title={dark ? "Switch to light theme" : "Switch to dark theme"} aria-label={dark ? "Switch to light theme" : "Switch to dark theme"} className="mb-1 grid size-10 place-items-center self-center rounded-xl text-slate-400 hover:bg-[#222530] hover:text-slate-50">{dark ? <Sun size={18}/> : <Moon size={18}/>}</button>
-        <button title={`Sign out ${user.email}`} aria-label="Sign out" onClick={() => logout.mutate()} className="grid size-10 place-items-center self-center rounded-xl text-slate-400 hover:bg-[#222530] hover:text-slate-50"><LogOut size={18}/></button>
-      </aside> : <aside className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-slate-200 bg-white shadow-xl transition-all duration-200 lg:translate-x-0 lg:shadow-none ${sidebarCollapsed ? "lg:w-[72px]" : "lg:w-64"} ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}>
+      <aside className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-slate-200 bg-white shadow-xl transition-all duration-200 lg:translate-x-0 lg:shadow-none ${sidebarCollapsed ? "lg:w-[72px]" : "lg:w-64"} ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}>
         <div className={`flex h-20 items-center gap-3 ${sidebarCollapsed ? "justify-center px-3" : "px-6"}`}>
           <span className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-blue-700 font-black text-white">S</span>
           {!sidebarCollapsed && <span className="min-w-0"><span className="block font-bold tracking-tight">SupportPilot</span><span className="text-xs text-slate-500">Support workspace</span></span>}
@@ -150,9 +135,9 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             <button title="Sign out" onClick={() => logout.mutate()} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100" aria-label="Sign out"><LogOut size={17}/></button>
           </div>
         </div>
-      </aside>}
-      <div className={isInbox ? "min-w-0 flex-1" : `min-w-0 flex-1 ${sidebarCollapsed ? "lg:pl-[72px]" : "lg:pl-64"}`}>
-        {!isInbox && <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-slate-200 bg-white/90 px-4 backdrop-blur sm:px-8">
+      </aside>
+      <div className={`min-w-0 flex-1 ${sidebarCollapsed ? "lg:pl-[72px]" : "lg:pl-64"}`}>
+        <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-slate-200 bg-white/90 px-4 backdrop-blur sm:px-8">
           <div className="flex items-center gap-2"><button aria-label="Open navigation" onClick={() => setMobileOpen(true)} className="rounded-xl p-2 text-slate-600 hover:bg-slate-100 lg:hidden"><Menu size={20}/></button><button type="button" onClick={toggleSidebar} aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"} title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"} className="hidden rounded-xl p-2 text-slate-600 hover:bg-slate-100 lg:inline-flex">{sidebarCollapsed ? <PanelLeftOpen size={20}/> : <PanelLeftClose size={20}/>}</button></div>
           <div role="status" aria-live="polite" className="hidden items-center gap-2 text-sm text-slate-500 sm:flex">
             <Activity size={16} className={readiness.isSuccess ? "text-emerald-500" : readiness.isError ? "text-amber-500" : "animate-pulse text-slate-400"}/>
@@ -160,8 +145,8 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           </div>
           <div className="ml-3"><CommandSearch/></div>
           <div className="ml-auto flex items-center gap-2 sm:gap-3"><span className="hidden text-sm text-slate-500 md:block">{user.email}</span><button onClick={toggleTheme} aria-label={dark ? "Switch to light theme" : "Switch to dark theme"} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100">{dark ? <Sun size={18}/> : <Moon size={18}/>}</button><Button size="sm" variant="ghost" onClick={() => logout.mutate()}>Sign out</Button></div>
-        </header>}
-        <main className={isInbox ? "h-dvh w-full overflow-hidden p-0" : "mx-auto w-full max-w-7xl p-4 sm:p-7 lg:p-9"}>{children}</main>
+        </header>
+        <main className={isInbox ? "h-[calc(100dvh-4rem)] w-full overflow-hidden p-0" : "mx-auto w-full max-w-7xl p-4 sm:p-7 lg:p-9"}>{children}</main>
       </div>
     </div>
   );

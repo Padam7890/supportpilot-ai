@@ -100,6 +100,25 @@ async def test_feature_migration_preserves_public_route_paths(client):
 
 
 @pytest.mark.anyio
+async def test_workspace_auth_contract_supports_slug_free_staged_login(client):
+    response = await client.get("/openapi.json")
+    paths = response.json()["paths"]
+    assert "/api/v1/auth/login/select-workspace" in paths
+    assert "/api/v1/auth/login/verify-code" in paths
+    assert "/api/v1/auth/resend-code" in paths
+    assert "/api/v1/auth/register/verify-email" in paths
+    assert "/api/v1/auth/password-reset/request" in paths
+    login = paths["/api/v1/auth/login"]["post"]["requestBody"]["content"]["application/json"][
+        "schema"
+    ]
+    login_schema = response.json()["components"]["schemas"][login["$ref"].split("/")[-1]]
+    assert "email" in login_schema["required"]
+    assert "password" in login_schema["required"]
+    assert "organization_slug" not in login_schema["required"]
+    assert login_schema["properties"]["organization_slug"]["deprecated"] is True
+
+
+@pytest.mark.anyio
 async def test_openapi_documents_tenant_integration_management_contract(client):
     response = await client.get("/openapi.json")
     assert response.status_code == 200

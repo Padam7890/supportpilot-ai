@@ -35,3 +35,27 @@ async def set_tenant_context(session: AsyncSession, organization_id: UUID | str)
         text("SELECT set_config('app.current_tenant', :tenant_id, true)"),
         {"tenant_id": str(organization_id)},
     )
+
+
+async def set_auth_identity_context(session: AsyncSession, identity_id: UUID | str) -> None:
+    """Limit cross-tenant membership discovery to an already verified identity."""
+    await session.execute(
+        text("SELECT set_config('app.current_identity', :identity_id, true)"),
+        {"identity_id": str(identity_id)},
+    )
+
+
+async def set_auth_email_context(session: AsyncSession, email: str) -> None:
+    """Restrict unauthenticated identity lookup to the submitted email address."""
+    await session.execute(
+        text("SELECT set_config('app.auth_email', :email, true)"),
+        {"email": email.strip().casefold()},
+    )
+
+
+async def set_auth_challenge_context(session: AsyncSession, token_hash: str) -> None:
+    """Scope pre-auth challenge access to the presented unguessable challenge token."""
+    await session.execute(
+        text("SELECT set_config('app.auth_challenge', :token_hash, true)"),
+        {"token_hash": token_hash},
+    )

@@ -21,6 +21,19 @@ os.environ["APP_ENV"] = "test"
 from app.main import app
 
 
+@pytest.fixture(autouse=True)
+def capture_auth_codes(monkeypatch):
+    sent_codes: dict[tuple[str, str], str] = {}
+
+    async def send_code(email: str, code: str, purpose: str) -> None:
+        sent_codes[(email.strip().casefold(), purpose)] = code
+
+    monkeypatch.setattr("app.features.auth.challenges.send_auth_code", send_code)
+    app.state.test_auth_codes = sent_codes
+    yield sent_codes
+    del app.state.test_auth_codes
+
+
 @pytest.fixture
 def anyio_backend():
     return "asyncio"

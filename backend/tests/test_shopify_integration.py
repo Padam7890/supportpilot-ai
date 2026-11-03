@@ -15,6 +15,7 @@ from app.core.security import hash_password
 from app.db.session import SessionLocal, set_tenant_context
 from app.integrations.providers.shopify.security import decrypt_credential
 from app.models import PlatformOwner, ShopifyAccessAudit, ShopifyInstallation
+from tests.auth_helpers import verify_registration, workspace_login
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("TEST_DATABASE_URL"),
@@ -42,6 +43,7 @@ async def approved_workspace(client, label: str):
         },
     )
     assert registration.status_code == 202, registration.text
+    await verify_registration(client, registration, email)
     platform_email = f"platform-{suffix}@example.com"
     platform_password = "shopify-platform-test-password"
     async with SessionLocal() as db:
@@ -61,12 +63,7 @@ async def approved_workspace(client, label: str):
         headers=bearer(platform_login.json()["access_token"]),
     )
     assert approved.status_code == 200, approved.text
-    login = await client.post(
-        "/api/v1/auth/login",
-        json={"organization_slug": slug, "email": email, "password": password},
-    )
-    assert login.status_code == 200, login.text
-    return login.json()
+    return await workspace_login(client, email, password, slug)
 
 
 def signed_callback_params(state: str, shop: str, code: str) -> dict[str, str]:

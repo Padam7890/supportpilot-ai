@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.core.database import DatabaseSchemaOutOfDate, check_database, close_database
 from app.integrations.registry import build_integration_registry
 from app.schemas.errors import ProblemDetails
+from app.services.email_delivery import smtp_is_configured
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +163,11 @@ async def readiness() -> dict[str, object]:
         await check_database()
         redis_client: Redis = app.state.redis
         await redis_client.ping()
+        if not smtp_is_configured():
+            raise HTTPException(
+                status_code=503,
+                detail="Transactional email is not configured; workspace OTP sign-in is unavailable.",
+            )
     except DatabaseSchemaOutOfDate as exc:
         applied = sorted(exc.applied_heads) or ["unavailable"]
         expected = sorted(exc.expected_heads) or ["unknown"]
@@ -174,6 +180,8 @@ async def readiness() -> dict[str, object]:
             status_code=503,
             detail="Database schema migrations are not current. Apply the latest Alembic migrations.",
         ) from None
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("Readiness check failed")
         raise HTTPException(

@@ -29,6 +29,7 @@ from app.models import (
 )
 from app.services.catalog import process_catalog_webhook, run_catalog_sync_page
 from app.services.recommendations import load_candidates
+from tests.auth_helpers import verify_registration, workspace_login
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("TEST_DATABASE_URL"),
@@ -55,6 +56,7 @@ async def create_approved_tenant(client, prefix: str) -> dict:
         },
     )
     assert registration.status_code == 202, registration.text
+    await verify_registration(client, registration, email)
     platform_email = f"platform-{uuid4().hex[:10]}@example.com"
     platform_password = "catalog-test-platform-password"
     async with SessionLocal() as session:
@@ -78,12 +80,7 @@ async def create_approved_tenant(client, prefix: str) -> dict:
         headers=bearer(platform_token),
     )
     assert approved.status_code == 200, approved.text
-    login = await client.post(
-        "/api/v1/auth/login",
-        json={"organization_slug": slug, "email": email, "password": password},
-    )
-    assert login.status_code == 200, login.text
-    return login.json()
+    return await workspace_login(client, email, password, slug)
 
 
 async def create_catalog_product(session, owner: dict, suffix: str):

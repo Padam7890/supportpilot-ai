@@ -56,6 +56,32 @@ def has_safe_widget_policies(policies: list[dict[str, str | None]]) -> bool:
     )
 
 
+def has_safe_auth_policies(table: str, policies: list[dict[str, str | None]]) -> bool:
+    """Validate pre-auth data is scoped to an identity or opaque challenge token."""
+    by_name = {policy["policyname"]: policy for policy in policies}
+    if table == "auth_identity_memberships":
+        policy = by_name.get("auth_identity_membership_scope", {})
+        using = re.sub(r"\s+", " ", policy.get("qual") or "").lower().replace("::text", "")
+        check = re.sub(r"\s+", " ", policy.get("with_check") or "").lower().replace("::text", "")
+        identity = "identity_id = nullif(current_setting('app.current_identity', true), '')::uuid"
+        tenant = "organization_id = nullif(current_setting('app.current_tenant', true), '')::uuid"
+        return identity in using and tenant in using and identity in check and tenant in check
+    if table == "auth_challenges":
+        policy = by_name.get("auth_challenge_token_scope", {})
+        expected = "token_hash = nullif(current_setting('app.auth_challenge', true), '')"
+        using = re.sub(r"\s+", " ", policy.get("qual") or "").lower().replace("::text", "")
+        check = re.sub(r"\s+", " ", policy.get("with_check") or "").lower().replace("::text", "")
+        return expected in using and expected in check
+    if table == "auth_identities":
+        policy = by_name.get("auth_identity_scope", {})
+        using = re.sub(r"\s+", " ", policy.get("qual") or "").lower().replace("::text", "")
+        check = re.sub(r"\s+", " ", policy.get("with_check") or "").lower().replace("::text", "")
+        email = "email_normalized = nullif(current_setting('app.auth_email', true), '')"
+        identity = "id = nullif(current_setting('app.current_identity', true), '')::uuid"
+        return email in using and identity in using and email in check and identity in check
+    return False
+
+
 async def main() -> None:
     database_url = os.environ.get("DATABASE_URL")
     if not database_url:
@@ -169,6 +195,8 @@ async def main() -> None:
                 "catalog_webhook_events",
                 "recommendation_settings",
                 "recommendation_events",
+                "auth_identity_memberships",
+                "auth_challenges",
             }
             actual_tables = {row.relname for row in rls_tables}
             if actual_tables != expected_tables:
@@ -192,13 +220,38 @@ async def main() -> None:
                     "Support widget RLS policies must limit public reads to enabled widgets "
                     "and tenant-scope all write policies"
                 )
+            auth_context_policies = (
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT tablename, policyname, qual, with_check FROM pg_policies "
+                            "WHERE schemaname = 'public' AND tablename IN "
+                            "('auth_identity_memberships', 'auth_challenges', 'auth_identities')"
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            policies_by_table: dict[str, list[dict[str, str | None]]] = {}
+            for policy in auth_context_policies:
+                policies_by_table.setdefault(policy["tablename"], []).append(dict(policy))
+            if any(
+                not has_safe_auth_policies(table, policies_by_table.get(table, []))
+                for table in ("auth_identity_memberships", "auth_challenges", "auth_identities")
+            ):
+                raise RuntimeError(
+                    "Pre-authentication data must be restricted to its verified identity "
+                    "or opaque challenge token"
+                )
             unsafe_tables = [
                 row.relname
                 for row in rls_tables
                 if not row.relrowsecurity
                 or not row.relforcerowsecurity
                 or (
-                    row.relname != "support_widgets"
+                    row.relname
+                    not in {"support_widgets", "auth_identity_memberships", "auth_challenges"}
                     and (
                         not is_tenant_scoped_policy(row.tenant_using)
                         or not is_tenant_scoped_policy(row.tenant_with_check)
@@ -210,6 +263,21 @@ async def main() -> None:
                     "RLS is not enabled, forced, or tenant-scoped for reads and writes on: "
                     + ", ".join(unsafe_tables)
                 )
+
+            identity_rls = (
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT relrowsecurity, relforcerowsecurity FROM pg_class "
+                            "WHERE oid = 'public.auth_identities'::regclass"
+                        )
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            if not identity_rls["relrowsecurity"] or not identity_rls["relforcerowsecurity"]:
+                raise RuntimeError("Shared auth identities must have forced row-level security")
 
             print(
                 f"Runtime database check passed: {identity['role_name']} on "

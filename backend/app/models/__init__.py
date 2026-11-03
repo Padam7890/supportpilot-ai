@@ -1,5 +1,6 @@
 from app.models.ai_evaluation import AIEvaluation
 from app.models.ai_execution import AIExecution
+from app.models.auth_identity import AuthChallenge, AuthIdentity, AuthIdentityMembership
 from app.models.catalog import CatalogProduct, CatalogSyncJob, CatalogVariant, CatalogWebhookEvent
 from app.models.commerce_action import CommerceAction, CommerceActionAudit
 from app.models.conversation import Conversation
@@ -33,6 +34,9 @@ from app.models.user import User
 __all__ = [
     "AIEvaluation",
     "AIExecution",
+    "AuthChallenge",
+    "AuthIdentity",
+    "AuthIdentityMembership",
     "CatalogProduct",
     "CatalogSyncJob",
     "CatalogVariant",

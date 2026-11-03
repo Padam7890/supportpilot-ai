@@ -26,6 +26,7 @@ from app.models import (
 )
 from app.services import ai_worker
 from app.services.ai_worker import claim_ai_execution, finish_widget_reply, process_ai_execution
+from tests.auth_helpers import verify_registration, workspace_login
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("TEST_DATABASE_URL"),
@@ -139,6 +140,7 @@ async def approved_workspace(client, label: str):
         },
     )
     assert registration.status_code == 202, registration.text
+    await verify_registration(client, registration, email)
 
     platform_email = f"platform-{suffix}@example.com"
     platform_password = "widget-platform-test-password"
@@ -159,12 +161,8 @@ async def approved_workspace(client, label: str):
         headers=bearer(platform_login.json()["access_token"]),
     )
     assert approved.status_code == 200, approved.text
-    login = await client.post(
-        "/api/v1/auth/login",
-        json={"organization_slug": slug, "email": email, "password": password},
-    )
-    assert login.status_code == 200, login.text
-    return login.json(), UUID(tenant_id)
+    login = await workspace_login(client, email, password, slug)
+    return login, UUID(tenant_id)
 
 
 async def setup_widget(

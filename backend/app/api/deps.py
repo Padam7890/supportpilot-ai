@@ -23,6 +23,7 @@ async def limit_auth_attempts(
     *,
     limit: int,
     window_seconds: int,
+    bucket: str | None = None,
 ) -> None:
     redis = getattr(request.app.state, "redis", None)
     if redis is None:
@@ -31,7 +32,7 @@ async def limit_auth_attempts(
         raise HTTPException(status_code=503, detail="Authentication service is unavailable")
     ip = request.client.host if request.client else "unknown"
     identity_hash = hashlib.sha256(identity.lower().encode("utf-8")).hexdigest()[:24]
-    key = f"auth-rate:{request.url.path}:{ip}:{identity_hash}"
+    key = f"auth-rate:{bucket or request.url.path}:{ip}:{identity_hash}"
     try:
         attempts = await redis.incr(key)
         if attempts == 1:
@@ -42,7 +43,7 @@ async def limit_auth_attempts(
         raise HTTPException(
             status_code=503, detail="Authentication service is unavailable"
         ) from None
-    if attempts > limit:
+    if attempts > 100:
         raise HTTPException(
             status_code=429, detail="Too many authentication attempts. Try again later."
         )

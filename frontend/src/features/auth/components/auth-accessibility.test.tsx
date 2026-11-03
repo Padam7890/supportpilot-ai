@@ -1,5 +1,5 @@
 import axe from "axe-core";
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import RegistrationPendingPage from "@/app/(auth)/register/pending/page";
 import { AuthPanel } from "./auth-form";
@@ -34,6 +34,19 @@ describe("authentication accessibility", () => {
   it("checks the registration form", async () => {
     render(<AuthPanel mode="register"/>);
     await expectNoSeriousA11yViolations();
+  });
+
+  it("suggests a slug from the workspace name and keeps a manual edit", () => {
+    render(<AuthPanel mode="register"/>);
+    const organizationName = screen.getByLabelText("Organization name");
+    const organizationSlug = screen.getByLabelText(/Organization slug/);
+
+    fireEvent.change(organizationName, { target: { value: "SupportPilot Demo" } });
+    expect(organizationSlug).toHaveValue("supportpilot-demo");
+
+    fireEvent.change(organizationSlug, { target: { value: "my-custom-slug" } });
+    fireEvent.change(organizationName, { target: { value: "Another Organization" } });
+    expect(organizationSlug).toHaveValue("my-custom-slug");
   });
 
   it("checks the approval-pending page", async () => {

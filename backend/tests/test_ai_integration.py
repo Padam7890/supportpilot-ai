@@ -24,6 +24,7 @@ from app.models import (
 )
 from app.schemas.shopify import ShopifyOrderLookupOut, ShopifyOrderOut
 from app.services.ai_worker import claim_ai_execution, process_ai_execution
+from tests.auth_helpers import verify_registration, workspace_login
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("TEST_DATABASE_URL"),
@@ -64,6 +65,7 @@ async def approved_workspace(client, platform, label: str):
         },
     )
     assert registration.status_code == 202, registration.text
+    await verify_registration(client, registration, email)
     pending = await client.get(
         "/api/v1/platform/tenants?approval_status=pending",
         headers=bearer(platform["access_token"]),
@@ -74,12 +76,7 @@ async def approved_workspace(client, platform, label: str):
         headers=bearer(platform["access_token"]),
     )
     assert approved.status_code == 200
-    login = await client.post(
-        "/api/v1/auth/login",
-        json={"organization_slug": slug, "email": email, "password": password},
-    )
-    assert login.status_code == 200, login.text
-    return login.json()
+    return await workspace_login(client, email, password, slug)
 
 
 class MockProviderResponse:
@@ -89,7 +86,9 @@ class MockProviderResponse:
     @staticmethod
     def json():
         return {
-            "choices": [{"message": {"content": "Unused products may be returned within thirty days."}}],
+            "choices": [
+                {"message": {"content": "Unused products may be returned within thirty days."}}
+            ],
             "usage": {"prompt_tokens": 21, "completion_tokens": 11, "total_tokens": 32},
         }
 
@@ -190,12 +189,24 @@ async def test_ai_reply_draft_is_grounded_safe_and_never_sent(client, monkeypatc
         assert kwargs["customer_email"] == verified_order_email
         assert kwargs["order_number"] == "#42"
         return ShopifyOrderLookupOut(
-            customer={"display_name": "Riley Customer", "email": verified_order_email, "verified_by": "order_number_and_email"},
+            customer={
+                "display_name": "Riley Customer",
+                "email": verified_order_email,
+                "verified_by": "order_number_and_email",
+            },
             matched_order=ShopifyOrderOut(
-                id="gid://shopify/Order/42", order_number="#42", created_at="2026-01-01T00:00:00Z",
-                financial_status="PAID", fulfillment_status="FULFILLED", total_amount="19.95", currency="USD", tracking=[],
+                id="gid://shopify/Order/42",
+                order_number="#42",
+                created_at="2026-01-01T00:00:00Z",
+                financial_status="PAID",
+                fulfillment_status="FULFILLED",
+                total_amount="19.95",
+                currency="USD",
+                tracking=[],
             ),
-            recent_orders=[], has_next_page=False, next_cursor=None,
+            recent_orders=[],
+            has_next_page=False,
+            next_cursor=None,
         )
 
     monkeypatch.setattr(ai_routes, "verified_lookup", mock_verified_lookup)
@@ -208,7 +219,11 @@ async def test_ai_reply_draft_is_grounded_safe_and_never_sent(client, monkeypatc
     queued = await client.post(
         "/api/v1/ai/reply-drafts",
         headers=bearer(owner["access_token"]),
-        json={"conversation_id": str(conversation_id), "instructions": "Be concise", "shopify_order_number": "#42"},
+        json={
+            "conversation_id": str(conversation_id),
+            "instructions": "Be concise",
+            "shopify_order_number": "#42",
+        },
     )
     assert queued.status_code == 202, queued.text
     response_body = queued.json()
@@ -253,7 +268,9 @@ async def test_ai_reply_draft_is_grounded_safe_and_never_sent(client, monkeypatc
         json={**evaluation_payload, "rating": "not_helpful", "category": "accuracy"},
     )
     assert changed_evaluation.status_code == 200
-    summary = await client.get("/api/v1/analytics/evaluations", headers=bearer(owner["access_token"]))
+    summary = await client.get(
+        "/api/v1/analytics/evaluations", headers=bearer(owner["access_token"])
+    )
     assert summary.status_code == 200, summary.text
     assert summary.json()["rated"] == 1
     assert summary.json()["helpful"] == 0

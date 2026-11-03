@@ -8,29 +8,39 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import limit_auth_attempts, require_roles
-from app.core.config import settings
 from app.core.security import (
-    create_access_token,
     create_invitation_token,
-    create_refresh_token,
     decode_invitation_token,
     hash_password,
     hash_token,
+    verify_password,
 )
-from app.db.session import get_db, set_tenant_context
-from app.models import Organization, RefreshSession, TeamInvitation, User
+from app.db.session import (
+    get_db,
+    set_auth_email_context,
+    set_auth_identity_context,
+    set_tenant_context,
+)
+from app.features.auth.challenges import (
+    CHALLENGE_TTL,
+    OTP_MAX_SENDS,
+    create_challenge,
+    email_hint,
+    normalize_email,
+)
+from app.models import AuthIdentity, AuthIdentityMembership, Organization, TeamInvitation, User
 from app.schemas.auth import (
     InviteAccept,
     InviteCreate,
     InviteCreated,
     InviteOut,
     InvitePreview,
-    TokenOut,
-    UserOut,
+    LoginStartOut,
 )
 from app.schemas.errors import COMMON_ERROR_RESPONSES
 
 invitations_router = APIRouter(tags=["team"], responses=COMMON_ERROR_RESPONSES)
+
 
 @invitations_router.post("/users/invitations", response_model=InviteCreated, status_code=201)
 async def create_invitation(
@@ -111,12 +121,12 @@ async def revoke_invitation(
     invitation.revoked_at = datetime.now(UTC)
 
 
-@invitations_router.post("/auth/invitations/accept", response_model=TokenOut, status_code=201)
+@invitations_router.post("/auth/invitations/accept", response_model=LoginStartOut, status_code=201)
 async def accept_invitation(
     data: InviteAccept,
     request: Request,
     db: AsyncSession = Depends(get_db),
-) -> TokenOut:
+) -> LoginStartOut:
     await limit_auth_attempts(request, data.invite_token, limit=10, window_seconds=900)
     try:
         claims = decode_invitation_token(data.invite_token)
@@ -147,39 +157,73 @@ async def accept_invitation(
     organization = await db.get(Organization, organization_id)
     if organization is None or organization.approval_status != "approved":
         raise HTTPException(status_code=403, detail="Tenant registration is not approved")
+    normalized_email = normalize_email(invitation.email)
     email_exists = await db.scalar(
         select(User.id).where(
-            User.organization_id == organization_id, User.email == invitation.email
+            User.organization_id == organization_id, User.email == normalized_email
         )
     )
     if email_exists:
         raise HTTPException(status_code=409, detail="An account with this email already exists")
+    await set_auth_email_context(db, normalized_email)
+    identity = await db.scalar(
+        select(AuthIdentity).where(AuthIdentity.email_normalized == normalized_email)
+    )
+    if identity is not None and (
+        identity.password_hash is None
+        or identity.password_reset_required
+        or not verify_password(data.password, identity.password_hash)
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Use your existing workspace password, or reset it before accepting this invitation.",
+        )
+    if identity is None:
+        identity = AuthIdentity(
+            email_normalized=normalized_email,
+            password_hash=hash_password(data.password),
+            password_reset_required=False,
+        )
+        db.add(identity)
+        await db.flush()
     user = User(
         organization_id=organization_id,
-        email=invitation.email,
+        email=normalized_email,
         full_name=data.full_name.strip(),
-        password_hash=hash_password(data.password),
+        password_hash=identity.password_hash or hash_password(data.password),
         role=invitation.role,
     )
     db.add(user)
     invitation.accepted_at = now
     await db.flush()
-    access_token = create_access_token(str(user.id), str(organization_id))
-    refresh_token, refresh_expires = create_refresh_token(str(user.id), str(organization_id))
     db.add(
-        RefreshSession(
+        AuthIdentityMembership(
+            identity_id=identity.id,
             organization_id=organization_id,
             user_id=user.id,
-            token_hash=hash_token(refresh_token),
-            expires_at=refresh_expires,
         )
     )
-    await db.flush()
-    return TokenOut(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        expires_in=settings.access_token_expire_minutes * 60,
-        user=UserOut.model_validate(user),
+    await set_auth_identity_context(db, identity.id)
+    await limit_auth_attempts(
+        request,
+        normalized_email,
+        limit=OTP_MAX_SENDS,
+        window_seconds=600,
+        bucket="auth-otp-send",
+    )
+    _, challenge_token, _ = await create_challenge(
+        db,
+        identity=identity,
+        email=normalized_email,
+        purpose="login",
+        organization_id=organization_id,
+        user_id=user.id,
+    )
+    return LoginStartOut(
+        status="otp_required",
+        challenge_token=challenge_token,
+        email_hint=email_hint(normalized_email),
+        expires_in=int(CHALLENGE_TTL.total_seconds()),
     )
 
 
@@ -213,4 +257,3 @@ async def preview_invitation(
         role=invitation.role,
         expires_at=invitation.expires_at,
     )
-

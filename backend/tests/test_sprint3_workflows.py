@@ -9,6 +9,13 @@ from sqlalchemy.exc import IntegrityError
 from app.core.security import hash_password
 from app.db.session import SessionLocal, set_tenant_context
 from app.models import Message, PlatformOwner, Ticket
+from tests.auth_helpers import (
+    accept_invitation,
+    auth_code,
+    verify_login_challenge,
+    verify_registration,
+    workspace_login,
+)
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("TEST_DATABASE_URL"),
@@ -36,6 +43,27 @@ async def submit_registration(client, label: str):
     }
 
 
+@pytest.mark.anyio
+async def test_registration_rejects_duplicate_organization_slug(client):
+    suffix = uuid4().hex[:10]
+    payload = {
+        "organization_name": "Shared Slug Workspace",
+        "organization_slug": f"shared-slug-{suffix}",
+        "full_name": "Workspace Owner",
+        "email": f"owner-{suffix}@example.com",
+        "password": "a-long-test-password",
+    }
+    first = await client.post("/api/v1/auth/register", json=payload)
+    assert first.status_code == 202, first.text
+
+    duplicate = await client.post(
+        "/api/v1/auth/register",
+        json={**payload, "email": f"another-{suffix}@example.com"},
+    )
+    assert duplicate.status_code == 409, duplicate.text
+    assert duplicate.json()["detail"] == "Organization slug is already in use"
+
+
 async def create_platform_owner(client):
     email = f"platform-{uuid4().hex[:10]}@example.com"
     password = "a-long-platform-test-password"
@@ -51,6 +79,7 @@ async def create_platform_owner(client):
 
 async def register(client, label: str):
     registration = await submit_registration(client, label)
+    await verify_registration(client, registration, registration["email"])
     platform = await create_platform_owner(client)
     tenants = await client.get(
         "/api/v1/platform/tenants?approval_status=pending",
@@ -66,16 +95,9 @@ async def register(client, label: str):
         headers=auth(platform["access_token"]),
     )
     assert approval.status_code == 200, approval.text
-    login = await client.post(
-        "/api/v1/auth/login",
-        json={
-            "organization_slug": registration["organization_slug"],
-            "email": registration["email"],
-            "password": registration["password"],
-        },
+    return await workspace_login(
+        client, registration["email"], registration["password"], registration["organization_slug"]
     )
-    assert login.status_code == 200, login.text
-    return login.json()
 
 
 def auth(token: str):
@@ -104,21 +126,18 @@ async def test_registration_refresh_rotation_and_logout(client):
         "/api/v1/auth/refresh", json={"refresh_token": rotated.json()["refresh_token"]}
     )
     assert revoked.status_code == 401
-    login = await client.post(
-        "/api/v1/auth/login",
-        json={
-            "organization_slug": current.json()["organization"]["slug"],
-            "email": tokens["user"]["email"],
-            "password": "a-long-test-password",
-        },
+    login = await workspace_login(
+        client,
+        tokens["user"]["email"],
+        "a-long-test-password",
+        current.json()["organization"]["slug"],
     )
-    assert login.status_code == 200
     logout = await client.post(
-        "/api/v1/auth/logout", json={"refresh_token": login.json()["refresh_token"]}
+        "/api/v1/auth/logout", json={"refresh_token": login["refresh_token"]}
     )
     assert logout.status_code == 204
     expired = await client.post(
-        "/api/v1/auth/refresh", json={"refresh_token": login.json()["refresh_token"]}
+        "/api/v1/auth/refresh", json={"refresh_token": login["refresh_token"]}
     )
     assert expired.status_code == 401
 
@@ -127,15 +146,12 @@ async def test_registration_refresh_rotation_and_logout(client):
 async def test_workspace_user_can_list_and_revoke_only_their_own_sessions(client):
     owner = await register(client, "securitysessions")
     profile = await client.get("/api/v1/auth/me", headers=auth(owner["access_token"]))
-    second_login = await client.post(
-        "/api/v1/auth/login",
-        json={
-            "organization_slug": profile.json()["organization"]["slug"],
-            "email": owner["user"]["email"],
-            "password": "a-long-test-password",
-        },
+    await workspace_login(
+        client,
+        owner["user"]["email"],
+        "a-long-test-password",
+        profile.json()["organization"]["slug"],
     )
-    assert second_login.status_code == 200, second_login.text
     sessions = await client.get("/api/v1/auth/sessions", headers=auth(owner["access_token"]))
     assert sessions.status_code == 200
     assert sessions.json()["total"] == 2
@@ -158,7 +174,8 @@ async def test_workspace_user_can_list_and_revoke_only_their_own_sessions(client
 @pytest.mark.anyio
 async def test_tenant_registration_requires_platform_approval(client):
     registration = await submit_registration(client, "Approval")
-    assert registration["status"] == "pending_approval"
+    await verify_registration(client, registration, registration["email"])
+    assert registration["status"] == "email_verification_required"
     assert "access_token" not in registration
     assert "refresh_token" not in registration
     blocked_login = await client.post(
@@ -169,10 +186,8 @@ async def test_tenant_registration_requires_platform_approval(client):
             "password": registration["password"],
         },
     )
-    assert blocked_login.status_code == 403
-    assert blocked_login.json()["detail"] == "Tenant registration is pending approval"
-    assert blocked_login.json()["status"] == 403
-    assert blocked_login.json()["code"] == "forbidden"
+    assert blocked_login.status_code == 401
+    assert "access_token" not in blocked_login.json()
 
     platform = await create_platform_owner(client)
     unauthenticated = await client.get("/api/v1/platform/tenants")
@@ -194,25 +209,106 @@ async def test_tenant_registration_requires_platform_approval(client):
     assert approved.json()["reviewed_by_platform_owner_id"] == platform["platform_owner"]["id"]
     assert approved.json()["reviewed_at"]
 
-    logged_in = await client.post(
-        "/api/v1/auth/login",
-        json={
-            "organization_slug": registration["organization_slug"],
-            "email": registration["email"],
-            "password": registration["password"],
-        },
+    logged_in = await workspace_login(
+        client, registration["email"], registration["password"], registration["organization_slug"]
     )
-    assert logged_in.status_code == 200
-    assert logged_in.json()["user"]["role"] == "owner"
+    assert logged_in["user"]["role"] == "owner"
     tenant_token_denied = await client.get(
-        "/api/v1/platform/tenants", headers=auth(logged_in.json()["access_token"])
+        "/api/v1/platform/tenants", headers=auth(logged_in["access_token"])
     )
     assert tenant_token_denied.status_code == 401
     cross_refresh = await client.post(
         "/api/v1/platform/auth/refresh",
-        json={"refresh_token": logged_in.json()["refresh_token"]},
+        json={"refresh_token": logged_in["refresh_token"]},
     )
     assert cross_refresh.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_shared_identity_requires_workspace_choice_and_preserves_password(client):
+    email = f"shared-{uuid4().hex[:10]}@example.com"
+    first_password = "first-workspace-password"
+    second_password = "second-workspace-password"
+    registrations = []
+    for label, password in (("Shared First", first_password), ("Shared Second", second_password)):
+        suffix = uuid4().hex[:8]
+        response = await client.post(
+            "/api/v1/auth/register",
+            json={
+                "organization_name": f"{label} Workspace",
+                "organization_slug": f"{label.lower().replace(' ', '-')}-{suffix}",
+                "full_name": "Shared User",
+                "email": email,
+                "password": password,
+            },
+        )
+        assert response.status_code == 202, response.text
+        await verify_registration(client, response, email)
+        registrations.append({**response.json(), "email": email, "password": password})
+
+    platform = await create_platform_owner(client)
+    platform_headers = auth(platform["access_token"])
+    pending = await client.get(
+        "/api/v1/platform/tenants?approval_status=pending", headers=platform_headers
+    )
+    for registration in registrations:
+        tenant = next(
+            item
+            for item in pending.json()["items"]
+            if item["slug"] == registration["organization_slug"]
+        )
+        approved = await client.post(
+            f"/api/v1/platform/tenants/{tenant['id']}/approve", headers=platform_headers
+        )
+        assert approved.status_code == 200
+
+    start = await client.post(
+        "/api/v1/auth/login", json={"email": email, "password": first_password}
+    )
+    assert start.status_code == 200, start.text
+    assert start.json()["status"] == "workspace_selection_required"
+    assert "access_token" not in start.json()
+    assert len(start.json()["workspaces"]) == 2
+
+    chosen = start.json()["workspaces"][0]
+    selected = await client.post(
+        "/api/v1/auth/login/select-workspace",
+        json={
+            "challenge_token": start.json()["challenge_token"],
+            "membership_id": chosen["membership_id"],
+        },
+    )
+    assert selected.status_code == 200, selected.text
+    assert selected.json()["status"] == "otp_required"
+    assert "access_token" not in selected.json()
+    verified = await client.post(
+        "/api/v1/auth/login/verify-code",
+        json={
+            "challenge_token": start.json()["challenge_token"],
+            "code": auth_code(email, "login"),
+        },
+    )
+    assert verified.status_code == 200, verified.text
+    profile = await client.get("/api/v1/auth/me", headers=auth(verified.json()["access_token"]))
+    selected_slug = next(
+        workspace["organization_slug"]
+        for workspace in start.json()["workspaces"]
+        if workspace["membership_id"] == chosen["membership_id"]
+    )
+    assert profile.json()["organization"]["slug"] == selected_slug
+    replay = await client.post(
+        "/api/v1/auth/login/verify-code",
+        json={
+            "challenge_token": start.json()["challenge_token"],
+            "code": auth_code(email, "login"),
+        },
+    )
+    assert replay.status_code == 400
+
+    overwritten_password = await client.post(
+        "/api/v1/auth/login", json={"email": email, "password": second_password}
+    )
+    assert overwritten_password.status_code == 401
 
 
 @pytest.mark.anyio
@@ -250,7 +346,10 @@ async def test_platform_refresh_rotation_logout_and_tenant_session_boundary(clie
 
     fresh_platform = await client.post(
         "/api/v1/platform/auth/login",
-        json={"email": platform["platform_owner"]["email"], "password": "a-long-platform-test-password"},
+        json={
+            "email": platform["platform_owner"]["email"],
+            "password": "a-long-platform-test-password",
+        },
     )
     assert fresh_platform.status_code == 200
     logout = await client.post(
@@ -268,6 +367,7 @@ async def test_platform_refresh_rotation_logout_and_tenant_session_boundary(clie
 @pytest.mark.anyio
 async def test_rejected_tenant_is_preserved_and_can_be_reopened(client):
     registration = await submit_registration(client, "Rejected")
+    await verify_registration(client, registration, registration["email"])
     platform = await create_platform_owner(client)
     headers = auth(platform["access_token"])
     pending = await client.get("/api/v1/platform/tenants", headers=headers)
@@ -286,10 +386,8 @@ async def test_rejected_tenant_is_preserved_and_can_be_reopened(client):
             "password": registration["password"],
         },
     )
-    assert login.status_code == 403
-    assert login.json()["detail"] == "Tenant registration was rejected"
-    assert login.json()["status"] == 403
-    assert login.json()["code"] == "forbidden"
+    assert login.status_code == 401
+    assert "access_token" not in login.json()
 
     duplicate_slug = await client.post(
         "/api/v1/auth/register",
@@ -310,24 +408,20 @@ async def test_rejected_tenant_is_preserved_and_can_be_reopened(client):
         f"/api/v1/platform/tenants/{tenant['id']}/approve", headers=headers
     )
     assert approved.status_code == 200
-    after_approval = await client.post(
-        "/api/v1/auth/login",
-        json={
-            "organization_slug": registration["organization_slug"],
-            "email": registration["email"],
-            "password": registration["password"],
-        },
+    after_approval = await workspace_login(
+        client, registration["email"], registration["password"], registration["organization_slug"]
     )
-    assert after_approval.status_code == 200
+    assert after_approval["user"]["role"] == "owner"
 
 
 @pytest.mark.anyio
 async def test_invitation_role_permissions_and_single_use(client):
     owner = await register(client, "team")
+    agent_email = f"agent-{uuid4().hex[:8]}@example.com"
     invite = await client.post(
         "/api/v1/users/invitations",
         headers=auth(owner["access_token"]),
-        json={"email": f"agent-{uuid4().hex[:8]}@example.com", "role": "agent"},
+        json={"email": agent_email, "role": "agent"},
     )
     assert invite.status_code == 201, invite.text
     token = invite.json()["invite_token"]
@@ -343,7 +437,8 @@ async def test_invitation_role_permissions_and_single_use(client):
         },
     )
     assert accepted.status_code == 201
-    assert accepted.json()["user"]["role"] == "agent"
+    accepted_tokens = await verify_login_challenge(client, accepted, agent_email)
+    assert accepted_tokens["user"]["role"] == "agent"
     used_again = await client.post(
         "/api/v1/auth/invitations/accept",
         json={
@@ -354,10 +449,11 @@ async def test_invitation_role_permissions_and_single_use(client):
     )
     assert used_again.status_code == 400
 
+    viewer_email = f"viewer-{uuid4().hex[:8]}@example.com"
     viewer_invite = await client.post(
         "/api/v1/users/invitations",
         headers=auth(owner["access_token"]),
-        json={"email": f"viewer-{uuid4().hex[:8]}@example.com", "role": "viewer"},
+        json={"email": viewer_email, "role": "viewer"},
     )
     viewer = await client.post(
         "/api/v1/auth/invitations/accept",
@@ -368,13 +464,14 @@ async def test_invitation_role_permissions_and_single_use(client):
         },
     )
     assert viewer.status_code == 201
+    viewer_tokens = await verify_login_challenge(client, viewer, viewer_email)
     denied = await client.post(
         "/api/v1/customers",
-        headers=auth(viewer.json()["access_token"]),
+        headers=auth(viewer_tokens["access_token"]),
         json={"name": "Blocked", "email": "blocked@example.com"},
     )
     assert denied.status_code == 403
-    allowed = await client.get("/api/v1/customers", headers=auth(viewer.json()["access_token"]))
+    allowed = await client.get("/api/v1/customers", headers=auth(viewer_tokens["access_token"]))
     assert allowed.status_code == 200
 
     last_owner = await client.patch(
@@ -405,10 +502,11 @@ async def test_ticket_customer_message_search_stats_and_tenant_foreign_keys(clie
     )
     assert ticket.status_code == 201
     ticket_id = ticket.json()["id"]
+    assignee_email = f"assignee-{uuid4().hex[:8]}@example.com"
     invitation = await client.post(
         "/api/v1/users/invitations",
         headers=auth(owner["access_token"]),
-        json={"email": f"assignee-{uuid4().hex[:8]}@example.com", "role": "agent"},
+        json={"email": assignee_email, "role": "agent"},
     )
     agent = await client.post(
         "/api/v1/auth/invitations/accept",
@@ -418,10 +516,11 @@ async def test_ticket_customer_message_search_stats_and_tenant_foreign_keys(clie
             "password": "assigned-agent-password",
         },
     )
+    agent_tokens = await accept_invitation(client, agent, assignee_email)
     assign = await client.patch(
         f"/api/v1/tickets/{ticket_id}",
         headers=auth(owner["access_token"]),
-        json={"assignee_id": agent.json()["user"]["id"]},
+        json={"assignee_id": agent_tokens["user"]["id"]},
     )
     assert assign.status_code == 200
     assert assign.json()["assignee_name"] == "Assigned Agent"
@@ -436,11 +535,21 @@ async def test_ticket_customer_message_search_stats_and_tenant_foreign_keys(clie
         f"/api/v1/customers/{customer.json()['id']}/tickets", headers=auth(owner["access_token"])
     )
     assert customer_page.json()["items"][0]["id"] == ticket_id
-    global_search = await client.get("/api/v1/search?q=delivery", headers=auth(owner["access_token"]))
+    global_search = await client.get(
+        "/api/v1/search?q=delivery", headers=auth(owner["access_token"])
+    )
     assert global_search.status_code == 200
-    assert any(item["kind"] == "ticket" and item["id"] == ticket_id for item in global_search.json()["items"])
-    customer_search = await client.get("/api/v1/search?q=Morgan", headers=auth(owner["access_token"]))
-    assert any(item["kind"] == "customer" and item["id"] == customer.json()["id"] for item in customer_search.json()["items"])
+    assert any(
+        item["kind"] == "ticket" and item["id"] == ticket_id
+        for item in global_search.json()["items"]
+    )
+    customer_search = await client.get(
+        "/api/v1/search?q=Morgan", headers=auth(owner["access_token"])
+    )
+    assert any(
+        item["kind"] == "customer" and item["id"] == customer.json()["id"]
+        for item in customer_search.json()["items"]
+    )
 
     conversation = await client.post(
         f"/api/v1/tickets/{ticket_id}/conversations",
@@ -476,7 +585,9 @@ async def test_ticket_customer_message_search_stats_and_tenant_foreign_keys(clie
     )
     hidden = await client.get(f"/api/v1/tickets/{ticket_id}", headers=auth(other["access_token"]))
     assert hidden.status_code == 404
-    isolated_search = await client.get("/api/v1/search?q=Morgan", headers=auth(other["access_token"]))
+    isolated_search = await client.get(
+        "/api/v1/search?q=Morgan", headers=auth(other["access_token"])
+    )
     assert isolated_search.status_code == 200
     assert isolated_search.json()["items"] == []
 
@@ -580,16 +691,12 @@ async def test_inbox_cursor_read_state_and_tenant_scope(client):
         third_page.json()["items"][0]["ticket_id"],
     ] == sorted(ticket_ids[1:], reverse=True)
 
-    high_priority = await client.get(
-        "/api/v1/inbox?priority=high", headers=headers
-    )
+    high_priority = await client.get("/api/v1/inbox?priority=high", headers=headers)
     assert [item["ticket_id"] for item in high_priority.json()["items"]] == [ticket_ids[0]]
     unassigned = await client.get("/api/v1/inbox?scope=unassigned", headers=headers)
     assert len(unassigned.json()["items"]) == 3
 
-    marked = await client.post(
-        f"/api/v1/conversations/{conversation_id}/read", headers=headers
-    )
+    marked = await client.post(f"/api/v1/conversations/{conversation_id}/read", headers=headers)
     assert marked.status_code == 200, marked.text
     cleared = await client.get("/api/v1/inbox?search=Inbox+question+0", headers=headers)
     assert cleared.json()["items"][0]["unread_count"] == 0
@@ -607,8 +714,9 @@ async def test_inbox_cursor_read_state_and_tenant_scope(client):
             "password": "inbox-agent-password",
         },
     )
+    agent_tokens = await accept_invitation(client, agent, "inbox-agent@example.com")
     other_member = await client.get(
-        "/api/v1/inbox?search=Inbox+question+0", headers=auth(agent.json()["access_token"])
+        "/api/v1/inbox?search=Inbox+question+0", headers=auth(agent_tokens["access_token"])
     )
     assert other_member.json()["items"][0]["unread_count"] == 2
 
@@ -712,12 +820,13 @@ async def test_internal_notes_are_private_and_teammates_can_claim_unassigned_tic
             "password": "claimer-long-password",
         },
     )
+    agent_tokens = await accept_invitation(client, agent, "claimer@example.com")
     claim = await client.post(
         f"/api/v1/tickets/{ticket.json()['id']}/assign-to-me",
-        headers=auth(agent.json()["access_token"]),
+        headers=auth(agent_tokens["access_token"]),
     )
     assert claim.status_code == 200, claim.text
-    assert claim.json()["assignee_id"] == agent.json()["user"]["id"]
+    assert claim.json()["assignee_id"] == agent_tokens["user"]["id"]
     second_invitation = await client.post(
         "/api/v1/users/invitations",
         headers=auth(owner["access_token"]),
@@ -731,9 +840,12 @@ async def test_internal_notes_are_private_and_teammates_can_claim_unassigned_tic
             "password": "second-claimer-password",
         },
     )
+    second_agent_tokens = await accept_invitation(
+        client, second_agent, "second-claimer@example.com"
+    )
     conflict = await client.post(
         f"/api/v1/tickets/{ticket.json()['id']}/assign-to-me",
-        headers=auth(second_agent.json()["access_token"]),
+        headers=auth(second_agent_tokens["access_token"]),
     )
     assert conflict.status_code == 409
     activity = await client.get(

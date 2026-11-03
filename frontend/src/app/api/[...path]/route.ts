@@ -5,7 +5,9 @@ const TENANT_ACCESS_COOKIE = "supportpilot_access";
 const TENANT_REFRESH_COOKIE = "supportpilot_refresh";
 const PLATFORM_ACCESS_COOKIE = "supportpilot_platform_access";
 const PLATFORM_REFRESH_COOKIE = "supportpilot_platform_refresh";
+const TENANT_CHALLENGE_COOKIE = "supportpilot_auth_challenge";
 const REFRESH_MAX_AGE = 60 * 60 * 24 * 7;
+const AUTH_CHALLENGE_MAX_AGE = 60 * 10;
 const backendUrl = (process.env.BACKEND_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
 
 type TokenResponse = {
@@ -46,6 +48,26 @@ function clearSessionCookies(response: NextResponse, platform: boolean) {
   };
   response.cookies.set(platform ? PLATFORM_ACCESS_COOKIE : TENANT_ACCESS_COOKIE, "", common);
   response.cookies.set(platform ? PLATFORM_REFRESH_COOKIE : TENANT_REFRESH_COOKIE, "", common);
+}
+
+function setAuthChallengeCookie(response: NextResponse, token: string) {
+  response.cookies.set(TENANT_CHALLENGE_COOKIE, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: AUTH_CHALLENGE_MAX_AGE,
+  });
+}
+
+function clearAuthChallengeCookie(response: NextResponse) {
+  response.cookies.set(TENANT_CHALLENGE_COOKIE, "", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 0,
+  });
 }
 
 function isMutation(method: string) {
@@ -169,6 +191,12 @@ async function forward(
   const isAcceptInvite = normalizedPath === "/auth/invitations/accept";
   const isTenantRefresh = normalizedPath === "/auth/refresh";
   const isTenantLogout = normalizedPath === "/auth/logout";
+  const isRegistrationVerify = normalizedPath === "/auth/register/verify-email";
+  const isLoginVerify = normalizedPath === "/auth/login/verify-code";
+  const isLoginWorkspace = normalizedPath === "/auth/login/select-workspace";
+  const isAuthResend = normalizedPath === "/auth/resend-code";
+  const isPasswordResetRequest = normalizedPath === "/auth/password-reset/request";
+  const isPasswordResetComplete = normalizedPath === "/auth/password-reset/complete";
   const isPlatformLogin = normalizedPath === "/platform/auth/login";
   const isPlatformRefresh = normalizedPath === "/platform/auth/refresh";
   const isPlatformLogout = normalizedPath === "/platform/auth/logout";
@@ -180,6 +208,9 @@ async function forward(
   const refreshCookie = platform ? PLATFORM_REFRESH_COOKIE : TENANT_REFRESH_COOKIE;
   const refreshToken = cookieStore.get(refreshCookie)?.value;
   const accessToken = cookieStore.get(accessCookie)?.value;
+  const authChallenge = cookieStore.get(TENANT_CHALLENGE_COOKIE)?.value;
+  const isAuthStart = isTenantLogin || isTenantRegister || isAcceptInvite || isPasswordResetRequest;
+  const needsAuthChallenge = isRegistrationVerify || isLoginVerify || isLoginWorkspace || isAuthResend || isPasswordResetComplete;
 
   let requestBody: BodyInit | undefined;
   if (!["GET", "HEAD"].includes(request.method)) {
@@ -201,6 +232,20 @@ async function forward(
   if (isRefresh || isLogout) {
     requestBody = JSON.stringify({ refresh_token: refreshToken ?? "" });
   }
+  if (needsAuthChallenge) {
+    if (!authChallenge) {
+      return localProblem(request, 401, "Sign-in verification expired. Start again.", "auth_challenge_expired");
+    }
+    if (typeof requestBody !== "string") {
+      return localProblem(request, 400, "A JSON request body is required", "invalid_request");
+    }
+    try {
+      const challengeBody = JSON.parse(requestBody) as Record<string, unknown>;
+      requestBody = JSON.stringify({ ...challengeBody, challenge_token: authChallenge });
+    } catch {
+      return localProblem(request, 400, "Invalid JSON request body", "invalid_request");
+    }
+  }
 
   try {
     if (isLogout) {
@@ -213,16 +258,41 @@ async function forward(
     let upstream = await requestBackend(
       request,
       path,
-      isLogin || isRefresh || isTenantRegister || isAcceptInvite ? undefined : accessToken,
+      isLogin || isRefresh || isAuthStart || needsAuthChallenge ? undefined : accessToken,
       requestBody,
     );
-    if (isTenantRegister) {
+    if (isAuthStart) {
       const raw = await upstream.text();
-      const response = responseFromUpstream(upstream, raw);
-      if (upstream.ok) clearSessionCookies(response, false);
+      if (!upstream.ok) {
+        const response = responseFromUpstream(upstream, raw);
+        clearAuthChallengeCookie(response);
+        return response;
+      }
+      const body = JSON.parse(raw) as Record<string, unknown>;
+      const challengeToken = typeof body.challenge_token === "string" ? body.challenge_token : null;
+      delete body.challenge_token;
+      const response = NextResponse.json(body, { status: upstream.status });
+      if (challengeToken) setAuthChallengeCookie(response, challengeToken);
+      else clearAuthChallengeCookie(response);
+      if (isTenantRegister) clearSessionCookies(response, false);
       return response;
     }
-    if (isLogin || isAcceptInvite || isRefresh) {
+    if (isLoginVerify) {
+      const raw = await upstream.text();
+      if (!upstream.ok) return responseFromUpstream(upstream, raw);
+      const tokens = JSON.parse(raw) as TokenResponse;
+      const response = NextResponse.json({ user: tokens.user }, { status: upstream.status });
+      setSessionCookies(response, tokens, false);
+      clearAuthChallengeCookie(response);
+      return response;
+    }
+    if (isRegistrationVerify || isPasswordResetComplete) {
+      const raw = await upstream.text();
+      const response = responseFromUpstream(upstream, raw);
+      if (upstream.ok) clearAuthChallengeCookie(response);
+      return response;
+    }
+    if (isLogin || isRefresh) {
       const raw = await upstream.text();
       if (!upstream.ok) return responseFromUpstream(upstream, raw);
       const tokens = JSON.parse(raw) as TokenResponse;

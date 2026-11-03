@@ -9,6 +9,15 @@ export type RegistrationPending = {
   organization_name: string;
   organization_slug: string;
 };
+export type WorkspaceChoice = {
+  membership_id: string;
+  organization_name: string;
+  organization_slug: string;
+};
+export type LoginStart =
+  | { status: "workspace_selection_required"; workspaces: WorkspaceChoice[]; email_hint?: string }
+  | { status: "otp_required"; workspaces: []; email_hint?: string };
+export type AuthFlowStatus = { status: string; message: string; email_hint?: string };
 export type AuthSessionPage = components["schemas"]["SessionPage"];
 
 export const currentUserQueryKey = ["me"] as const;
@@ -20,11 +29,45 @@ export const revokeAuthSession = (sessionId: string) =>
   api<void>(`/auth/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
 
 export function login(values: LoginValues) {
-  return api<void>("/auth/login", { method: "POST", body: JSON.stringify(values) });
+  return api<LoginStart>("/auth/login", { method: "POST", body: JSON.stringify(values) });
+}
+
+export function selectLoginWorkspace(membership_id: string) {
+  return api<AuthFlowStatus>("/auth/login/select-workspace", {
+    method: "POST", body: JSON.stringify({ membership_id }),
+  });
+}
+
+export function verifyLoginCode(code: string) {
+  return api<{ user: User }>("/auth/login/verify-code", { method: "POST", body: JSON.stringify({ code }) });
+}
+
+export function resendAuthCode() {
+  return api<AuthFlowStatus>("/auth/resend-code", { method: "POST", body: JSON.stringify({}) });
 }
 
 export function register(values: RegisterValues) {
-  return api<RegistrationPending>("/auth/register", { method: "POST", body: JSON.stringify(values) });
+  return api<{ status: "email_verification_required"; organization_name: string; organization_slug: string }>(
+    "/auth/register", { method: "POST", body: JSON.stringify(values) },
+  );
+}
+
+export function verifyRegistrationCode(code: string) {
+  return api<RegistrationPending>("/auth/register/verify-email", {
+    method: "POST", body: JSON.stringify({ code }),
+  });
+}
+
+export function requestPasswordReset(email: string) {
+  return api<AuthFlowStatus>("/auth/password-reset/request", {
+    method: "POST", body: JSON.stringify({ email }),
+  });
+}
+
+export function completePasswordReset(code: string, new_password: string) {
+  return api<AuthFlowStatus>("/auth/password-reset/complete", {
+    method: "POST", body: JSON.stringify({ code, new_password }),
+  });
 }
 
 export function previewInvitation(token: string) {
@@ -32,7 +75,7 @@ export function previewInvitation(token: string) {
 }
 
 export function acceptInvitation(token: string, values: InviteAcceptanceValues) {
-  return api<void>("/auth/invitations/accept", {
+  return api<AuthFlowStatus>("/auth/invitations/accept", {
     method: "POST",
     body: JSON.stringify({ ...values, invite_token: token }),
   });

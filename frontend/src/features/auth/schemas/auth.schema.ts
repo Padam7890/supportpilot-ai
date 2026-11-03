@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 export const loginSchema = z.object({
-  organization_slug: z.string().min(3, "Enter your organization slug"),
   email: z.email("Enter a valid email address"),
   password: z.string().min(1, "Enter your password"),
 });

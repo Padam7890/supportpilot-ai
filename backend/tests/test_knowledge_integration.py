@@ -15,6 +15,7 @@ from app.models import (
     PlatformOwner,
 )
 from app.worker import claim_one, process_job
+from tests.auth_helpers import verify_registration, workspace_login
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("TEST_DATABASE_URL"),
@@ -42,6 +43,7 @@ async def approved_workspace(client, prefix: str) -> dict:
         },
     )
     assert registration.status_code == 202, registration.text
+    await verify_registration(client, registration, email)
     platform_email = f"platform-{suffix}@example.com"
     platform_password = "platform-owner-test-password"
     async with SessionLocal() as session:
@@ -63,12 +65,7 @@ async def approved_workspace(client, prefix: str) -> dict:
         headers=bearer(platform.json()["access_token"]),
     )
     assert approved.status_code == 200, approved.text
-    login = await client.post(
-        "/api/v1/auth/login",
-        json={"organization_slug": slug, "email": email, "password": password},
-    )
-    assert login.status_code == 200, login.text
-    return login.json()
+    return await workspace_login(client, email, password, slug)
 
 
 async def upload_text(client, owner: dict, name: str, content: bytes):
