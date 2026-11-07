@@ -130,6 +130,7 @@ class SupportResponseAnalyticsOut(BaseModel):
 
 class OperationalAlertOut(BaseModel):
     code: Literal[
+        "background_jobs_overdue",
         "ai_execution_failed",
         "automation_execution_failed",
         "catalog_sync_failed",

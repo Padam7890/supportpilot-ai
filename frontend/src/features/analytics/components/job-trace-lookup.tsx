@@ -17,19 +17,18 @@ const jobLabels: Record<JobTrace["events"][number]["job_kind"], string> = {
   outbound_delivery: "Outbound delivery",
 };
 
-export function JobTraceLookup({ requestedCorrelationId }: { requestedCorrelationId?: string | null }) {
+export function JobTraceLookup({ request }: { request?: { correlationId: string } | null }) {
   const [correlationId, setCorrelationId] = useState("");
   const trace = useMutation({ mutationFn: getJobTrace });
   const { mutate } = trace;
-  const lastRequestedId = useRef<string | null>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
-    const requestedId = requestedCorrelationId?.trim();
-    if (!requestedId || requestedId === lastRequestedId.current) return;
-    lastRequestedId.current = requestedId;
-    setCorrelationId(requestedId);
-    mutate(requestedId);
-  }, [requestedCorrelationId, mutate]);
+    if (!request) return;
+    setCorrelationId(request.correlationId);
+    mutate(request.correlationId);
+    headingRef.current?.focus();
+  }, [request, mutate]);
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -42,7 +41,7 @@ export function JobTraceLookup({ requestedCorrelationId }: { requestedCorrelatio
       <div className="flex items-start gap-3">
         <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-indigo-50 text-indigo-700"><Waypoints size={19} aria-hidden="true" /></span>
         <div className="min-w-0 flex-1">
-          <h2 id="job-trace-title" className="font-semibold text-slate-950">Request trace</h2>
+          <h2 id="job-trace-title" ref={headingRef} tabIndex={-1} className="font-semibold text-slate-950">Request trace</h2>
           <p className="mt-1 text-sm text-slate-500">Follow a request across AI, automation, catalog, and message-delivery jobs using its support reference.</p>
           <form className="mt-4 flex flex-col gap-2 sm:flex-row" onSubmit={submit}>
             <label className="sr-only" htmlFor="trace-correlation-id">Correlation ID</label>
@@ -61,6 +60,7 @@ export function JobTraceLookup({ requestedCorrelationId }: { requestedCorrelatio
             </Button>
           </form>
           <p className="mt-2 text-xs text-slate-500">Results are limited to this workspace and include operational metadata only.</p>
+          {trace.isPending && <p role="status" className="mt-3 text-sm text-slate-500">Loading request trace…</p>}
           {trace.isError && <p role="alert" className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-800">Could not load this request trace. Check the reference and try again.</p>}
           {trace.data && <TraceResult result={trace.data} />}
         </div>

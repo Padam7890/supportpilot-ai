@@ -4626,6 +4626,11 @@ export interface components {
              * Format: date-time
              */
             next_attempt_at: string;
+            /**
+             * Requires Replacement
+             * @default false
+             */
+            requires_replacement: boolean;
             /** Started At */
             started_at: string | null;
             /**
@@ -5419,7 +5424,7 @@ export interface components {
              * Code
              * @enum {string}
              */
-            code: "ai_execution_failed" | "automation_execution_failed" | "catalog_sync_failed" | "catalog_webhook_failed" | "outbound_delivery_failed" | "document_ingestion_failed" | "commerce_approval_pending" | "commerce_execution_failed";
+            code: "background_jobs_overdue" | "ai_execution_failed" | "automation_execution_failed" | "catalog_sync_failed" | "catalog_webhook_failed" | "outbound_delivery_failed" | "document_ingestion_failed" | "commerce_approval_pending" | "commerce_execution_failed";
             /** Count */
             count: number;
             /** Description */

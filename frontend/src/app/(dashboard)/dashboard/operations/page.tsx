@@ -12,7 +12,7 @@ import { JobTraceLookup } from "@/features/analytics/components/job-trace-lookup
 import { ApiError } from "@/lib/api/errors";
 
 export default function OperationsPage() {
-  const [requestedCorrelationId, setRequestedCorrelationId] = useState<string | null>(null);
+  const [traceRequest, setTraceRequest] = useState<{ correlationId: string } | null>(null);
   const readiness = useQuery({
     queryKey: ["system-readiness"],
     queryFn: getSystemReadiness,
@@ -37,8 +37,8 @@ export default function OperationsPage() {
     </>}
     <WorkerCard worker={worker}/>
     <OperationalAlerts />
-    <FailedBackgroundJobs onTrace={setRequestedCorrelationId} />
-    <JobTraceLookup requestedCorrelationId={requestedCorrelationId} />
+    <FailedBackgroundJobs onTrace={(correlationId) => setTraceRequest({ correlationId })} />
+    <JobTraceLookup request={traceRequest} />
     <div id="commerce-actions"><CommerceActionsWorkspace /></div>
     <p className="flex items-start gap-2 rounded-xl bg-slate-50 p-4 text-xs leading-5 text-slate-500"><Activity size={15} className="mt-0.5 shrink-0"/>The readiness panel reports only checks returned by the readiness API. It does not display worker throughput or provider health that the system does not currently measure.</p>
   </div>;
@@ -47,7 +47,7 @@ export default function OperationsPage() {
 function WorkerCard({ worker }: { worker: UseQueryResult<WorkerHealth> }) {
   const active = !worker.isError && worker.data?.status === "active";
   const tone = active ? "border-emerald-200 bg-emerald-50 text-emerald-950" : "border-amber-200 bg-amber-50 text-amber-950";
-  return <section aria-label="Background worker status" className={`rounded-2xl border p-5 ${tone}`}>
+  return <section id="background-worker" aria-label="Background worker status" className={`rounded-2xl border p-5 ${tone}`}>
     <div className="flex items-start gap-4">
       <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-white/80 text-current"><Workflow size={21}/></span>
       <div className="min-w-0 flex-1">

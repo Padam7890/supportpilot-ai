@@ -2,6 +2,11 @@ import { api } from "@/lib/api/client";
 import type { KnowledgeDocument, KnowledgeDocumentPage, KnowledgeSearchPage } from "../types/knowledge.types";
 
 export const KNOWLEDGE_DOCUMENT_PAGE_SIZE = 50;
+export const KNOWLEDGE_PROCESSING_POLL_INTERVAL_MS = 3000;
+
+export function isKnowledgeDocumentProcessing(document: KnowledgeDocument): boolean {
+  return !document.deleted_at && (document.status === "queued" || document.status === "processing");
+}
 
 export const knowledgeKeys = {
   documents: ["knowledge-documents"] as const,

@@ -1,4 +1,6 @@
 import re
+from collections import defaultdict
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import PurePath
 from uuid import UUID
@@ -29,7 +31,10 @@ from app.schemas.knowledge import (
     KnowledgeSearchResult,
 )
 
+from app.workers.domain.ingestion_errors import requires_replacement
+
 router = APIRouter(prefix="/knowledge/documents", tags=["knowledge"], responses=COMMON_ERROR_RESPONSES)
+INGESTION_HISTORY_LIMIT = 20
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 ALLOWED_TYPES = {".pdf": "application/pdf", ".txt": "text/plain", ".md": "text/markdown"}
 
@@ -42,8 +47,14 @@ async def document_out(db: AsyncSession, document: KnowledgeDocument) -> Knowled
             DocumentIngestionJob.document_id == document.id,
         )
         .order_by(DocumentIngestionJob.created_at.desc(), DocumentIngestionJob.id.desc())
-        .limit(20)
+        .limit(INGESTION_HISTORY_LIMIT)
     )
+    return serialize_document(document, jobs)
+
+
+def serialize_document(
+    document: KnowledgeDocument, jobs: Iterable[DocumentIngestionJob]
+) -> KnowledgeDocumentOut:
     return KnowledgeDocumentOut(
         id=document.id,
         knowledge_base_id=document.knowledge_base_id,
@@ -54,7 +65,12 @@ async def document_out(db: AsyncSession, document: KnowledgeDocument) -> Knowled
         created_at=document.created_at,
         updated_at=document.updated_at,
         deleted_at=document.deleted_at,
-        jobs=[IngestionJobOut.model_validate(job) for job in jobs],
+        jobs=[
+            IngestionJobOut.model_validate(job).model_copy(
+                update={"requires_replacement": requires_replacement(job.last_error)}
+            )
+            for job in jobs
+        ],
     )
 
 
@@ -138,6 +154,40 @@ async def upload_document(
     return await document_out(db, document)
 
 
+async def page_ingestion_history(
+    db: AsyncSession, organization_id: UUID, document_ids: list[UUID]
+) -> dict[UUID, list[DocumentIngestionJob]]:
+    if not document_ids:
+        return {}
+    ranked = (
+        select(
+            DocumentIngestionJob.id,
+            func.row_number().over(
+                partition_by=DocumentIngestionJob.document_id,
+                order_by=(DocumentIngestionJob.created_at.desc(), DocumentIngestionJob.id.desc()),
+            ).label("position"),
+        )
+        .where(
+            DocumentIngestionJob.organization_id == organization_id,
+            DocumentIngestionJob.document_id.in_(document_ids),
+        )
+        .subquery()
+    )
+    jobs = await db.scalars(
+        select(DocumentIngestionJob)
+        .join(ranked, DocumentIngestionJob.id == ranked.c.id)
+        .where(
+            DocumentIngestionJob.organization_id == organization_id,
+            ranked.c.position <= INGESTION_HISTORY_LIMIT,
+        )
+        .order_by(ranked.c.position)
+    )
+    history: dict[UUID, list[DocumentIngestionJob]] = defaultdict(list)
+    for job in jobs:
+        history[job.document_id].append(job)
+    return history
+
+
 @router.get("", response_model=KnowledgeDocumentPage)
 async def list_documents(
     knowledge_base_id: UUID | None = Query(default=None),
@@ -163,8 +213,10 @@ async def list_documents(
         .limit(limit)
         .offset(offset)
     )
+    page = documents.all()
+    history = await page_ingestion_history(db, user.organization_id, [document.id for document in page])
     return KnowledgeDocumentPage(
-        items=[await document_out(db, document) for document in documents],
+        items=[serialize_document(document, history.get(document.id, ())) for document in page],
         total=total,
         limit=limit,
         offset=offset,
@@ -336,6 +388,18 @@ async def reprocess_document(
     )
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found")
+    if document.status == "failed":
+        latest_error = await db.scalar(
+            select(DocumentIngestionJob.last_error)
+            .where(
+                DocumentIngestionJob.organization_id == user.organization_id,
+                DocumentIngestionJob.document_id == document.id,
+            )
+            .order_by(DocumentIngestionJob.created_at.desc(), DocumentIngestionJob.id.desc())
+            .limit(1)
+        )
+        if requires_replacement(latest_error):
+            raise HTTPException(status_code=409, detail="Upload a corrected file before processing again")
     source = await db.get(KnowledgeDocumentSource, (user.organization_id, document.id))
     if source is None:
         raise HTTPException(status_code=409, detail="Source artifact was cleaned up; upload the document again")

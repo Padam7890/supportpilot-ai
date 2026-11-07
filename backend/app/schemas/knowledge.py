@@ -17,6 +17,7 @@ class IngestionJobOut(BaseModel):
     started_at: datetime | None
     completed_at: datetime | None
     last_error: str | None
+    requires_replacement: bool = False
     created_at: datetime
 
 

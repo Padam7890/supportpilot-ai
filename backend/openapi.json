@@ -4640,6 +4640,11 @@
             "title": "Next Attempt At",
             "type": "string"
           },
+          "requires_replacement": {
+            "default": false,
+            "title": "Requires Replacement",
+            "type": "boolean"
+          },
           "started_at": {
             "anyOf": [
               {
@@ -6582,6 +6587,7 @@
           },
           "code": {
             "enum": [
+              "background_jobs_overdue",
               "ai_execution_failed",
               "automation_execution_failed",
               "catalog_sync_failed",

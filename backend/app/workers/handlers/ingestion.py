@@ -19,6 +19,14 @@ from app.models import (
     KnowledgeDocument,
     KnowledgeDocumentSource,
 )
+from app.workers.domain.ingestion_errors import (
+    ENCRYPTED_PDF,
+    LEASE_EXHAUSTED,
+    NO_SEARCHABLE_TEXT,
+    SIZE_LIMIT,
+    SOURCE_UNAVAILABLE,
+    IngestionInputError,
+)
 from app.workers.domain.retry_policy import retry_delay_seconds
 
 logger = logging.getLogger(__name__)
@@ -31,7 +39,7 @@ def extract_text(name: str, content: bytes) -> str:
     if name.lower().endswith(".pdf"):
         reader = PdfReader(io.BytesIO(content), strict=True)
         if reader.is_encrypted:
-            raise ValueError("Encrypted PDF files are not supported")
+            raise IngestionInputError(ENCRYPTED_PDF)
         return "\n".join(page.extract_text() or "" for page in reader.pages).strip()
     return content.decode("utf-8-sig").strip()
 
@@ -178,7 +186,7 @@ async def fail_exhausted_leases(organization_id: UUID) -> bool:
                 return True
             job.status = "failed"
             job.completed_at = now
-            job.last_error = "Worker lease expired after the retry limit"
+            job.last_error = LEASE_EXHAUSTED
             document.status = "failed"
             await db.commit()
             return True
@@ -214,16 +222,16 @@ async def process_job(organization_id: UUID, job_id: UUID, document_id: UUID) ->
                 await db.rollback()
                 return
             if source is None:
-                raise ValueError("Document source is unavailable for ingestion")
+                raise IngestionInputError(SOURCE_UNAVAILABLE)
             if len(source.content) > MAX_UPLOAD_BYTES:
-                raise ValueError("Document exceeds the processing size limit")
+                raise IngestionInputError(SIZE_LIMIT)
             document_name = document.name
             source_content = bytes(source.content)
             await db.rollback()
 
         chunks = make_chunks(extract_text(document_name, source_content))
         if not chunks:
-            raise ValueError("No searchable text could be extracted")
+            raise IngestionInputError(NO_SEARCHABLE_TEXT)
 
         # Recheck both rows under a stable lock order before publishing chunks.
         # Deletion locks the document first, then cancels jobs and removes source/chunks.
@@ -279,7 +287,8 @@ async def process_job(organization_id: UUID, job_id: UUID, document_id: UUID) ->
             job.last_error = None
             await db.commit()
     except Exception as exc:
-        logger.exception(
+        input_failure = isinstance(exc, (IngestionInputError, UnicodeDecodeError))
+        logger.error(
             "Document ingestion failed",
             extra={
                 "job_id": str(job_id),
@@ -315,15 +324,18 @@ async def process_job(organization_id: UUID, job_id: UUID, document_id: UUID) ->
                 job.last_error = "Document was removed during ingestion"
                 await db.commit()
                 return
-            exhausted = job.attempt_count >= job.max_attempts
+            terminal = input_failure or job.attempt_count >= job.max_attempts
             now = datetime.now(UTC)
-            job.status = "failed" if exhausted else "queued"
-            job.last_error = f"{type(exc).__name__}: processing failed"[:500]
-            job.completed_at = now if exhausted else None
-            if not exhausted:
+            job.status = "failed" if terminal else "queued"
+            job.last_error = (
+                str(exc) if isinstance(exc, IngestionInputError)
+                else f"{type(exc).__name__}: processing failed"[:500]
+            )
+            job.completed_at = now if terminal else None
+            if not terminal:
                 job.next_attempt_at = now + timedelta(
                     seconds=retry_delay_seconds(job.attempt_count, base_seconds=10, cap_seconds=300)
                 )
             if document:
-                document.status = "failed" if exhausted else "queued"
+                document.status = "failed" if terminal else "queued"
             await db.commit()

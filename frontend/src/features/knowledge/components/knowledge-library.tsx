@@ -13,7 +13,7 @@ import { StatusAlert } from "@/components/ui/status-alert";
 import { formatDateTime } from "@/lib/utils";
 import { currentUserQueryKey, getCurrentUser } from "@/features/auth/api/auth-api";
 import { aiAgentsKey, listAIAgents } from "@/features/ai/api/ai-agent-api";
-import { deleteKnowledgeDocument, knowledgeKeys, listKnowledgeDocuments, moveKnowledgeDocument, KNOWLEDGE_DOCUMENT_PAGE_SIZE, reprocessKnowledgeDocument, searchKnowledge, uploadKnowledgeDocument } from "../api/knowledge-api";
+import { deleteKnowledgeDocument, isKnowledgeDocumentProcessing, KNOWLEDGE_PROCESSING_POLL_INTERVAL_MS, knowledgeKeys, listKnowledgeDocuments, moveKnowledgeDocument, KNOWLEDGE_DOCUMENT_PAGE_SIZE, reprocessKnowledgeDocument, searchKnowledge, uploadKnowledgeDocument } from "../api/knowledge-api";
 import type { KnowledgeDocument } from "../types/knowledge.types";
 import { archiveKnowledgeBase, createKnowledgeBase, knowledgeBaseKey, listKnowledgeBaseAudit, listKnowledgeBases, makeDefaultKnowledgeBase, restoreKnowledgeBase, updateKnowledgeBase } from "../api/knowledge-base-api";
 
@@ -63,10 +63,9 @@ export function KnowledgeLibrary() {
     queryKey: [...knowledgeKeys.documents, effectiveBaseId, documentOffset],
     queryFn: () => listKnowledgeDocuments(effectiveBaseId, documentOffset),
     enabled: bases.isSuccess && Boolean(effectiveBaseId),
-    refetchInterval: (query) => {
-      const pending = query.state.data?.items.some((item) => ["queued", "processing"].includes(item.status));
-      return pending && typeof document !== "undefined" && document.visibilityState === "visible" ? 3000 : false;
-    },
+    refetchInterval: (query) => query.state.data?.items.some(isKnowledgeDocumentProcessing)
+      ? KNOWLEDGE_PROCESSING_POLL_INTERVAL_MS
+      : false,
     refetchIntervalInBackground: false,
   });
   const activeSearchScope = searchScope === "current" || searchScope === "all" || activeBases.some((base) => base.id === searchScope)
@@ -214,9 +213,10 @@ export function KnowledgeLibrary() {
 function DocumentRow({ item, bases, canManage, busy, onReprocess, onDelete, onMove }: { item: KnowledgeDocument; bases: { id: string; name: string }[]; canManage: boolean; busy: boolean; onReprocess: () => void; onDelete: () => void; onMove: (knowledgeBaseId: string) => void }) {
   const [targetBaseId, setTargetBaseId] = useState("");
   const latestJob = item.jobs[0];
+  const needsReplacement = item.status === "failed" && latestJob?.requires_replacement;
   const statusVariant = item.status === "ready" ? "secondary" : item.status === "failed" ? "destructive" : "outline";
   const destinations = bases.filter((base) => base.id !== item.knowledge_base_id);
-  return <li className="flex flex-wrap items-center gap-3 px-5 py-4"><span className="grid size-10 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-500"><FileText size={18}/></span><div className="min-w-0 flex-1"><Link href={`/dashboard/knowledge/${item.id}`} className="truncate text-sm font-semibold text-blue-800 hover:underline">{item.name}</Link><p className="mt-1 text-xs text-slate-500">{formatBytes(item.size_bytes)} · added {formatDateTime(item.created_at)}</p>{latestJob?.status === "failed" && <p className="mt-1 text-xs text-red-700">Processing failed. Retry the source file.</p>}</div><Badge variant={statusVariant} className="capitalize">{item.status}</Badge>{canManage && <>{destinations.length > 0 && <div className="flex items-center gap-2"><Select aria-label={`Move ${item.name} to knowledge base`} value={targetBaseId} onChange={(event) => setTargetBaseId(event.target.value)} disabled={busy || item.status === "queued" || item.status === "processing"} className="min-h-9 max-w-40 px-2 text-xs"><option value="">Move to…</option>{destinations.map((base) => <option key={base.id} value={base.id}>{base.name}</option>)}</Select><Button type="button" variant="secondary" size="sm" disabled={busy || !targetBaseId || item.status === "queued" || item.status === "processing"} onClick={() => onMove(targetBaseId)}>Move</Button></div>}<Button variant="ghost" size="sm" aria-label={`Reprocess ${item.name}`} disabled={busy || item.status === "processing" || item.status === "queued"} onClick={onReprocess}><RotateCw size={15}/></Button><Button variant="ghost" size="sm" aria-label={`Delete ${item.name}`} disabled={busy} onClick={onDelete}><Trash2 size={15}/></Button></>}{item.status === "processing" && <LoaderCircle aria-label="Processing" size={15} className="animate-spin text-blue-700"/>}</li>;
+  return <li className="flex flex-wrap items-center gap-3 px-5 py-4"><span className="grid size-10 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-500"><FileText size={18}/></span><div className="min-w-0 flex-1"><Link href={`/dashboard/knowledge/${item.id}`} className="truncate text-sm font-semibold text-blue-800 hover:underline">{item.name}</Link><p className="mt-1 text-xs text-slate-500">{formatBytes(item.size_bytes)} · added {formatDateTime(item.created_at)}</p>{latestJob?.status === "failed" && <p className="mt-1 text-xs text-red-700">{needsReplacement ? "Processing failed. Upload a corrected file." : "Processing failed. You can retry this file."}</p>}</div><Badge variant={statusVariant} className="capitalize">{item.status}</Badge>{canManage && <>{destinations.length > 0 && <div className="flex items-center gap-2"><Select aria-label={`Move ${item.name} to knowledge base`} value={targetBaseId} onChange={(event) => setTargetBaseId(event.target.value)} disabled={busy || item.status === "queued" || item.status === "processing"} className="min-h-9 max-w-40 px-2 text-xs"><option value="">Move to…</option>{destinations.map((base) => <option key={base.id} value={base.id}>{base.name}</option>)}</Select><Button type="button" variant="secondary" size="sm" disabled={busy || !targetBaseId || item.status === "queued" || item.status === "processing"} onClick={() => onMove(targetBaseId)}>Move</Button></div>}<Button variant="ghost" size="sm" aria-label={`Reprocess ${item.name}`} disabled={busy || needsReplacement || item.status === "processing" || item.status === "queued"} onClick={onReprocess}><RotateCw size={15}/></Button><Button variant="ghost" size="sm" aria-label={`Delete ${item.name}`} disabled={busy} onClick={onDelete}><Trash2 size={15}/></Button></>}{item.status === "processing" && <LoaderCircle aria-label="Processing" size={15} className="animate-spin text-blue-700"/>}</li>;
 }
 
 function knowledgeBaseAuditLabel(

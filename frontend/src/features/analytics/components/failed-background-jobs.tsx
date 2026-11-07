@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleAlert, LoaderCircle, RefreshCw, RotateCcw, Waypoints } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { getFailedBackgroundJobs } from "@/features/analytics/api/analytics-api";
+import { analyticsQueryKeys, getFailedBackgroundJobs } from "@/features/analytics/api/analytics-api";
 import { reprocessKnowledgeDocument, knowledgeKeys } from "@/features/knowledge/api/knowledge-api";
 import { aiQueryKeys, retryAIExecution } from "@/features/ai/api/ai-api";
 import { getCurrentUser } from "@/features/auth/api/auth-api";
@@ -46,6 +46,7 @@ export function FailedBackgroundJobs({ onTrace }: { onTrace?: (correlationId: st
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["analytics", "background-failures"] }),
         queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents }),
+        queryClient.invalidateQueries({ queryKey: analyticsQueryKeys.operationalAlerts() }),
       ]);
     },
   });
@@ -86,7 +87,7 @@ export function FailedBackgroundJobs({ onTrace }: { onTrace?: (correlationId: st
               {job.correlation_id && onTrace && <Button size="sm" variant="ghost" onClick={() => { const correlationId = job.correlation_id; if (correlationId) onTrace(correlationId); }} aria-label="Trace related background jobs"><Waypoints size={14}/>Trace</Button>}
               {job.job_kind === "ai_execution" && canRetryAI && job.manual_retry_available && <Button size="sm" variant="secondary" disabled={retry.isPending} onClick={() => retry.mutate({ jobId: job.job_id, jobKind: "ai_execution" })}><RotateCcw size={14} className={retry.isPending && retry.variables?.jobId === job.job_id ? "animate-spin" : ""}/>{retry.isPending && retry.variables?.jobId === job.job_id ? "Queueing…" : "Retry AI"}</Button>}
               {job.job_kind === "catalog_sync" && canRetryCatalog && job.manual_retry_available && <Button size="sm" variant="secondary" disabled={retry.isPending} onClick={() => retry.mutate({ jobId: job.job_id, jobKind: "catalog_sync" })}><RotateCcw size={14} className={retry.isPending && retry.variables?.jobId === job.job_id ? "animate-spin" : ""}/>{retry.isPending && retry.variables?.jobId === job.job_id ? "Queueing…" : "Retry sync"}</Button>}
-              {job.job_kind === "document_ingestion" && canRetryIngestion && job.document_id && <Button size="sm" variant="secondary" disabled={retryIngestion.isPending} onClick={() => retryDocument(job.document_id)}><RotateCcw size={14} className={retryIngestion.isPending && retryIngestion.variables === job.document_id ? "animate-spin" : ""}/>{retryIngestion.isPending && retryIngestion.variables === job.document_id ? "Queueing…" : "Retry processing"}</Button>}
+              {job.job_kind === "document_ingestion" && canRetryIngestion && job.manual_retry_available && job.document_id && <Button size="sm" variant="secondary" disabled={retryIngestion.isPending} onClick={() => retryDocument(job.document_id)}><RotateCcw size={14} className={retryIngestion.isPending && retryIngestion.variables === job.document_id ? "animate-spin" : ""}/>{retryIngestion.isPending && retryIngestion.variables === job.document_id ? "Queueing…" : "Retry processing"}</Button>}
             </div>
           </li>)}
         </ul>

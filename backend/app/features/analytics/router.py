@@ -2,7 +2,7 @@ import re
 from datetime import UTC, date, datetime, time, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import Integer, String, Uuid, func, literal, select, union_all
+from sqlalchemy import Integer, String, Uuid, case, func, literal, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_roles
@@ -20,6 +20,7 @@ from app.models import (
     DocumentIngestionJob,
     IntegrationConnection,
     IntegrationDeliveryJob,
+    KnowledgeDocument,
     Message,
     User,
 )
@@ -47,8 +48,13 @@ from app.schemas.analytics import (
     SupportResponseDay,
 )
 from app.schemas.errors import COMMON_ERROR_RESPONSES
+from app.workers.domain.ingestion_errors import INGESTION_ERROR_CODES, NON_RETRYABLE_INGESTION_CODES
 
 router = APIRouter(prefix="/analytics", tags=["analytics"], responses=COMMON_ERROR_RESPONSES)
+
+
+def ingestion_error_code():
+    return case(INGESTION_ERROR_CODES, value=DocumentIngestionJob.last_error)
 
 
 def date_window(start_date: date | None, end_date: date | None) -> tuple[date, date]:
@@ -82,49 +88,68 @@ async def operational_alerts(
             .where(model.organization_id == user.organization_id, *conditions)
             .scalar_subquery()
         )
+    def recent_failures(model, failed_condition, completed_at):
+        failure_at = func.coalesce(completed_at, model.updated_at)
+        return count_subquery(
+            model, failed_condition, failure_at >= window_start, failure_at <= generated_at
+        )
+
+    ingestion_failure_at = func.coalesce(
+        DocumentIngestionJob.completed_at, DocumentIngestionJob.updated_at
+    )
+    recent_ingestion_failure = select(DocumentIngestionJob.id).where(
+        DocumentIngestionJob.organization_id == KnowledgeDocument.organization_id,
+        DocumentIngestionJob.document_id == KnowledgeDocument.id,
+        DocumentIngestionJob.status == "failed",
+        ingestion_failure_at >= window_start,
+        ingestion_failure_at <= generated_at,
+    ).exists()
+
+    overdue_cutoff = generated_at - timedelta(minutes=15)
+    overdue_jobs = sum(
+        count_subquery(model, model.status == "queued", model.next_attempt_at <= overdue_cutoff)
+        for model in (
+            AIExecution,
+            AutomationExecution,
+            CatalogSyncJob,
+            CatalogWebhookEvent,
+            DocumentIngestionJob,
+            IntegrationDeliveryJob,
+        )
+    )
+
     counts = await db.execute(
         select(
-            count_subquery(
-                AIExecution, AIExecution.status == "failed", AIExecution.created_at >= window_start
+            overdue_jobs,
+            recent_failures(AIExecution, AIExecution.status == "failed", AIExecution.completed_at),
+            recent_failures(
+                AutomationExecution, AutomationExecution.status == "failed", AutomationExecution.completed_at
+            ),
+            recent_failures(CatalogSyncJob, CatalogSyncJob.status == "failed", CatalogSyncJob.completed_at),
+            recent_failures(
+                CatalogWebhookEvent, CatalogWebhookEvent.status == "failed", CatalogWebhookEvent.completed_at
+            ),
+            recent_failures(
+                IntegrationDeliveryJob, IntegrationDeliveryJob.status == "failed", IntegrationDeliveryJob.completed_at
             ),
             count_subquery(
-                AutomationExecution,
-                AutomationExecution.status == "failed",
-                AutomationExecution.created_at >= window_start,
-            ),
-            count_subquery(
-                CatalogSyncJob,
-                CatalogSyncJob.status == "failed",
-                CatalogSyncJob.created_at >= window_start,
-            ),
-            count_subquery(
-                CatalogWebhookEvent,
-                CatalogWebhookEvent.status == "failed",
-                CatalogWebhookEvent.created_at >= window_start,
-            ),
-            count_subquery(
-                IntegrationDeliveryJob,
-                IntegrationDeliveryJob.status == "failed",
-                IntegrationDeliveryJob.created_at >= window_start,
-            ),
-            count_subquery(
-                DocumentIngestionJob,
-                DocumentIngestionJob.status == "failed",
-                DocumentIngestionJob.created_at >= window_start,
+                KnowledgeDocument,
+                KnowledgeDocument.status == "failed",
+                KnowledgeDocument.deleted_at.is_(None),
+                recent_ingestion_failure,
             ),
             count_subquery(
                 CommerceAction,
                 CommerceAction.approval_status == "pending",
                 CommerceAction.expires_at > generated_at,
             ),
-            count_subquery(
-                CommerceAction,
-                CommerceAction.execution_status == "failed",
-                CommerceAction.execution_completed_at >= window_start,
+            recent_failures(
+                CommerceAction, CommerceAction.execution_status == "failed", CommerceAction.execution_completed_at
             ),
         )
     )
     (
+        overdue_count,
         ai_failed,
         automation_failed,
         catalog_failed,
@@ -136,6 +161,11 @@ async def operational_alerts(
     ) = counts.one()
 
     candidates = [
+        (
+            "background_jobs_overdue", "attention", "Background jobs are waiting",
+            "AI, automation, catalog, knowledge, or delivery jobs have been eligible to run for at least 15 minutes.",
+            int(overdue_count or 0), "Check background worker", "/dashboard/operations#background-worker",
+        ),
         (
             "ai_execution_failed", "attention", "AI runs failed",
             "Review recent AI executions that exhausted their retry policy.",
@@ -736,7 +766,7 @@ async def failed_background_jobs(
         (AutomationExecution, AutomationExecution.status == "failed", AutomationExecution.completed_at, AutomationExecution.error_code, AutomationExecution.attempt_count, None, "automation_execution", None),
         (CatalogSyncJob, CatalogSyncJob.status == "failed", CatalogSyncJob.completed_at, CatalogSyncJob.last_error_code, CatalogSyncJob.attempt_count, CatalogSyncJob.manual_retry_count, "catalog_sync", None),
         (CatalogWebhookEvent, CatalogWebhookEvent.status == "failed", CatalogWebhookEvent.completed_at, CatalogWebhookEvent.last_error_code, CatalogWebhookEvent.attempt_count, None, "catalog_webhook", None),
-        (DocumentIngestionJob, DocumentIngestionJob.status == "failed", DocumentIngestionJob.completed_at, None, DocumentIngestionJob.attempt_count, None, "document_ingestion", DocumentIngestionJob.document_id),
+        (DocumentIngestionJob, DocumentIngestionJob.status == "failed", DocumentIngestionJob.completed_at, ingestion_error_code(), DocumentIngestionJob.attempt_count, None, "document_ingestion", DocumentIngestionJob.document_id),
         (CommerceAction, CommerceAction.execution_status == "failed", CommerceAction.execution_completed_at, CommerceAction.execution_error_code, CommerceAction.execution_attempt_count, None, "commerce_action", None),
         (IntegrationDeliveryJob, IntegrationDeliveryJob.status == "failed", IntegrationDeliveryJob.completed_at, IntegrationDeliveryJob.last_error_code, IntegrationDeliveryJob.attempt_count, None, "outbound_delivery", None),
     ]
@@ -762,8 +792,33 @@ async def failed_background_jobs(
         .order_by(all_failures.c.failed_at.desc(), all_failures.c.job_id.desc())
         .limit(limit)
     )
+    rows = result.mappings().all()
+    document_ids = {
+        row["resource_id"] for row in rows if row["job_kind"] == "document_ingestion"
+    }
+    retryable_ingestion_jobs = set()
+    if document_ids:
+        latest_jobs = (
+            select(DocumentIngestionJob.id)
+            .where(
+                DocumentIngestionJob.organization_id == KnowledgeDocument.organization_id,
+                DocumentIngestionJob.document_id == KnowledgeDocument.id,
+            )
+            .order_by(DocumentIngestionJob.created_at.desc(), DocumentIngestionJob.id.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
+        retryable_ingestion_jobs = set(await db.scalars(
+            select(latest_jobs).select_from(KnowledgeDocument).where(
+                KnowledgeDocument.organization_id == user.organization_id,
+                KnowledgeDocument.id.in_(document_ids),
+                KnowledgeDocument.status == "failed",
+                KnowledgeDocument.deleted_at.is_(None),
+            )
+        ))
+
     items = []
-    for row in result.mappings():
+    for row in rows:
         raw_code = row["error_code"]
         safe_code = raw_code if isinstance(raw_code, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,80}", raw_code) else None
         items.append(
@@ -781,7 +836,11 @@ async def failed_background_jobs(
                 attempts=row["attempts"],
                 error_code=safe_code,
                 manual_retry_count=row["manual_retry_count"],
-                manual_retry_available=(row["job_kind"] in {"ai_execution", "catalog_sync"} and row["manual_retry_count"] < 3),
+                manual_retry_available=(
+                    (row["job_id"] in retryable_ingestion_jobs and safe_code not in NON_RETRYABLE_INGESTION_CODES)
+                    if row["job_kind"] == "document_ingestion"
+                    else row["job_kind"] in {"ai_execution", "catalog_sync"} and row["manual_retry_count"] < 3
+                ),
             )
         )
     return FailedBackgroundJobsOut(
@@ -819,7 +878,7 @@ async def job_trace(
     trace_rows = union_all(
         trace_row(AIExecution, "ai_execution", AIExecution.error_code),
         trace_row(AutomationExecution, "automation_execution", AutomationExecution.error_code),
-        trace_row(DocumentIngestionJob, "document_ingestion", literal(None, type_=String(80))),
+        trace_row(DocumentIngestionJob, "document_ingestion", ingestion_error_code()),
         select(
             literal("commerce_action", type_=String(32)).label("job_kind"),
             CommerceAction.id.label("job_id"),
