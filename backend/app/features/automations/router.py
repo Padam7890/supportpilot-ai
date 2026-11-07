@@ -36,7 +36,7 @@ from app.features.automations.approvals import (
     expire_approval,
     expire_pending_automation_approvals,
 )
-from app.features.automations.policy import preview_definition
+from app.features.automations.policy import MAX_TOTAL_EXECUTION_ATTEMPTS, preview_definition
 from app.features.automations.service import (
     validate_assignment_targets,
     validate_team_assignment_targets,
@@ -56,9 +56,6 @@ from app.models import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/automations", tags=["automations"])
-MAX_TOTAL_EXECUTION_ATTEMPTS = 5
-
-
 def _definition_from_row(draft_definition: dict) -> WorkflowDefinition:
     return WorkflowDefinition.model_validate(draft_definition)
 

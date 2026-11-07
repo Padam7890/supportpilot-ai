@@ -4271,6 +4271,18 @@
             "default": 0,
             "title": "Manual Retry Count",
             "type": "integer"
+          },
+          "workflow_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Id"
           }
         },
         "required": [
@@ -9296,6 +9308,13 @@
             "title": "Awaiting First Response",
             "type": "integer"
           },
+          "by_channel": {
+            "items": {
+              "$ref": "#/components/schemas/SupportResponseChannel"
+            },
+            "title": "By Channel",
+            "type": "array"
+          },
           "conversations": {
             "title": "Conversations",
             "type": "integer"
@@ -9366,6 +9385,70 @@
           "daily"
         ],
         "title": "SupportResponseAnalyticsOut",
+        "type": "object"
+      },
+      "SupportResponseChannel": {
+        "properties": {
+          "average_first_response_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average First Response Seconds"
+          },
+          "awaiting_first_response": {
+            "title": "Awaiting First Response",
+            "type": "integer"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "conversations": {
+            "title": "Conversations",
+            "type": "integer"
+          },
+          "median_first_response_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Median First Response Seconds"
+          },
+          "p95_first_response_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P95 First Response Seconds"
+          },
+          "responded": {
+            "title": "Responded",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "channel",
+          "conversations",
+          "responded",
+          "awaiting_first_response",
+          "average_first_response_seconds",
+          "median_first_response_seconds",
+          "p95_first_response_seconds"
+        ],
+        "title": "SupportResponseChannel",
         "type": "object"
       },
       "SupportResponseDay": {
@@ -22446,6 +22529,25 @@
                 }
               ],
               "title": "Priority"
+            }
+          },
+          {
+            "in": "query",
+            "name": "channel",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 30,
+                  "minLength": 1,
+                  "pattern": "^[a-z0-9_]+$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Channel"
             }
           },
           {

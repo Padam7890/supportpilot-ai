@@ -31,6 +31,7 @@ class EvaluationContext:
 
 
 PRIORITY_RANK = {"low": 0, "normal": 1, "high": 2, "urgent": 3}
+MAX_TOTAL_EXECUTION_ATTEMPTS = 5
 
 
 def _normalize_text(value: str) -> str:

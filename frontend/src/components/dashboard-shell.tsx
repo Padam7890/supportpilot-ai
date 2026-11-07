@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, Building2, CircleHelp, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, Sun, X } from "lucide-react";
+import { Activity, BellRing, Building2, CircleHelp, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, Sun, X } from "lucide-react";
 import { getCurrentUser, currentUserQueryKey, logout as logoutRequest } from "@/features/auth/api/auth-api";
 import { getSystemReadiness, getWorkerHealth } from "@/features/dashboard/api/system-status-api";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import {
   isDashboardNavigationLinkActive,
 } from "@/features/dashboard/navigation/dashboard-navigation";
 import { ensureTypographyScaleFromStorage } from "@/lib/typography-scale";
+import { analyticsQueryKeys, getOperationalAlerts } from "@/features/analytics/api/analytics-api";
 
 function subscribeTheme(callback: () => void) {
   window.addEventListener("supportpilot-theme-change", callback);
@@ -72,6 +73,13 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     refetchInterval: () => typeof document !== "undefined" && document.visibilityState === "visible" ? 15_000 : false,
     refetchIntervalInBackground: false,
   });
+  const operationalAlerts = useQuery({
+    queryKey: analyticsQueryKeys.operationalAlerts(),
+    queryFn: getOperationalAlerts,
+    enabled: Boolean(me.data),
+    refetchInterval: () => typeof document !== "undefined" && document.visibilityState === "visible" ? 60_000 : false,
+    refetchIntervalInBackground: false,
+  });
   const logout = useMutation({
     mutationFn: logoutRequest,
     onSettled: () => {
@@ -110,6 +118,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     return <div className="grid min-h-screen place-items-center bg-slate-50"><div className="space-y-3 text-center"><div className="mx-auto size-9 animate-spin rounded-full border-4 border-blue-100 border-t-blue-700"/><p className="text-sm text-slate-500">Loading your workspace…</p></div></div>;
   }
   const user = me.data;
+  const operationalAttentionCount = operationalAlerts.data?.alerts.reduce((total, alert) => total + alert.count, 0) ?? 0;
   const navigationGroups = getDashboardNavigation(user.role);
 
   return (
@@ -196,6 +205,39 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           </div>
           <div className="ml-3"><CommandSearch/></div>
           <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
+            {operationalAttentionCount > 0 && <details className="group relative">
+              <summary
+                aria-label={`${operationalAttentionCount} operational items need attention`}
+                title={`${operationalAttentionCount} operational items need attention`}
+                className="relative grid size-9 cursor-pointer list-none place-items-center rounded-lg text-amber-700 hover:bg-amber-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600"
+              >
+                <BellRing size={17} aria-hidden="true"/>
+                <span className="absolute -right-0.5 -top-0.5 grid min-h-4 min-w-4 place-items-center rounded-full bg-amber-600 px-1 text-[9px] font-bold leading-none text-white">
+                  {operationalAttentionCount > 9 ? "9+" : operationalAttentionCount}
+                </span>
+              </summary>
+              <section aria-label="Operational items requiring attention" className="absolute right-0 top-11 z-50 w-[min(22rem,calc(100vw-1.5rem))] overflow-hidden rounded-xl border border-slate-200 bg-white text-slate-900 shadow-xl">
+                <header className="border-b border-slate-100 px-4 py-3">
+                  <p className="text-sm font-semibold">Operations need attention</p>
+                  <p className="mt-0.5 text-xs text-slate-500">Current persisted issues in this workspace</p>
+                </header>
+                <ul className="max-h-80 divide-y divide-slate-100 overflow-y-auto">
+                  {operationalAlerts.data?.alerts.map((alert) => <li key={alert.code}>
+                    <Link href={alert.href} className="block px-4 py-3 hover:bg-slate-50 focus-visible:bg-slate-50 focus-visible:outline-none">
+                      <span className="flex items-start gap-3">
+                        <span className={`mt-1 size-2 shrink-0 rounded-full ${alert.severity === "attention" ? "bg-amber-500" : "bg-blue-500"}`} aria-hidden="true"/>
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-center justify-between gap-2 text-sm font-semibold"><span>{alert.title}</span><span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs tabular-nums">{alert.count}</span></span>
+                          <span className="mt-1 block text-xs leading-5 text-slate-600">{alert.description}</span>
+                          <span className="mt-1.5 block text-xs font-semibold text-blue-700">{alert.action_label} →</span>
+                        </span>
+                      </span>
+                    </Link>
+                  </li>)}
+                </ul>
+                <Link href="/dashboard/operations" className="block border-t border-slate-100 px-4 py-3 text-xs font-semibold text-blue-700 hover:bg-blue-50">Open Operations</Link>
+              </section>
+            </details>}
             <span className="hidden text-xs text-slate-500 md:block">{user.email}</span>
             <button onClick={toggleTheme} aria-label={dark ? "Switch to light theme" : "Switch to dark theme"} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100">{dark ? <Sun size={16}/> : <Moon size={16}/>}</button>
             <Button size="sm" variant="ghost" onClick={() => logout.mutate()}>Sign out</Button>

@@ -9,6 +9,7 @@ from app.api.deps import get_current_user, require_roles
 from app.core.config import settings
 from app.db.session import get_db
 from app.features.conversations.response_metrics import first_reply_source
+from app.features.automations.policy import MAX_TOTAL_EXECUTION_ATTEMPTS
 from app.models import (
     AIAgent,
     AIEvaluation,
@@ -47,6 +48,7 @@ from app.schemas.analytics import (
     OperationalAlertOut,
     OperationalAlertsOut,
     SupportResponseAnalyticsOut,
+    SupportResponseChannel,
     SupportResponseDay,
 )
 from app.schemas.errors import COMMON_ERROR_RESPONSES
@@ -342,6 +344,7 @@ async def support_response_analytics(
         select(
             Conversation.organization_id.label("organization_id"),
             Conversation.id.label("conversation_id"),
+            Conversation.channel.label("channel"),
             func.min(Message.created_at).label("first_customer_at"),
         )
         .join(
@@ -356,7 +359,7 @@ async def support_response_analytics(
             date_predicate(Message.created_at, start, end),
             ~had_customer_before_period,
         )
-        .group_by(Conversation.organization_id, Conversation.id)
+        .group_by(Conversation.organization_id, Conversation.id, Conversation.channel)
         .cte("first_customer_message")
     )
     response_messages = Message.__table__
@@ -365,6 +368,7 @@ async def support_response_analytics(
         select(
             first_customer.c.organization_id,
             first_customer.c.conversation_id,
+            first_customer.c.channel,
             first_customer.c.first_customer_at,
             func.min(response_at).label("first_response_at"),
         )
@@ -380,6 +384,7 @@ async def support_response_analytics(
         .group_by(
             first_customer.c.organization_id,
             first_customer.c.conversation_id,
+            first_customer.c.channel,
             first_customer.c.first_customer_at,
         )
         .cte("conversation_first_responses")
@@ -427,6 +432,41 @@ async def support_response_analytics(
         )
         for day, conversation_count, response_count, day_average in daily_rows.all()
     ]
+    channel_rows = await db.execute(
+        select(
+            conversation_times.c.channel,
+            func.count(conversation_times.c.conversation_id),
+            func.count(conversation_times.c.conversation_id).filter(
+                conversation_times.c.first_response_at.is_not(None)
+            ),
+            func.avg(latency_seconds).filter(conversation_times.c.first_response_at.is_not(None)),
+            func.percentile_disc(0.5).within_group(latency_seconds),
+            func.percentile_disc(0.95).within_group(latency_seconds),
+        )
+        .group_by(conversation_times.c.channel)
+        .order_by(func.count(conversation_times.c.conversation_id).desc(), conversation_times.c.channel)
+    )
+    by_channel = []
+    for channel, conversation_count, response_count, channel_average, channel_median, channel_p95 in channel_rows.all():
+        channel_total = int(conversation_count)
+        channel_responded = int(response_count)
+        by_channel.append(
+            SupportResponseChannel(
+                channel=channel,
+                conversations=channel_total,
+                responded=channel_responded,
+                awaiting_first_response=channel_total - channel_responded,
+                average_first_response_seconds=(
+                    round(float(channel_average), 2) if channel_average is not None else None
+                ),
+                median_first_response_seconds=(
+                    round(float(channel_median), 2) if channel_median is not None else None
+                ),
+                p95_first_response_seconds=(
+                    round(float(channel_p95), 2) if channel_p95 is not None else None
+                ),
+            )
+        )
     total_count = int(total or 0)
     response_count = int(responded or 0)
     return SupportResponseAnalyticsOut(
@@ -449,6 +489,7 @@ async def support_response_analytics(
             if oldest_unanswered_at is not None else None
         ),
         daily=daily,
+        by_channel=by_channel,
     )
 
 
@@ -906,16 +947,16 @@ async def failed_background_jobs(
 ) -> FailedBackgroundJobsOut:
     """List bounded tenant-owned terminal failures without private job payloads."""
     sources = [
-        (AIExecution, AIExecution.status == "failed", AIExecution.completed_at, AIExecution.error_code, AIExecution.attempt_count, AIExecution.manual_retry_count, "ai_execution", None),
-        (AutomationExecution, AutomationExecution.status == "failed", AutomationExecution.completed_at, AutomationExecution.error_code, AutomationExecution.attempt_count, None, "automation_execution", None),
-        (CatalogSyncJob, CatalogSyncJob.status == "failed", CatalogSyncJob.completed_at, CatalogSyncJob.last_error_code, CatalogSyncJob.attempt_count, CatalogSyncJob.manual_retry_count, "catalog_sync", None),
-        (CatalogWebhookEvent, CatalogWebhookEvent.status == "failed", CatalogWebhookEvent.completed_at, CatalogWebhookEvent.last_error_code, CatalogWebhookEvent.attempt_count, None, "catalog_webhook", None),
-        (DocumentIngestionJob, DocumentIngestionJob.status == "failed", DocumentIngestionJob.completed_at, ingestion_error_code(), DocumentIngestionJob.attempt_count, None, "document_ingestion", DocumentIngestionJob.document_id),
-        (CommerceAction, CommerceAction.execution_status == "failed", CommerceAction.execution_completed_at, CommerceAction.execution_error_code, CommerceAction.execution_attempt_count, None, "commerce_action", None),
-        (IntegrationDeliveryJob, IntegrationDeliveryJob.status == "failed", IntegrationDeliveryJob.completed_at, IntegrationDeliveryJob.last_error_code, IntegrationDeliveryJob.attempt_count, None, "outbound_delivery", None),
+        (AIExecution, AIExecution.status == "failed", AIExecution.completed_at, AIExecution.error_code, AIExecution.attempt_count, AIExecution.manual_retry_count, "ai_execution", None, None),
+        (AutomationExecution, AutomationExecution.status == "failed", AutomationExecution.completed_at, AutomationExecution.error_code, AutomationExecution.attempt_count, None, "automation_execution", None, AutomationExecution.workflow_id),
+        (CatalogSyncJob, CatalogSyncJob.status == "failed", CatalogSyncJob.completed_at, CatalogSyncJob.last_error_code, CatalogSyncJob.attempt_count, CatalogSyncJob.manual_retry_count, "catalog_sync", None, None),
+        (CatalogWebhookEvent, CatalogWebhookEvent.status == "failed", CatalogWebhookEvent.completed_at, CatalogWebhookEvent.last_error_code, CatalogWebhookEvent.attempt_count, None, "catalog_webhook", None, None),
+        (DocumentIngestionJob, DocumentIngestionJob.status == "failed", DocumentIngestionJob.completed_at, ingestion_error_code(), DocumentIngestionJob.attempt_count, None, "document_ingestion", DocumentIngestionJob.document_id, None),
+        (CommerceAction, CommerceAction.execution_status == "failed", CommerceAction.execution_completed_at, CommerceAction.execution_error_code, CommerceAction.execution_attempt_count, None, "commerce_action", None, None),
+        (IntegrationDeliveryJob, IntegrationDeliveryJob.status == "failed", IntegrationDeliveryJob.completed_at, IntegrationDeliveryJob.last_error_code, IntegrationDeliveryJob.attempt_count, None, "outbound_delivery", None, None),
     ]
     statements = []
-    for model, failed_condition, failed_at, error_code, attempts, manual_retries, kind, resource_id in sources:
+    for model, failed_condition, failed_at, error_code, attempts, manual_retries, kind, resource_id, workflow_id in sources:
         if job_kind is not None and job_kind != kind:
             continue
         statements.append(
@@ -927,6 +968,7 @@ async def failed_background_jobs(
                 (error_code if error_code is not None else literal(None, type_=String(80))).label("error_code"),
                 (manual_retries if manual_retries is not None else literal(0)).label("manual_retry_count"),
                 (resource_id if resource_id is not None else literal(None, type_=Uuid(as_uuid=True))).label("resource_id"),
+                (workflow_id if workflow_id is not None else literal(None, type_=Uuid(as_uuid=True))).label("workflow_id"),
                 model.correlation_id.label("correlation_id"),
             ).where(model.organization_id == user.organization_id, failed_condition)
         )
@@ -973,6 +1015,7 @@ async def failed_background_jobs(
             FailedBackgroundJobOut(
                 job_id=row["job_id"],
                 document_id=row["resource_id"] if row["job_kind"] == "document_ingestion" else None,
+                workflow_id=row["workflow_id"] if row["job_kind"] == "automation_execution" else None,
                 correlation_id=(
                     row["correlation_id"]
                     if isinstance(row["correlation_id"], str)
@@ -987,7 +1030,13 @@ async def failed_background_jobs(
                 manual_retry_available=(
                     (row["job_id"] in retryable_ingestion_jobs and safe_code not in NON_RETRYABLE_INGESTION_CODES)
                     if row["job_kind"] == "document_ingestion"
-                    else row["job_kind"] in {"ai_execution", "catalog_sync"} and row["manual_retry_count"] < 3
+                    else (
+                        row["job_kind"] in {"ai_execution", "catalog_sync"}
+                        and row["manual_retry_count"] < 3
+                    ) or (
+                        row["job_kind"] == "automation_execution"
+                        and row["attempts"] < MAX_TOTAL_EXECUTION_ATTEMPTS
+                    )
                 ),
             )
         )

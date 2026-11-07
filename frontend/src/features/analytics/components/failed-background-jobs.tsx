@@ -10,6 +10,7 @@ import { reprocessKnowledgeDocument, knowledgeKeys } from "@/features/knowledge/
 import { aiQueryKeys, retryAIExecution } from "@/features/ai/api/ai-api";
 import { getCurrentUser } from "@/features/auth/api/auth-api";
 import { retryCatalogSyncJob, shopifyQueryKeys } from "@/features/integrations/api/shopify-api";
+import { automationKey, retryAutomationExecution } from "@/features/automations/api/automation-api";
 
 const pageSize = 20;
 const maxOffset = 10_000;
@@ -86,13 +87,28 @@ export function FailedBackgroundJobs({ onTrace }: { onTrace?: (correlationId: st
       ]);
     },
   });
+  const retryAutomation = useMutation({
+    mutationFn: ({ workflowId, executionId }: { workflowId: string; executionId: string }) =>
+      retryAutomationExecution(workflowId, executionId),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["analytics", "background-failures"] }),
+        queryClient.invalidateQueries({ queryKey: automationKey }),
+      ]);
+    },
+  });
   const role = user.data?.role ?? "";
   const canRetryAI = ["owner", "admin", "agent"].includes(role);
   const canRetryCatalog = ["owner", "admin"].includes(role);
   const canRetryIngestion = ["owner", "admin"].includes(role);
+  const canRetryAutomation = ["owner", "admin"].includes(role);
 
   function retryDocument(documentId: string | null | undefined) {
     if (documentId) retryIngestion.mutate(documentId);
+  }
+
+  function retryWorkflow(workflowId: string | null | undefined, executionId: string) {
+    if (workflowId) retryAutomation.mutate({ workflowId, executionId });
   }
 
   return <section id="failed-jobs" aria-labelledby="failed-jobs-title" className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
@@ -130,6 +146,7 @@ export function FailedBackgroundJobs({ onTrace }: { onTrace?: (correlationId: st
               {job.job_kind === "ai_execution" && canRetryAI && job.manual_retry_available && <Button size="sm" variant="secondary" disabled={retry.isPending} onClick={() => retry.mutate({ jobId: job.job_id, jobKind: "ai_execution" })}><RotateCcw size={14} className={retry.isPending && retry.variables?.jobId === job.job_id ? "animate-spin" : ""}/>{retry.isPending && retry.variables?.jobId === job.job_id ? "Queueing…" : "Retry AI"}</Button>}
               {job.job_kind === "catalog_sync" && canRetryCatalog && job.manual_retry_available && <Button size="sm" variant="secondary" disabled={retry.isPending} onClick={() => retry.mutate({ jobId: job.job_id, jobKind: "catalog_sync" })}><RotateCcw size={14} className={retry.isPending && retry.variables?.jobId === job.job_id ? "animate-spin" : ""}/>{retry.isPending && retry.variables?.jobId === job.job_id ? "Queueing…" : "Retry sync"}</Button>}
               {job.job_kind === "document_ingestion" && canRetryIngestion && job.manual_retry_available && job.document_id && <Button size="sm" variant="secondary" disabled={retryIngestion.isPending} onClick={() => retryDocument(job.document_id)}><RotateCcw size={14} className={retryIngestion.isPending && retryIngestion.variables === job.document_id ? "animate-spin" : ""}/>{retryIngestion.isPending && retryIngestion.variables === job.document_id ? "Queueing…" : "Retry processing"}</Button>}
+              {job.job_kind === "automation_execution" && canRetryAutomation && job.manual_retry_available && job.workflow_id && <Button size="sm" variant="secondary" disabled={retryAutomation.isPending} onClick={() => retryWorkflow(job.workflow_id, job.job_id)}><RotateCcw size={14} className={retryAutomation.isPending && retryAutomation.variables?.executionId === job.job_id ? "animate-spin" : ""}/>{retryAutomation.isPending && retryAutomation.variables?.executionId === job.job_id ? "Queueing…" : "Retry workflow"}</Button>}
             </div>
           </li>)}
         </ul>
@@ -137,6 +154,8 @@ export function FailedBackgroundJobs({ onTrace }: { onTrace?: (correlationId: st
         {retry.isSuccess && <p role="status" className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{retry.variables?.jobKind === "catalog_sync" ? "Catalog sync queued from the first page." : "AI execution queued for another attempt."}</p>}
         {retryIngestion.isError && <p role="alert" className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-800">Document processing could not be queued. Check that its source file is still available, then refresh.</p>}
         {retryIngestion.isSuccess && <p role="status" className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">Document processing queued. Its history is available in the Knowledge Library.</p>}
+        {retryAutomation.isError && <p role="alert" className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-800">The automation could not be retried. Confirm the workflow is still available and has remaining attempts.</p>}
+        {retryAutomation.isSuccess && <p role="status" className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">Automation execution queued using its original published version.</p>}
       </>}
     {(offset > 0 || (jobs.data?.total_failed ?? 0) > pageSize) && (
       <nav aria-label="Failed jobs pagination" className="mt-4 flex gap-2">

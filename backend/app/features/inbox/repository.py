@@ -86,6 +86,7 @@ class InboxRepository:
         scope: str,
         status: str | None,
         priority: str | None,
+        channel: str | None,
         team_id: UUID | None,
         needs_approval: bool,
         unread_only: bool,
@@ -106,6 +107,8 @@ class InboxRepository:
         }
         if overdue_only:
             filters["overdue_only"] = "True"
+        if channel:
+            filters["channel"] = channel
         fingerprint = _filter_fingerprint(filters)
 
         latest_conversations = (
@@ -263,6 +266,16 @@ class InboxRepository:
             conditions.append(Ticket.status == status)
         if priority:
             conditions.append(Ticket.priority == priority)
+        if channel:
+            conditions.append(
+                exists(
+                    select(Conversation.id).where(
+                        Conversation.organization_id == organization_id,
+                        Conversation.ticket_id == Ticket.id,
+                        Conversation.channel == channel,
+                    )
+                )
+            )
         if team_id:
             conditions.append(Ticket.team_id == team_id)
         if needs_approval:

@@ -125,6 +125,16 @@ class SupportResponseDay(BaseModel):
     average_first_response_seconds: float | None
 
 
+class SupportResponseChannel(BaseModel):
+    channel: str
+    conversations: int
+    responded: int
+    awaiting_first_response: int
+    average_first_response_seconds: float | None
+    median_first_response_seconds: float | None
+    p95_first_response_seconds: float | None
+
+
 class SupportResponseAnalyticsOut(BaseModel):
     start_date: date
     end_date: date
@@ -136,6 +146,7 @@ class SupportResponseAnalyticsOut(BaseModel):
     p95_first_response_seconds: float | None = None
     longest_unanswered_seconds: float | None = None
     daily: list[SupportResponseDay]
+    by_channel: list[SupportResponseChannel] = Field(default_factory=list)
 
 
 class OperationalAlertOut(BaseModel):
@@ -179,6 +190,7 @@ BackgroundJobKind = Literal[
 class FailedBackgroundJobOut(BaseModel):
     job_id: UUID
     document_id: UUID | None = None
+    workflow_id: UUID | None = None
     correlation_id: str | None = None
     job_kind: BackgroundJobKind
     failed_at: datetime

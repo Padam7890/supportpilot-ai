@@ -28,11 +28,11 @@ import { conversationAttachmentsKey, deleteConversationAttachment, downloadConve
 import { expandSavedReplyAtCursor } from "@/features/saved-replies/utils/expand-shortcut";
 import { getAttachmentValidationError } from "@/features/attachments/utils/validate-attachment";
 
-const initialFilters: InboxFilters = { scope: "all", status: "", priority: "", teamId: "", search: "", needsApproval: false, unreadOnly: false };
+const initialFilters: InboxFilters = { scope: "all", status: "", priority: "", channel: "", teamId: "", search: "", needsApproval: false, unreadOnly: false };
 
-export function InboxWorkspace({ initialOverdueOnly = false }: { initialOverdueOnly?: boolean }) {
+export function InboxWorkspace({ initialOverdueOnly = false, initialChannel = "" }: { initialOverdueOnly?: boolean; initialChannel?: string }) {
   const client = useQueryClient();
-  const [filters, setFilters] = useState<InboxFilters>(() => ({ ...initialFilters, overdueOnly: initialOverdueOnly }));
+  const [filters, setFilters] = useState<InboxFilters>(() => ({ ...initialFilters, overdueOnly: initialOverdueOnly, channel: initialChannel }));
   const [searchDraft, setSearchDraft] = useState("");
   const [selectedTicket, setSelectedTicket] = useState<InboxItem | null>(null);
   const [selectedConversation, setSelectedConversation] = useState("");
@@ -61,6 +61,7 @@ export function InboxWorkspace({ initialOverdueOnly = false }: { initialOverdueO
   const hasActiveFilters = filters.scope !== "all"
     || Boolean(filters.status)
     || Boolean(filters.priority)
+    || Boolean(filters.channel)
     || Boolean(filters.teamId)
     || Boolean(filters.search)
     || filters.needsApproval
@@ -349,7 +350,7 @@ export function InboxWorkspace({ initialOverdueOnly = false }: { initialOverdueO
             />
             Overdue first reply
           </label>
-          <div className="flex flex-wrap items-center gap-2"><Select aria-label="Filter by status" className="py-1.5 text-xs" value={filters.status} onChange={(e) => changeFilters((value) => ({ ...value, status: e.target.value }))}><option value="">All statuses</option>{["open", "pending", "resolved", "closed"].map((s) => <option key={s} value={s}>{titleCase(s)}</option>)}</Select><Select aria-label="Filter by priority" className="py-1.5 text-xs" value={filters.priority} onChange={(e) => changeFilters((value) => ({ ...value, priority: e.target.value }))}><option value="">Any priority</option>{["low", "normal", "high", "urgent"].map((s) => <option key={s} value={s}>{titleCase(s)}</option>)}</Select><Select aria-label="Filter by team" className="py-1.5 text-xs" value={filters.teamId ?? ""} onChange={(e) => changeFilters((value) => ({ ...value, teamId: e.target.value }))}><option value="">All teams</option>{teams.data?.filter((team) => team.is_active).map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</Select>{teams.isPending && <span role="status" className="text-xs text-slate-500">Loading teams…</span>}{teams.isError && <span role="status" className="text-xs text-amber-700">Team filter unavailable</span>}{hasActiveFilters && <button type="button" onClick={clearFilters} className="shrink-0 rounded-lg px-2 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-50">Clear</button>}</div>
+          <div className="flex flex-wrap items-center gap-2"><Select aria-label="Filter by status" className="py-1.5 text-xs" value={filters.status} onChange={(e) => changeFilters((value) => ({ ...value, status: e.target.value }))}><option value="">All statuses</option>{["open", "pending", "resolved", "closed"].map((s) => <option key={s} value={s}>{titleCase(s)}</option>)}</Select><Select aria-label="Filter by priority" className="py-1.5 text-xs" value={filters.priority} onChange={(e) => changeFilters((value) => ({ ...value, priority: e.target.value }))}><option value="">Any priority</option>{["low", "normal", "high", "urgent"].map((s) => <option key={s} value={s}>{titleCase(s)}</option>)}</Select><Select aria-label="Filter by channel" className="py-1.5 text-xs" value={filters.channel ?? ""} onChange={(e) => changeFilters((value) => ({ ...value, channel: e.target.value }))}><option value="">All channels</option>{[["shopify_widget", "Shopify widget"], ["web", "Web"], ["chat", "Chat"], ["email", "Email"], ["api", "API"]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select><Select aria-label="Filter by team" className="py-1.5 text-xs" value={filters.teamId ?? ""} onChange={(e) => changeFilters((value) => ({ ...value, teamId: e.target.value }))}><option value="">All teams</option>{teams.data?.filter((team) => team.is_active).map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</Select>{teams.isPending && <span role="status" className="text-xs text-slate-500">Loading teams…</span>}{teams.isError && <span role="status" className="text-xs text-amber-700">Team filter unavailable</span>}{hasActiveFilters && <button type="button" onClick={clearFilters} className="shrink-0 rounded-lg px-2 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-50">Clear</button>}</div>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto" aria-live="polite">
           {inbox.isPending && <div className="space-y-3 p-4">{[1,2,3,4].map((i) => <div key={i} className="h-24 animate-pulse rounded-xl bg-slate-100"/>)}</div>}

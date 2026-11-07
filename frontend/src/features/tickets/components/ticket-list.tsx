@@ -19,6 +19,8 @@ import { getCurrentUser } from "@/features/auth/api/auth-api";
 import { listMembers } from "@/features/organization/api/organization-api";
 import { listTeams, teamQueryKey } from "@/features/organization/api/team-api";
 
+const MAX_BULK_TICKETS = 100;
+
 export default function TicketsPage() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
@@ -29,7 +31,7 @@ export default function TicketsPage() {
   const [bulkPriority, setBulkPriority] = useState("");
   const [bulkAssignee, setBulkAssignee] = useState("__unchanged");
   const [bulkTeam, setBulkTeam] = useState("__unchanged");
-  const [bulkNotice, setBulkNotice] = useState("");
+  const [bulkNotice, setBulkNotice] = useState<{ message: string; tone: "success" | "limit" } | null>(null);
   const queryClient = useQueryClient();
   const params = useMemo(() => {
     const query = new URLSearchParams({ limit: "10", offset: String(page * 10) });
@@ -56,7 +58,7 @@ export default function TicketsPage() {
   const bulkUpdate = useMutation({
     mutationFn: bulkUpdateTickets,
     onSuccess: async (result) => {
-      setBulkNotice(`${result.changed_count} of ${result.updated_count} selected tickets updated.`);
+      setBulkNotice({ message: `${result.changed_count} of ${result.updated_count} selected tickets updated.`, tone: "success" });
       setSelectedIds([]);
       setBulkStatus("");
       setBulkPriority("");
@@ -80,8 +82,36 @@ export default function TicketsPage() {
     if (bulkPriority) changes.priority = bulkPriority as NonNullable<BulkTicketChanges["priority"]>;
     if (canAssign && bulkAssignee !== "__unchanged") changes.assignee_id = bulkAssignee || null;
     if (canAssign && bulkTeam !== "__unchanged") changes.team_id = bulkTeam || null;
-    setBulkNotice("");
+    setBulkNotice(null);
     bulkUpdate.mutate(changes);
+  }
+
+  function toggleTicketSelection(ticketId: string, selected: boolean) {
+    setBulkNotice(null);
+    if (!selected) {
+      setSelectedIds(selectedIds.filter((id) => id !== ticketId));
+      return;
+    }
+    if (selectedIds.includes(ticketId)) return;
+    if (selectedIds.length >= MAX_BULK_TICKETS) {
+      setBulkNotice({ message: `Bulk actions are limited to ${MAX_BULK_TICKETS} tickets. Clear some selections to add this ticket.`, tone: "limit" });
+      return;
+    }
+    setSelectedIds([...selectedIds, ticketId]);
+  }
+
+  function togglePageSelection(selected: boolean) {
+    setBulkNotice(null);
+    if (!selected) {
+      setSelectedIds(selectedIds.filter((id) => !pageTicketIds.includes(id)));
+      return;
+    }
+    const next = Array.from(new Set([...selectedIds, ...pageTicketIds]));
+    if (next.length > MAX_BULK_TICKETS) {
+      setBulkNotice({ message: `Select up to ${MAX_BULK_TICKETS} tickets across pages. This page was not added because it would exceed the limit.`, tone: "limit" });
+      return;
+    }
+    setSelectedIds(next);
   }
 
   return (
@@ -103,9 +133,9 @@ export default function TicketsPage() {
         <PanelHeader title="All tickets" description={`${tickets.data?.total ?? 0} tickets in this view`}/>
         <PanelBody className="space-y-4">
           <div className="grid gap-3 md:grid-cols-[minmax(220px,1fr)_180px_180px]"><div className="relative"><Search size={17} className="absolute left-3 top-3.5 text-slate-400"/><Input aria-label="Search tickets" className="pl-10" placeholder="Search tickets or customers…" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); setSelectedIds([]); }}/></div><Select aria-label="Filter by status" value={status} onChange={(event) => { setStatus(event.target.value); setPage(0); setSelectedIds([]); }}><option value="">All statuses</option><option value="open">Open</option><option value="pending">Pending</option><option value="resolved">Resolved</option><option value="closed">Closed</option></Select><Select aria-label="Filter by priority" value={priority} onChange={(event) => { setPriority(event.target.value); setPage(0); setSelectedIds([]); }}><option value="">All priorities</option><option value="urgent">Urgent</option><option value="high">High</option><option value="normal">Normal</option><option value="low">Low</option></Select></div>
-          {bulkNotice && <p role="status" className="text-sm font-medium text-emerald-700">{bulkNotice}</p>}
+          {bulkNotice && <p role="status" className={`text-sm font-medium ${bulkNotice.tone === "limit" ? "text-amber-800" : "text-emerald-700"}`}>{bulkNotice.message}</p>}
           {selectedIds.length > 0 && <section aria-label="Bulk ticket actions" className="space-y-3 rounded-xl border border-blue-200 bg-blue-50/60 p-3">
-            <div className="flex flex-wrap items-center gap-2"><p className="mr-auto text-sm font-semibold text-slate-800">{selectedIds.length} selected</p>
+            <div className="flex flex-wrap items-center gap-2"><p className="mr-auto text-sm font-semibold text-slate-800">{selectedIds.length} of {MAX_BULK_TICKETS} selected across pages</p>
               <Select aria-label="Bulk status change" className="min-w-36 bg-white" value={bulkStatus} onChange={(event) => setBulkStatus(event.target.value)}><option value="">Keep status</option><option value="open">Open</option><option value="pending">Pending</option><option value="resolved">Resolved</option><option value="closed">Closed</option></Select>
               <Select aria-label="Bulk priority change" className="min-w-36 bg-white" value={bulkPriority} onChange={(event) => setBulkPriority(event.target.value)}><option value="">Keep priority</option><option value="urgent">Urgent</option><option value="high">High</option><option value="normal">Normal</option><option value="low">Low</option></Select>
               {canAssign && <Select aria-label="Bulk assignee change" className="min-w-44 bg-white" value={bulkAssignee} onChange={(event) => setBulkAssignee(event.target.value)}><option value="__unchanged">Keep assignee</option><option value="">Unassign</option>{members.data?.filter((member) => member.is_active && ["owner", "admin", "agent"].includes(member.role)).map((member) => <option key={member.id} value={member.id}>{member.full_name} · {member.role}</option>)}</Select>}
@@ -117,7 +147,7 @@ export default function TicketsPage() {
             {bulkUpdate.isError && <p role="alert" className="text-sm text-red-700">{bulkUpdate.error instanceof ApiError ? bulkUpdate.error.message : "Selected tickets could not be updated."}</p>}
           </section>}
           {tickets.isError && <div role="alert" className="rounded-xl bg-red-50 p-4 text-sm text-red-700">Unable to load tickets.</div>}
-          {tickets.isPending ? <div className="space-y-3">{[1,2,3,4].map((item) => <div key={item} className="h-14 animate-pulse rounded-xl bg-slate-100"/>)}</div> : tickets.data?.items.length ? <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead><tr className="border-b border-slate-100 text-xs uppercase tracking-wide text-slate-400"><th className="w-10 px-3 py-3"><input type="checkbox" aria-label="Select all tickets on this page" checked={allPageSelected} onChange={(event) => setSelectedIds(event.target.checked ? Array.from(new Set([...selectedIds, ...pageTicketIds])) : selectedIds.filter((id) => !pageTicketIds.includes(id)))}/></th><th className="px-3 py-3 font-semibold">Subject</th><th className="px-3 py-3 font-semibold">Customer</th><th className="px-3 py-3 font-semibold">Status</th><th className="px-3 py-3 font-semibold">Priority</th><th className="px-3 py-3 font-semibold">Assignment</th><th className="px-3 py-3 font-semibold">Created</th></tr></thead><tbody className="divide-y divide-slate-100">{tickets.data.items.map((ticket) => <tr key={ticket.id} className="hover:bg-slate-50"><td className="px-3 py-4"><input type="checkbox" aria-label={`Select ticket ${ticket.subject}`} checked={selectedIds.includes(ticket.id)} onChange={(event) => setSelectedIds(event.target.checked ? [...selectedIds, ticket.id] : selectedIds.filter((id) => id !== ticket.id))}/></td><td className="px-3 py-4"><Link className="font-semibold text-slate-900 hover:text-blue-700" href={`/dashboard/tickets/${ticket.id}`}>{ticket.subject}</Link><p className="mt-1 text-xs text-slate-400">#{ticket.id.slice(0, 8)}</p></td><td className="px-3 py-4 text-slate-600">{ticket.customer_name ?? "Customer"}</td><td className="px-3 py-4"><Badge value={ticket.status}/></td><td className="px-3 py-4"><Badge value={ticket.priority}/></td><td className="px-3 py-4 text-slate-600"><span className="block">{ticket.assignee_name ?? "Unassigned"}</span>{ticket.team_name && <span className="mt-1 block text-xs text-slate-500">{ticket.team_name}</span>}</td><td className="px-3 py-4 text-slate-500">{formatDate(ticket.created_at)}</td></tr>)}</tbody></table></div> : <div className="rounded-2xl border border-dashed border-slate-200 py-14 text-center"><TicketIcon className="mx-auto text-slate-300" size={30}/><h3 className="mt-3 font-semibold">No tickets found</h3><p className="mt-1 text-sm text-slate-500">Try another search or create a new ticket.</p></div>}
+          {tickets.isPending ? <div className="space-y-3">{[1,2,3,4].map((item) => <div key={item} className="h-14 animate-pulse rounded-xl bg-slate-100"/>)}</div> : tickets.data?.items.length ? <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead><tr className="border-b border-slate-100 text-xs uppercase tracking-wide text-slate-400"><th className="w-10 px-3 py-3"><input type="checkbox" aria-label="Select all tickets on this page" checked={allPageSelected} onChange={(event) => togglePageSelection(event.target.checked)}/></th><th className="px-3 py-3 font-semibold">Subject</th><th className="px-3 py-3 font-semibold">Customer</th><th className="px-3 py-3 font-semibold">Status</th><th className="px-3 py-3 font-semibold">Priority</th><th className="px-3 py-3 font-semibold">Assignment</th><th className="px-3 py-3 font-semibold">Created</th></tr></thead><tbody className="divide-y divide-slate-100">{tickets.data.items.map((ticket) => <tr key={ticket.id} className="hover:bg-slate-50"><td className="px-3 py-4"><input type="checkbox" aria-label={`Select ticket ${ticket.subject}`} checked={selectedIds.includes(ticket.id)} onChange={(event) => toggleTicketSelection(ticket.id, event.target.checked)}/></td><td className="px-3 py-4"><Link className="font-semibold text-slate-900 hover:text-blue-700" href={`/dashboard/tickets/${ticket.id}`}>{ticket.subject}</Link><p className="mt-1 text-xs text-slate-400">#{ticket.id.slice(0, 8)}</p></td><td className="px-3 py-4 text-slate-600">{ticket.customer_name ?? "Customer"}</td><td className="px-3 py-4"><Badge value={ticket.status}/></td><td className="px-3 py-4"><Badge value={ticket.priority}/></td><td className="px-3 py-4 text-slate-600"><span className="block">{ticket.assignee_name ?? "Unassigned"}</span>{ticket.team_name && <span className="mt-1 block text-xs text-slate-500">{ticket.team_name}</span>}</td><td className="px-3 py-4 text-slate-500">{formatDate(ticket.created_at)}</td></tr>)}</tbody></table></div> : <div className="rounded-2xl border border-dashed border-slate-200 py-14 text-center"><TicketIcon className="mx-auto text-slate-300" size={30}/><h3 className="mt-3 font-semibold">No tickets found</h3><p className="mt-1 text-sm text-slate-500">Try another search or create a new ticket.</p></div>}
           <div className="flex items-center justify-between border-t border-slate-100 pt-4"><p className="text-xs text-slate-500">Page {page + 1} of {pages}</p><div className="flex gap-2"><Button aria-label="Previous page" variant="secondary" size="sm" disabled={page === 0} onClick={() => setPage((value) => Math.max(0, value - 1))}><ArrowLeft size={15}/> Previous</Button><Button aria-label="Next page" variant="secondary" size="sm" disabled={page + 1 >= pages} onClick={() => setPage((value) => value + 1)}>Next <ArrowRight size={15}/></Button></div></div>
         </PanelBody>
       </Panel>

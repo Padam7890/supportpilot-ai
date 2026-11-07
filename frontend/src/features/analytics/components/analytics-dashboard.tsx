@@ -264,6 +264,41 @@ export function AnalyticsDashboard() {
             <span className="font-semibold">{formatDuration(supportResponses.data.longest_unanswered_seconds)}</span>
           </p>
         )}
+        {!supportResponses.isError && (supportResponses.data?.by_channel.length ?? 0) > 0 && (
+          <div className="mt-5 overflow-x-auto rounded-xl border border-slate-200">
+            <table className="w-full min-w-[680px] text-left text-sm">
+              <caption className="px-3 py-2 text-left text-xs text-slate-500">
+                First response by conversation channel for the selected date range.
+              </caption>
+              <thead className="bg-slate-50 text-xs text-slate-500">
+                <tr>
+                  <th scope="col" className="px-3 py-2">Channel</th>
+                  <th scope="col" className="px-3 py-2">Conversations</th>
+                  <th scope="col" className="px-3 py-2">Replied</th>
+                  <th scope="col" className="px-3 py-2">Awaiting</th>
+                  <th scope="col" className="px-3 py-2">Average</th>
+                  <th scope="col" className="px-3 py-2">P95</th>
+                  <th scope="col" className="px-3 py-2">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {supportResponses.data?.by_channel.map((channel) => (
+                  <tr key={channel.channel} className="border-t border-slate-100">
+                    <th scope="row" className="px-3 py-2.5 font-semibold capitalize text-slate-800">
+                      {channel.channel.replaceAll("_", " ")}
+                    </th>
+                    <td className="px-3 py-2.5 tabular-nums">{channel.conversations.toLocaleString()}</td>
+                    <td className="px-3 py-2.5 tabular-nums text-emerald-800">{channel.responded.toLocaleString()}</td>
+                    <td className="px-3 py-2.5 tabular-nums">{channel.awaiting_first_response.toLocaleString()}</td>
+                    <td className="px-3 py-2.5 tabular-nums">{channel.average_first_response_seconds == null ? "—" : formatDuration(channel.average_first_response_seconds)}</td>
+                    <td className="px-3 py-2.5 tabular-nums">{channel.p95_first_response_seconds == null ? "—" : formatDuration(channel.p95_first_response_seconds)}</td>
+                    <td className="px-3 py-2.5"><Link href={`/dashboard/inbox?channel=${encodeURIComponent(channel.channel)}`} className="font-semibold text-blue-700 underline-offset-4 hover:underline">View inbox</Link></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
         <Link
           href="/dashboard/inbox?overdue_only=true"
           className="mt-4 inline-flex text-sm font-semibold text-blue-700 underline-offset-4 hover:underline"

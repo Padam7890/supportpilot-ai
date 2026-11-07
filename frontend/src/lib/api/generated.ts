@@ -4467,6 +4467,8 @@ export interface components {
              * @default 0
              */
             manual_retry_count: number;
+            /** Workflow Id */
+            workflow_id?: string | null;
         };
         /** FailedBackgroundJobsOut */
         FailedBackgroundJobsOut: {
@@ -6511,6 +6513,8 @@ export interface components {
             average_first_response_seconds: number | null;
             /** Awaiting First Response */
             awaiting_first_response: number;
+            /** By Channel */
+            by_channel?: components["schemas"]["SupportResponseChannel"][];
             /** Conversations */
             conversations: number;
             /** Daily */
@@ -6533,6 +6537,23 @@ export interface components {
              * Format: date
              */
             start_date: string;
+        };
+        /** SupportResponseChannel */
+        SupportResponseChannel: {
+            /** Average First Response Seconds */
+            average_first_response_seconds: number | null;
+            /** Awaiting First Response */
+            awaiting_first_response: number;
+            /** Channel */
+            channel: string;
+            /** Conversations */
+            conversations: number;
+            /** Median First Response Seconds */
+            median_first_response_seconds: number | null;
+            /** P95 First Response Seconds */
+            p95_first_response_seconds: number | null;
+            /** Responded */
+            responded: number;
         };
         /** SupportResponseDay */
         SupportResponseDay: {
@@ -15544,6 +15565,7 @@ export interface operations {
                 scope?: string;
                 status?: string | null;
                 priority?: string | null;
+                channel?: string | null;
                 team_id?: string | null;
                 needs_approval?: boolean;
                 unread_only?: boolean;
