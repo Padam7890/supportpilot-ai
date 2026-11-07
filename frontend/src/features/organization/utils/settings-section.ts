@@ -3,6 +3,7 @@ export const SETTINGS_SECTIONS = [
   "appearance",
   "team",
   "sla",
+  "saved-replies",
   "security",
   "recommendations",
   "widget",

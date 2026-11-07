@@ -182,6 +182,18 @@ function responseFromUpstream(response: Response, body: string, correlationId: s
   });
 }
 
+function attachmentResponseFromUpstream(response: Response, correlationId: string) {
+  const headers = new Headers({
+    "content-type": "application/octet-stream",
+    "cache-control": "private, no-store",
+    "x-content-type-options": "nosniff",
+    "x-correlation-id": response.headers.get("x-correlation-id") ?? correlationId,
+  });
+  const disposition = response.headers.get("content-disposition");
+  if (disposition) headers.set("content-disposition", disposition);
+  return new NextResponse(response.body, { status: response.status, headers });
+}
+
 function localProblem(
   request: NextRequest,
   status: number,
@@ -379,6 +391,11 @@ async function forward(
       try {
         const tokenBody = await runSingleFlightRefresh(request, correlationId, platform, refreshToken);
         upstream = await requestBackend(request, path, correlationId, tokenBody.access_token, requestBody);
+        if (request.method === "GET" && path.endsWith("/download") && upstream.ok) {
+          const response = attachmentResponseFromUpstream(upstream, correlationId);
+          setSessionCookies(response, tokenBody, platform);
+          return response;
+        }
         const raw = await upstream.text();
         const response = responseFromUpstream(upstream, raw, correlationId);
         setSessionCookies(response, tokenBody, platform);
@@ -388,6 +405,9 @@ async function forward(
       }
     }
 
+    if (request.method === "GET" && path.endsWith("/download") && upstream.ok) {
+      return attachmentResponseFromUpstream(upstream, correlationId);
+    }
     const raw = await upstream.text();
     const response = responseFromUpstream(upstream, raw, correlationId);
     if (upstream.status === 401) clearSessionCookies(response, platform);

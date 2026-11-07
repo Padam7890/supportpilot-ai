@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Bot, Check, CheckCircle2, LoaderCircle, PanelRight, RefreshCw, Search, Send, Sparkles, UserRoundPlus, UserRound } from "lucide-react";
+import { ArrowLeft, Bot, Check, CheckCircle2, Download, LoaderCircle, Paperclip, PanelRight, RefreshCw, Search, Send, Sparkles, Trash2, UserRoundPlus, UserRound } from "lucide-react";
 import { motion } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { Select, Textarea } from "@/components/ui/input";
@@ -22,6 +22,8 @@ import { ShopifyCancellationPanel } from "@/features/commerce-actions/components
 import { formatInboxRequestError } from "../utils/request-error";
 import { inboxQueryRetryDelay, shouldRetryInboxQuery } from "../utils/query-retry";
 import { activeTeamsQueryKey, listActiveTeams } from "@/features/organization/api/team-api";
+import { listSavedReplies, savedRepliesQueryKey } from "@/features/saved-replies/api/saved-replies-api";
+import { conversationAttachmentsKey, deleteConversationAttachment, downloadConversationAttachment, listConversationAttachments, uploadConversationAttachment } from "@/features/attachments/api/conversation-attachment-api";
 
 const initialFilters: InboxFilters = { scope: "all", status: "", priority: "", teamId: "", search: "", needsApproval: false, unreadOnly: false };
 
@@ -33,6 +35,7 @@ export function InboxWorkspace() {
   const [selectedConversation, setSelectedConversation] = useState("");
   const [showDetails, setShowDetails] = useState(false);
   const [reply, setReply] = useState("");
+  const [attachmentValidationError, setAttachmentValidationError] = useState<string | null>(null);
   const [shopifyOrderNumber, setShopifyOrderNumber] = useState("");
   const [composeMode, setComposeMode] = useState<"reply" | "note">("reply");
   const [draftExecutionId, setDraftExecutionId] = useState<string>();
@@ -248,6 +251,37 @@ export function InboxWorkspace() {
   }
 
   const canReply = ["owner", "admin", "agent"].includes(me.data?.role ?? "");
+  const savedReplies = useQuery({
+    queryKey: savedRepliesQueryKey(me.data?.organization_id),
+    queryFn: () => listSavedReplies(),
+    enabled: Boolean(activeConversationId && me.data?.organization_id) && composeMode === "reply" && canReply,
+    staleTime: 60_000,
+  });
+  const attachmentsKey = conversationAttachmentsKey(me.data?.organization_id, activeConversationId || undefined);
+  const attachments = useQuery({
+    queryKey: attachmentsKey,
+    queryFn: () => listConversationAttachments(activeConversationId),
+    enabled: Boolean(activeConversationId && me.data?.organization_id),
+  });
+  const uploadAttachment = useMutation({
+    mutationFn: (file: File) => uploadConversationAttachment(activeConversationId, file),
+    onSuccess: async () => client.invalidateQueries({ queryKey: attachmentsKey }),
+  });
+  const removeAttachment = useMutation({
+    mutationFn: deleteConversationAttachment,
+    onSuccess: async () => client.invalidateQueries({ queryKey: attachmentsKey }),
+  });
+  const downloadAttachment = useMutation({
+    mutationFn: downloadConversationAttachment,
+    onSuccess: ({ blob, filename }) => {
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    },
+  });
   const refreshTicket = async () => {
     await Promise.all([client.invalidateQueries({ queryKey: ["inbox"] }), client.invalidateQueries({ queryKey: ["ticket-activity", activeTicket?.ticketId] })]);
   };
@@ -359,8 +393,21 @@ export function InboxWorkspace() {
             </div>}
             <form onSubmit={(event) => { event.preventDefault(); if (reply.trim()) send.mutate(); }} className={`shrink-0 border-t p-3 sm:p-4 ${composeMode === "note" ? "border-amber-200 bg-amber-50/60" : "border-slate-200 bg-white"}`}>
               <div className="mb-3 flex gap-2" role="group" aria-label="Message type"><Button type="button" size="sm" variant={composeMode === "reply" ? "primary" : "secondary"} aria-pressed={composeMode === "reply"} onClick={() => setComposeMode("reply")}>Reply</Button><Button type="button" size="sm" variant={composeMode === "note" ? "primary" : "secondary"} aria-pressed={composeMode === "note"} onClick={() => { setComposeMode("note"); setDraftExecutionId(undefined); }}>Internal note</Button></div>
+              <details className="mb-3 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2 text-xs text-slate-600">
+                <summary className="flex cursor-pointer list-none items-center gap-2 font-medium"><Paperclip size={14}/>Team files <span className="text-slate-400">({attachments.data?.length ?? 0})</span></summary>
+                <p className="mt-2">Files are private to this workspace. They are not sent to the customer.</p>
+                {attachments.isPending && <p className="mt-2 text-slate-500">Loading files…</p>}
+                {attachments.isError && <div className="mt-2 text-red-700"><span>Files could not be loaded. </span><button type="button" className="font-medium underline" onClick={() => attachments.refetch()}>Try again</button></div>}
+                {attachments.data && attachments.data.length > 0 && <ul className="mt-2 divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">{attachments.data.map((attachment) => <li key={attachment.id} className="flex items-center gap-2 px-2.5 py-2"><span className="min-w-0 flex-1"><span className="block truncate font-medium text-slate-800">{attachment.original_filename}</span><span className="text-[11px] text-slate-500">{formatBytes(attachment.size_bytes)} · {attachment.uploaded_by_name}</span></span><Button type="button" variant="ghost" size="sm" aria-label={`Download ${attachment.original_filename}`} disabled={downloadAttachment.isPending} onClick={() => downloadAttachment.mutate(attachment.id)}><Download size={14}/></Button>{canReply && (attachment.uploaded_by_user_id === me.data?.id || me.data?.role === "owner" || me.data?.role === "admin") && <Button type="button" variant="ghost" size="sm" aria-label={`Remove ${attachment.original_filename}`} disabled={removeAttachment.isPending} onClick={() => removeAttachment.mutate(attachment.id)}><Trash2 size={14}/></Button>}</li>)}</ul>}
+                {canReply && <label className="mt-2 inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"><Paperclip size={14}/>{uploadAttachment.isPending ? "Uploading…" : "Add a file"}<input type="file" className="sr-only" accept=".png,.jpg,.jpeg,.webp,.pdf,.txt,.md" disabled={!canReply || uploadAttachment.isPending} onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (!file) return; if (file.size > 10 * 1024 * 1024) { setAttachmentValidationError("Attachments are limited to 10 MB."); return; } setAttachmentValidationError(null); uploadAttachment.mutate(file); }}/></label>}
+                {attachmentValidationError && <p role="alert" className="mt-2 text-red-700">{attachmentValidationError}</p>}
+                {uploadAttachment.isError && <p role="alert" className="mt-2 text-red-700">{uploadAttachment.error.message}</p>}
+                {removeAttachment.isError && <p role="alert" className="mt-2 text-red-700">File could not be removed.</p>}
+                {downloadAttachment.isError && <p role="alert" className="mt-2 text-red-700">File could not be downloaded.</p>}
+              </details>
               {composeMode === "note" && <p className="mb-2 text-xs font-medium text-amber-700">Only workspace teammates can see this note. It will not be sent to the customer.</p>}
               {composeMode === "reply" && <details className="mb-3 text-xs text-slate-500"><summary className="cursor-pointer font-medium">Shopify order context (optional)</summary><label className="mt-2 block max-w-xs text-xs font-medium text-slate-600">Verified order for this draft <input aria-label="Shopify order number for AI draft" value={shopifyOrderNumber} onChange={(event) => setShopifyOrderNumber(event.target.value)} placeholder="#1001 (optional)" className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"/></label></details>}
+              {composeMode === "reply" && canReply && (savedReplies.data?.length ? <label className="mb-3 block max-w-sm text-xs font-medium text-slate-600">Insert saved reply <Select aria-label="Insert saved reply" value="" onChange={(event) => { const item = savedReplies.data?.find((entry) => entry.id === event.target.value); if (!item) return; setReply((current) => current.trim() ? `${current.trim()}\n\n${item.body}` : item.body); }} className="mt-1 min-h-9 rounded-lg text-sm"><option value="">Choose a reply…</option>{savedReplies.data.map((item) => <option key={item.id} value={item.id}>{item.title} · /{item.shortcut}</option>)}</Select></label> : savedReplies.isError ? <p role="status" className="mb-3 text-xs text-amber-700">Saved replies unavailable. You can still write a reply.</p> : savedReplies.isSuccess ? <p className="mb-3 text-xs text-slate-500">No saved replies yet · <Link className="font-medium text-blue-700 underline" href="/dashboard/settings#saved-replies">Create one in Settings</Link></p> : null)}
               <Textarea aria-label={composeMode === "note" ? "Write an internal note" : "Write a reply"} placeholder={!canReply ? "Your role has read-only access" : composeMode === "note" ? "Write a private note for your team…" : "Reply to the customer…"} value={reply} disabled={!canReply || send.isPending} onChange={(event) => setReply(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); if (reply.trim() && canReply && !send.isPending) send.mutate(); } }} className="min-h-20 max-h-40 resize-y rounded-xl border-slate-200 bg-slate-50/60 focus:bg-white"/>
               <div className="mt-3 flex flex-wrap items-center justify-between gap-2"><span className="text-xs text-slate-500">{composeMode === "note" ? "Private to your workspace" : "Messages are sent as you."} <span className="ml-1 text-slate-400">· Ctrl/⌘+Enter to {composeMode === "note" ? "add note" : "send"}</span></span><div className="flex gap-2">{composeMode === "reply" && <Button type="button" variant="secondary" disabled={!canReply || createDraft.isPending || Boolean(draftExecution.data && ["queued", "running"].includes(draftExecution.data.status))} onClick={() => createDraft.mutate()}><Sparkles size={15}/>{createDraft.isPending ? "Starting…" : "Draft with AI"}</Button>}<Button type="submit" disabled={!canReply || !reply.trim() || send.isPending}>{send.isPending ? composeMode === "note" ? "Saving…" : "Sending…" : composeMode === "note" ? "Add note" : "Send reply"}{composeMode === "reply" && <Send size={15}/>}</Button></div></div>
               {send.isError && <p role="alert" className="mt-2 text-sm text-red-700">{send.error instanceof Error ? send.error.message : "Message could not be sent."}</p>}
@@ -376,6 +423,7 @@ export function InboxWorkspace() {
 }
 
 function Avatar({ name }: { name: string }) { return <span className="grid size-10 shrink-0 place-items-center rounded-full bg-[var(--customer-avatar)] text-sm font-bold text-[var(--customer-avatar-foreground)]">{name.trim().slice(0, 1).toUpperCase()}</span>; }
+function formatBytes(size: number) { return size < 1024 * 1024 ? `${Math.max(1, Math.round(size / 1024))} KB` : `${(size / (1024 * 1024)).toFixed(1)} MB`; }
 function StatusPill({ value }: { value: string }) { const colors: Record<string, string> = { open: "bg-emerald-50 text-emerald-700", pending: "bg-amber-50 text-amber-700", resolved: "bg-blue-50 text-blue-700", closed: "bg-slate-100 text-slate-600" }; return <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold capitalize ${colors[value] ?? colors.closed}`}>{value}</span>; }
 function SlaPill({ sla }: { sla: NonNullable<InboxItem["firstResponseSla"]> }) {
   const presentation = {

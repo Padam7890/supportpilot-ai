@@ -8,8 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.observability import current_correlation_id
 from app.features.automations.capabilities import organization_capabilities
-from app.features.automations.contracts import SUPPORTED_TICKET_STATUSES, WorkflowDefinition
+from app.features.automations.contracts import Action, SUPPORTED_TICKET_STATUSES, WorkflowDefinition
 from app.models import AIAgent, AutomationExecution, AutomationWorkflow, AutomationWorkflowVersion, Conversation, IntegrationConnection, Team, User
+
+
+def _all_actions(definition: WorkflowDefinition) -> list[Action]:
+    return [*definition.actions, *definition.else_actions]
 
 
 async def validate_assignment_targets(
@@ -18,7 +22,7 @@ async def validate_assignment_targets(
     """Validate assign_to_user targets belong to the tenant."""
     user_ids = {
         action.user_id
-        for action in definition.actions
+        for action in _all_actions(definition)
         if action.kind == "assign_to_user"
     }
     if not user_ids:
@@ -43,7 +47,7 @@ async def validate_team_assignment_targets(
     """Validate automation team targets are active and tenant-owned."""
     team_ids = {
         action.team_id
-        for action in definition.actions
+        for action in _all_actions(definition)
         if action.kind == "assign_to_team"
     }
     if not team_ids:
@@ -76,7 +80,7 @@ async def validate_definition_targets(
 
     unsupported_statuses = {
         action.value.strip().casefold()
-        for action in definition.actions
+        for action in _all_actions(definition)
         if action.kind == "set_ticket_status"
         and action.value.strip().casefold() not in SUPPORTED_TICKET_STATUSES
     }
@@ -95,7 +99,7 @@ async def validate_definition_targets(
 
     agent_ids = {
         action.ai_agent_id
-        for action in definition.actions
+        for action in _all_actions(definition)
         if action.kind == "route_to_ai_bot"
     }
     if agent_ids:
@@ -136,7 +140,7 @@ async def validate_definition_targets(
 
     needs_shopify = any(c.kind == "shopify_store_connected" for c in definition.conditions) or any(
         a.kind in ("lookup_shopify_order", "search_shopify_catalog", "request_commerce_approval")
-        for a in definition.actions
+        for a in _all_actions(definition)
     )
     if needs_shopify and "shopify.read" not in caps:
         raise ValueError("Connect a Shopify store to publish workflows that use Shopify conditions or actions")

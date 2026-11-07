@@ -20,6 +20,7 @@ export const EMPTY_DRAFT: WorkflowDraft = {
   conditionMode: "all",
   conditions: [],
   actions: [defaultActionNode()],
+  elseNote: "",
   canvasLayout: defaultCanvasLayout(0, 1),
 };
 
@@ -43,6 +44,9 @@ export function workflowDraftDefinition(draft: WorkflowDraft): WorkflowDefinitio
     condition_mode: draft.conditionMode,
     conditions: draft.conditions,
     actions: draft.actions,
+    else_actions: draft.elseNote?.trim()
+      ? [{ kind: "add_internal_note", body: draft.elseNote.trim() }]
+      : [],
   };
 }
 
@@ -75,6 +79,7 @@ export function workflowDraftFrom(workflow: AutomationWorkflow): WorkflowDraft {
   const conditionMode = def.condition_mode ?? "all";
   const conditions = [...(def.conditions ?? [])];
   const actions = def.actions?.length ? [...def.actions] : [defaultActionNode()];
+  const elseNote = def.else_actions?.[0]?.body ?? "";
   const layout = fitCanvasLayout(
     workflow.canvas_layout ?? defaultCanvasLayout(conditions.length, actions.length),
     conditions.length,
@@ -88,6 +93,7 @@ export function workflowDraftFrom(workflow: AutomationWorkflow): WorkflowDraft {
     conditionMode,
     conditions,
     actions,
+    elseNote,
     canvasLayout: layout,
   };
 }

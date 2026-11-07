@@ -20,7 +20,7 @@ from app.features.automations.contracts import (
 )
 from app.features.automations.policy import (
     PRIORITY_RANK,
-    evaluate_customer_message_match,
+    evaluate_customer_message_branch,
     evaluation_context_from_runtime,
 )
 from app.features.automations.shopify_actions import (
@@ -205,13 +205,39 @@ class AutomationExecutionHandler(JobHandler):
                     for item in execution.result
                     if isinstance(item, dict)
                 )
-                if not resuming_approval and not evaluate_customer_message_match(definition, ctx):
+                if resuming_approval:
+                    selected_branch = next(
+                        (
+                            item.get("detail")
+                            for item in execution.result
+                            if isinstance(item, dict)
+                            and item.get("action") == "branch_selection"
+                            and item.get("detail") in ("match", "no_match")
+                        ),
+                        "match",
+                    )
+                else:
+                    selected_branch = evaluate_customer_message_branch(definition, ctx)
+
+                if selected_branch is None:
+                    execution.result = [{
+                        "action": "trigger",
+                        "outcome": "skipped",
+                        "detail": "Message did not match the workflow trigger",
+                    }]
+                elif selected_branch == "no_match" and not definition.else_actions:
                     execution.result = [{
                         "action": "conditions",
                         "outcome": "skipped",
                         "detail": "Message did not match the workflow conditions",
                     }]
                 else:
+                    if not resuming_approval and (definition.conditions or definition.else_actions):
+                        execution.result = [{
+                            "action": "branch_selection",
+                            "outcome": "applied",
+                            "detail": selected_branch,
+                        }]
                     execution.result = _merge_action_results(
                         execution.result,
                         await _apply_actions(
@@ -225,7 +251,7 @@ class AutomationExecutionHandler(JobHandler):
                             customer_email=await ticket_customer_email(db, job.organization_id, ticket.id),
                             ticket=ticket,
                             conversation=conversation,
-                            actions=definition.actions,
+                            actions=definition.actions if selected_branch == "match" else definition.else_actions,
                         ),
                     )
                 outcomes = execution.result
@@ -312,6 +338,11 @@ def _merge_action_results(
         for item in previous
         if isinstance(item, dict) and isinstance(item.get("action_index"), int)
     }
+    markers = [
+        item
+        for item in previous
+        if isinstance(item, dict) and item.get("action") == "branch_selection"
+    ]
     merged: list[dict[str, object]] = []
     for item in current:
         index = item.get("action_index")
@@ -325,7 +356,7 @@ def _merge_action_results(
             merged.append(old)
         else:
             merged.append(item)
-    return merged
+    return [*markers, *merged]
 
 
 async def _append_internal_note(

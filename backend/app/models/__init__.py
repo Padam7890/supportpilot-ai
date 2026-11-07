@@ -12,6 +12,7 @@ from app.models.automation import (
 from app.models.catalog import CatalogProduct, CatalogSyncJob, CatalogVariant, CatalogWebhookEvent
 from app.models.commerce_action import CommerceAction, CommerceActionAudit
 from app.models.conversation import Conversation
+from app.models.conversation_attachment import ConversationAttachment
 from app.models.conversation_read_state import ConversationReadState
 from app.models.customer import Customer
 from app.models.integration import (
@@ -35,6 +36,7 @@ from app.models.platform_owner import PlatformOwner
 from app.models.platform_refresh_session import PlatformRefreshSession
 from app.models.recommendation import RecommendationEvent, RecommendationSettings
 from app.models.refresh_session import RefreshSession
+from app.models.saved_reply import SavedReply
 from app.models.shopify import ShopifyAccessAudit, ShopifyInstallation, ShopifyOAuthState
 from app.models.support_widget import (
     SupportWidget,
@@ -70,6 +72,7 @@ __all__ = [
     "CommerceAction",
     "CommerceActionAudit",
     "Conversation",
+    "ConversationAttachment",
     "ConversationReadState",
     "Customer",
     "DocumentChunk",
@@ -90,6 +93,7 @@ __all__ = [
     "RecommendationEvent",
     "RecommendationSettings",
     "RefreshSession",
+    "SavedReply",
     "ShopifyAccessAudit",
     "ShopifyInstallation",
     "ShopifyOAuthState",

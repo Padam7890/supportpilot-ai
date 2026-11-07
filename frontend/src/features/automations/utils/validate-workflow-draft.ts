@@ -55,6 +55,13 @@ export function validateWorkflowDraft(draft: WorkflowDraft): WorkflowDraftValida
   if (draft.conditions.length > MAX_CONDITIONS) {
     pushError(errors, issues, `Use no more than ${MAX_CONDITIONS} conditions.`, { type: "condition", index: 0 });
   }
+  const elseNote = draft.elseNote ?? "";
+  if (elseNote.trim() && draft.conditions.length === 0) {
+    pushError(errors, issues, "A no-match note requires at least one condition.", { type: "trigger" });
+  }
+  if (elseNote.length > 4000) {
+    pushError(errors, issues, "Keep the no-match internal note to 4,000 characters or fewer.", { type: "trigger" });
+  }
 
   draft.conditions.forEach((condition, index) => {
     const step: WorkflowValidationIssue["step"] = { type: "condition", index };

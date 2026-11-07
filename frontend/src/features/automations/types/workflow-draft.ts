@@ -26,6 +26,7 @@ export type WorkflowDraft = {
   conditionMode: "all" | "any";
   conditions: Condition[];
   actions: Action[];
+  elseNote?: string;
   canvasLayout: WorkflowCanvasLayout;
 };
 

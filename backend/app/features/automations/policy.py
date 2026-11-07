@@ -64,6 +64,12 @@ def evaluate_one_condition(condition: Condition, ctx: EvaluationContext) -> bool
 
 
 def evaluate_conditions(definition: WorkflowDefinition, ctx: EvaluationContext) -> bool:
+    if not _trigger_matches(definition, ctx):
+        return False
+    return _condition_group_matches(definition, ctx)
+
+
+def _trigger_matches(definition: WorkflowDefinition, ctx: EvaluationContext) -> bool:
     if definition.trigger.kind != "customer_message_received":
         return False
     trig = definition.trigger
@@ -80,6 +86,10 @@ def evaluate_conditions(definition: WorkflowDefinition, ctx: EvaluationContext) 
         and trig.integration_connection_id != ctx.conversation_integration_connection_id
     ):
         return False
+    return True
+
+
+def _condition_group_matches(definition: WorkflowDefinition, ctx: EvaluationContext) -> bool:
     conds = definition.conditions
     if not conds:
         return True
@@ -230,11 +240,21 @@ def preview_definition(
             )
         )
 
-    matches = group_ok
+    selected_branch = "match" if group_ok else "no_match" if definition.else_actions else None
+    matches = group_ok or bool(definition.else_actions)
+    selected_actions = definition.actions if group_ok else definition.else_actions
     planned: list[AutomationPreviewActionOut] = []
     if matches:
+        if selected_branch is not None:
+            steps.append(
+                AutomationPreviewStepOut(
+                    step=f"branch:{selected_branch}",
+                    outcome="matched",
+                    detail="Selected the condition-matched path" if group_ok else "Selected the no-match path",
+                )
+            )
         current_p = ctx.ticket_priority
-        for action in definition.actions:
+        for action in selected_actions:
             planned.append(_preview_action(action, current_priority=current_p))
             current_p = _priority_after_action(action, current_p)
             steps.append(
@@ -260,6 +280,7 @@ def preview_definition(
         conditions=condition_rows,
         planned_actions=planned,
         steps=steps,
+        selected_branch=selected_branch,
     )
 
 
@@ -424,3 +445,29 @@ def evaluate_customer_message_match(
         conversation_integration_connection_id=ctx.conversation_integration_connection_id,
     )
     return evaluate_conditions(definition, merged)
+
+
+def evaluate_customer_message_branch(
+    definition: WorkflowDefinition,
+    ctx: EvaluationContext,
+) -> str | None:
+    """Return the matching path, with None reserved for a non-matching trigger."""
+    if definition.trigger.kind != "customer_message_received":
+        return None
+    merged = EvaluationContext(
+        message=ctx.message,
+        ticket_priority=ctx.ticket_priority,
+        ticket_status=ctx.ticket_status,
+        channel=ctx.channel,
+        is_first_customer_message=ctx.is_first_customer_message,
+        assignee_present=ctx.assignee_present,
+        conversation_ai_mode=ctx.conversation_ai_mode,
+        shopify_connected=ctx.shopify_connected,
+        trigger_ai_agent_id=definition.trigger.ai_agent_id,
+        trigger_integration_connection_id=definition.trigger.integration_connection_id,
+        conversation_ai_agent_id=ctx.conversation_ai_agent_id,
+        conversation_integration_connection_id=ctx.conversation_integration_connection_id,
+    )
+    if not _trigger_matches(definition, merged):
+        return None
+    return "match" if _condition_group_matches(definition, merged) else "no_match"

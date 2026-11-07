@@ -242,6 +242,13 @@ class WorkflowDefinition(StrictModel):
     condition_mode: Literal["all", "any"] = "all"
     conditions: list[Condition] = Field(default_factory=list, max_length=10)
     actions: list[Action] = Field(min_length=1, max_length=10)
+    else_actions: list[AddInternalNoteAction] = Field(default_factory=list, max_length=1)
+
+    @model_validator(mode="after")
+    def validate_else_branch(self):
+        if self.else_actions and not self.conditions:
+            raise ValueError("A no-match branch requires at least one condition")
+        return self
 
     @model_validator(mode="before")
     @classmethod
@@ -347,6 +354,7 @@ class AutomationPreviewOut(StrictModel):
     conditions: list[AutomationPreviewConditionOut]
     planned_actions: list[AutomationPreviewActionOut]
     steps: list[AutomationPreviewStepOut]
+    selected_branch: Literal["match", "no_match"] | None = None
 
 
 class WorkflowOut(StrictModel):

@@ -479,6 +479,7 @@ export function AutomationWorkspace() {
       return {
         ...current,
         conditions: next,
+        elseNote: next.length ? current.elseNote : "",
         canvasLayout: fitCanvasLayout(current.canvasLayout, next.length, current.actions.length),
       };
     });
@@ -1210,6 +1211,35 @@ export function AutomationWorkspace() {
               onMoveCondition={moveCondition}
               onMoveAction={moveAction}
             />
+            <section aria-label="No-match branch" className="border-t border-slate-200 bg-amber-50/70 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-xs font-semibold text-amber-950">If conditions do not match</h3>
+                  <p className="mt-0.5 text-[11px] text-amber-800">Run one private internal note on the no-match path.</p>
+                </div>
+                {draft.elseNote ? (
+                  <Button type="button" size="sm" variant="secondary" disabled={!draft.conditions.length} onClick={() => updateDraft({ elseNote: "" })}>
+                    Remove path
+                  </Button>
+                ) : (
+                  <Button type="button" size="sm" variant="secondary" disabled={!draft.conditions.length} onClick={() => updateDraft({ elseNote: "[Automation] Conditions did not match; review this request." })}>
+                    Add note path
+                  </Button>
+                )}
+              </div>
+              {draft.elseNote && (
+                <label className="mt-2 block text-xs font-medium text-amber-950">
+                  Internal note
+                  <textarea
+                    className={`${fieldClass} mt-1 min-h-16 w-full bg-white`}
+                    maxLength={4000}
+                    value={draft.elseNote}
+                    onChange={(event) => updateDraft({ elseNote: event.target.value })}
+                  />
+                </label>
+              )}
+              {!draft.conditions.length && <p className="mt-2 text-[11px] text-amber-800">Add at least one condition to enable a no-match path.</p>}
+            </section>
           </div>
 
           <aside
@@ -2289,6 +2319,7 @@ function InspectorTest({
           <p className="font-semibold">
             {previewResult.matches ? "Workflow would match" : "Workflow would not match"}
           </p>
+          {previewResult.selected_branch && <p className="mt-1 text-xs">Selected path: {previewResult.selected_branch === "no_match" ? "conditions did not match" : "conditions matched"}.</p>}
           <p className="mt-1 text-xs">
             Conditions ({previewResult.condition_mode === "all" ? "match all" : "match any"}):
           </p>

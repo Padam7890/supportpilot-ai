@@ -38,7 +38,7 @@ class KnowledgeBaseAudit(UUIDPrimaryKey, Base):
             ondelete="RESTRICT",
         ),
         CheckConstraint(
-            "event_type IN ('created', 'updated', 'archived', 'restored', 'default_changed', 'document_moved')",
+            "event_type IN ('created', 'updated', 'archived', 'restored', 'default_changed', 'document_moved', 'document_uploaded', 'document_reprocessed', 'document_deleted')",
             name="ck_knowledge_base_audits_event_type",
         ),
         Index(

@@ -18,5 +18,5 @@ export const restoreKnowledgeBase = (id: string) =>
   api<KnowledgeBase>(`/knowledge/bases/${encodeURIComponent(id)}/restore`, { method: "POST" });
 export const makeDefaultKnowledgeBase = (id: string) =>
   api<KnowledgeBase>(`/knowledge/bases/${encodeURIComponent(id)}/make-default`, { method: "POST" });
-export const listKnowledgeBaseAudit = (id: string) =>
-  api<KnowledgeBaseAuditPage>(`/knowledge/bases/${encodeURIComponent(id)}/audit?limit=10`);
+export const listKnowledgeBaseAudit = (id: string, offset = 0) =>
+  api<KnowledgeBaseAuditPage>(`/knowledge/bases/${encodeURIComponent(id)}/audit?limit=10&offset=${offset}`);

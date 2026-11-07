@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
-import { Bot, BookOpen, Building2, Clock3, Copy, MailPlus, MessageCircle, Plug, Search, Settings2, ShieldCheck, Sparkles, Type, UserRound, Users, Workflow } from "lucide-react";
+import { Bot, BookOpen, Building2, Clock3, Copy, MailPlus, MessageCircle, PenLine, Plug, Search, Settings2, ShieldCheck, Sparkles, Type, UserRound, Users, Workflow } from "lucide-react";
 import { TypographyScalePicker } from "./typography-scale-picker";
 import { ApiError } from "@/lib/api/errors";
 import { formatDate } from "@/lib/utils";
@@ -24,12 +24,13 @@ import { RecommendationSettingsCard } from "@/features/recommendations/component
 import { SecuritySessions } from "@/features/auth/components/security-sessions";
 import { TeamRoutingSettings } from "./team-routing-settings";
 import { FirstResponseSlaSettings } from "./first-response-sla-settings";
+import { SavedRepliesSettings } from "./saved-replies-settings";
 import { settingsSectionFromHash, settingsSectionHash, type SettingsSection } from "../utils/settings-section";
 
 type SettingsNavigationItem = { id?: SettingsSection; href?: string; label: string; icon: typeof Building2 };
 
 const settingsGroups: { label: string; items: SettingsNavigationItem[] }[] = [
-  { label: "Workspace", items: [{ id: "general", label: "General", icon: Building2 }, { id: "appearance", label: "Appearance", icon: Type }, { id: "team", label: "Team & roles", icon: Users }, { id: "sla", label: "Inbox & SLAs", icon: Clock3 }, { id: "security", label: "Security", icon: ShieldCheck }] },
+  { label: "Workspace", items: [{ id: "general", label: "General", icon: Building2 }, { id: "appearance", label: "Appearance", icon: Type }, { id: "team", label: "Team & roles", icon: Users }, { id: "sla", label: "Inbox & SLAs", icon: Clock3 }, { id: "saved-replies", label: "Saved replies", icon: PenLine }, { id: "security", label: "Security", icon: ShieldCheck }] },
   { label: "AI & automation", items: [{ href: "/dashboard/ai/agents", label: "AI Bots", icon: Bot }, { href: "/dashboard/automations", label: "Automations", icon: Workflow }, { id: "recommendations", label: "Recommendations", icon: Sparkles }, { href: "/dashboard/knowledge", label: "Knowledge Library", icon: BookOpen }, { href: "/dashboard/ai", label: "AI Playground", icon: Sparkles }] },
   { label: "Channels", items: [{ id: "widget", label: "Chat widget", icon: MessageCircle }, { id: "shopify", label: "Integrations", icon: Plug }] },
 ];
@@ -156,6 +157,7 @@ export default function SettingsPage() {
             {visibleSection === "general" && <Panel><PanelHeader title="Workspace details" description="Basic information visible to your team." action={<span className="grid size-9 place-items-center rounded-xl bg-blue-50 text-blue-700"><Building2 size={18}/></span>}/><PanelBody><form className="grid gap-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end" onSubmit={orgForm.handleSubmit((values) => updateOrg.mutate(values))}><Field label="Workspace name" error={orgForm.formState.errors.name?.message}><Input defaultValue={organization.data?.name} key={organization.data?.name} {...orgForm.register("name")}/></Field><Field label="Workspace slug"><Input value={organization.data?.slug ?? ""} disabled readOnly/></Field><Button type="submit" disabled={updateOrg.isPending}>{updateOrg.isPending ? "Saving…" : "Save changes"}</Button></form>{updateOrg.isError && <p role="alert" className="mt-3 text-sm text-red-700">{updateOrg.error instanceof ApiError ? updateOrg.error.message : "Workspace could not be updated."}</p>}{updateOrg.isSuccess && <p role="status" className="mt-3 text-sm text-emerald-700">Workspace updated.</p>}</PanelBody></Panel>}
             {visibleSection === "security" && <SecuritySessions/>}
             {visibleSection === "sla" && <FirstResponseSlaSettings/>}
+            {visibleSection === "saved-replies" && canManageSettings && <SavedRepliesSettings organizationId={me.data?.organization_id}/>}
             {visibleSection === "team" && <div className="space-y-5">
       <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.8fr)]">
         <Panel><PanelHeader title="Team members" description="Active teammates and workspace roles" action={<span className="grid size-9 place-items-center rounded-xl bg-violet-50 text-violet-700"><Users size={18}/></span>}/><PanelBody>
@@ -182,7 +184,7 @@ export default function SettingsPage() {
 }
 
 function sectionTitle(section: SettingsSection) {
-  return { general: "General", appearance: "Appearance", team: "Team & roles", sla: "Inbox & SLAs", security: "Security", recommendations: "Recommendations", widget: "Chat widget", shopify: "Integrations" }[section];
+  return { general: "General", appearance: "Appearance", team: "Team & roles", sla: "Inbox & SLAs", "saved-replies": "Saved replies", security: "Security", recommendations: "Recommendations", widget: "Chat widget", shopify: "Integrations" }[section];
 }
 
 function sectionDescription(section: SettingsSection) {
@@ -191,6 +193,7 @@ function sectionDescription(section: SettingsSection) {
     appearance: "Adjust typography density for navigation, tables, and workspace content.",
     team: "Invite teammates, manage workspace roles, and organize ticket routing teams.",
     sla: "Set first-response targets for each ticket priority and see deadline status in the Inbox.",
+    "saved-replies": "Manage reusable responses your team can insert into the Inbox composer.",
     security: "Review active sign-in sessions for your account and revoke access you no longer use.",
     recommendations: "Control how the AI assistant recommends products from your catalog.",
     widget: "Configure the storefront chat experience and its allowed origins.",

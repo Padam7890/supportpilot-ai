@@ -106,6 +106,18 @@ async def upload_document(
     )
     db.add(document)
     await db.flush()
+    record_knowledge_base_audit(
+        db,
+        organization_id=user.organization_id,
+        knowledge_base_id=selected_base.id,
+        actor_user_id=user.id,
+        event_type="document_uploaded",
+        details={
+            "document_id": str(document.id),
+            "size_bytes": document.size_bytes,
+            "content_type": document.content_type,
+        },
+    )
     db.add_all(
         [
             KnowledgeDocumentSource(
@@ -339,6 +351,14 @@ async def reprocess_document(
     db.add(DocumentIngestionJob(organization_id=user.organization_id, document_id=document.id))
     document.status = "queued"
     await db.flush()
+    record_knowledge_base_audit(
+        db,
+        organization_id=user.organization_id,
+        knowledge_base_id=document.knowledge_base_id,
+        actor_user_id=user.id,
+        event_type="document_reprocessed",
+        details={"document_id": str(document.id)},
+    )
     return await document_out(db, document)
 
 
@@ -362,6 +382,14 @@ async def delete_document(
         return Response(status_code=204)
     now = datetime.now(UTC)
     document.deleted_at = now
+    record_knowledge_base_audit(
+        db,
+        organization_id=user.organization_id,
+        knowledge_base_id=document.knowledge_base_id,
+        actor_user_id=user.id,
+        event_type="document_deleted",
+        details={"document_id": str(document.id)},
+    )
     await db.execute(
         update(DocumentIngestionJob)
         .where(
