@@ -2,7 +2,7 @@ import re
 from datetime import UTC, date, datetime, time, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import Integer, String, Uuid, case, func, literal, select, union_all
+from sqlalchemy import DateTime, Integer, String, Uuid, case, func, literal, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_roles
@@ -32,6 +32,7 @@ from app.schemas.analytics import (
     AIUsageOut,
     AIExecutionErrorCount,
     AIBotUsage,
+    BackgroundJobKind,
     CommerceApprovalAnalyticsOut,
     CommerceApprovalDay,
     FailedBackgroundJobOut,
@@ -49,6 +50,13 @@ from app.schemas.analytics import (
 )
 from app.schemas.errors import COMMON_ERROR_RESPONSES
 from app.workers.domain.ingestion_errors import INGESTION_ERROR_CODES, NON_RETRYABLE_INGESTION_CODES
+
+from app.workers.domain.lease_policy import (
+    AI_EXECUTION_LEASE,
+    CATALOG_JOB_LEASE,
+    COMMERCE_ACTION_LEASE,
+    DOCUMENT_INGESTION_LEASE,
+)
 
 router = APIRouter(prefix="/analytics", tags=["analytics"], responses=COMMON_ERROR_RESPONSES)
 
@@ -106,21 +114,68 @@ async def operational_alerts(
     ).exists()
 
     overdue_cutoff = generated_at - timedelta(minutes=15)
-    overdue_jobs = sum(
-        count_subquery(model, model.status == "queued", model.next_attempt_at <= overdue_cutoff)
-        for model in (
-            AIExecution,
-            AutomationExecution,
-            CatalogSyncJob,
-            CatalogWebhookEvent,
-            DocumentIngestionJob,
-            IntegrationDeliveryJob,
-        )
+    retry_scheduled_queues = (
+        ("AI executions", AIExecution),
+        ("Automation runs", AutomationExecution),
+        ("Catalog syncs", CatalogSyncJob),
+        ("Catalog webhooks", CatalogWebhookEvent),
+        ("Document processing", DocumentIngestionJob),
+        ("Outbound deliveries", IntegrationDeliveryJob),
     )
+    overdue_queues = [
+        (label, model, model.next_attempt_at, model.status == "queued")
+        for label, model in retry_scheduled_queues
+    ]
+    overdue_queues.append((
+        "Commerce actions",
+        CommerceAction,
+        CommerceAction.reviewed_at,
+        (CommerceAction.approval_status == "approved") & (CommerceAction.execution_status == "queued"),
+    ))
+    overdue_counts = []
+    oldest_by_queue = []
+    for _, model, eligible_at, queued in overdue_queues:
+        overdue_counts.append(count_subquery(model, queued, eligible_at <= overdue_cutoff))
+        oldest_by_queue.append(
+            select(func.min(eligible_at))
+            .where(model.organization_id == user.organization_id, queued, eligible_at <= overdue_cutoff)
+            .scalar_subquery()
+        )
+
+    tracked_leases = (
+        (AutomationExecution, AutomationExecution.locked_until),
+        (CatalogSyncJob, CatalogSyncJob.lease_expires_at),
+        (IntegrationDeliveryJob, IntegrationDeliveryJob.lease_expires_at),
+    )
+    expired_lease_counts = [
+        count_subquery(model, model.status == "running", expires_at < generated_at)
+        for model, expires_at in tracked_leases
+    ]
+    expired_lease_counts.extend((
+        count_subquery(
+            AIExecution, AIExecution.status == "running",
+            AIExecution.updated_at <= generated_at - AI_EXECUTION_LEASE,
+        ),
+        count_subquery(
+            DocumentIngestionJob, DocumentIngestionJob.status == "running",
+            DocumentIngestionJob.updated_at <= generated_at - DOCUMENT_INGESTION_LEASE,
+        ),
+        count_subquery(
+            CatalogWebhookEvent, CatalogWebhookEvent.status == "running",
+            CatalogWebhookEvent.updated_at < generated_at - CATALOG_JOB_LEASE,
+        ),
+        count_subquery(
+            CommerceAction, CommerceAction.approval_status == "approved",
+            CommerceAction.execution_status == "running",
+            CommerceAction.updated_at <= generated_at - COMMERCE_ACTION_LEASE,
+        ),
+    ))
 
     counts = await db.execute(
         select(
-            overdue_jobs,
+            *overdue_counts,
+            func.least(*oldest_by_queue),
+            sum(expired_lease_counts),
             recent_failures(AIExecution, AIExecution.status == "failed", AIExecution.completed_at),
             recent_failures(
                 AutomationExecution, AutomationExecution.status == "failed", AutomationExecution.completed_at
@@ -149,7 +204,9 @@ async def operational_alerts(
         )
     )
     (
-        overdue_count,
+        *queue_counts,
+        oldest_eligible_at,
+        expired_lease_count,
         ai_failed,
         automation_failed,
         catalog_failed,
@@ -160,10 +217,29 @@ async def operational_alerts(
         commerce_failed,
     ) = counts.one()
 
+    overdue_count = sum(queue_counts)
+    overdue_breakdown = ", ".join(
+        f"{label} ({count})"
+        for (label, *_), count in zip(overdue_queues, queue_counts, strict=True)
+        if count
+    )
+
+    overdue_description = f"Jobs eligible to run for at least 15 minutes: {overdue_breakdown}."
+    if oldest_eligible_at is not None:
+        wait_minutes = int((generated_at - oldest_eligible_at).total_seconds() // 60)
+        hours, minutes = divmod(wait_minutes, 60)
+        wait = f"{hours}h {minutes}m" if hours else f"{minutes}m"
+        overdue_description += f" Longest wait: {wait}."
+
     candidates = [
         (
+            "worker_leases_expired", "attention", "Running jobs need worker recovery",
+            "One or more jobs are still marked running past their worker recovery deadline.",
+            int(expired_lease_count or 0), "Check background worker", "/dashboard/operations#background-worker",
+        ),
+        (
             "background_jobs_overdue", "attention", "Background jobs are waiting",
-            "AI, automation, catalog, knowledge, or delivery jobs have been eligible to run for at least 15 minutes.",
+            overdue_description,
             int(overdue_count or 0), "Check background worker", "/dashboard/operations#background-worker",
         ),
         (
@@ -194,7 +270,8 @@ async def operational_alerts(
         (
             "document_ingestion_failed", "attention", "Knowledge documents failed to process",
             "Review recent document processing failures and retry them after checking the source file.",
-            int(ingestion_failed or 0), "Open Knowledge Library", "/dashboard/knowledge",
+            int(ingestion_failed or 0), "Review processing failures",
+            "/dashboard/operations?failed_job_kind=document_ingestion#failed-jobs",
         ),
         (
             "commerce_approval_pending", "review", "Commerce requests need review",
@@ -589,6 +666,8 @@ async def ai_usage(
         completion_tokens=completion,
         total_tokens=prompt + completion,
         estimated_cost_usd=estimated_cost,
+        input_cost_per_million_usd=settings.ai_input_cost_per_million if estimated_cost is not None else None,
+        output_cost_per_million_usd=settings.ai_output_cost_per_million if estimated_cost is not None else None,
         daily=daily,
         bots=bot_usage,
         top_errors=[
@@ -757,6 +836,8 @@ async def submit_evaluation(
 @router.get("/background-failures", response_model=FailedBackgroundJobsOut)
 async def failed_background_jobs(
     limit: int = Query(default=20, ge=1, le=50),
+    offset: int = Query(default=0, ge=0, le=10_000),
+    job_kind: BackgroundJobKind | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> FailedBackgroundJobsOut:
@@ -772,6 +853,8 @@ async def failed_background_jobs(
     ]
     statements = []
     for model, failed_condition, failed_at, error_code, attempts, manual_retries, kind, resource_id in sources:
+        if job_kind is not None and job_kind != kind:
+            continue
         statements.append(
             select(
                 model.id.label("job_id"),
@@ -785,11 +868,13 @@ async def failed_background_jobs(
             ).where(model.organization_id == user.organization_id, failed_condition)
         )
 
-    all_failures = union_all(*statements).subquery()
+    failures = statements[0] if len(statements) == 1 else union_all(*statements)
+    all_failures = failures.subquery()
     total_failed = await db.scalar(select(func.count()).select_from(all_failures))
     result = await db.execute(
         select(all_failures)
-        .order_by(all_failures.c.failed_at.desc(), all_failures.c.job_id.desc())
+        .order_by(all_failures.c.failed_at.desc(), all_failures.c.job_id.desc(), all_failures.c.job_kind)
+        .offset(offset)
         .limit(limit)
     )
     rows = result.mappings().all()
@@ -860,12 +945,13 @@ async def job_trace(
     if re.fullmatch(r"[A-Za-z0-9._:-]{8,64}", correlation_id) is None:
         raise HTTPException(status_code=422, detail="Invalid correlation ID")
 
-    def trace_row(model, kind: str, error_column):
+    def trace_row(model, kind: str, error_column, started_at=None):
         return select(
             literal(kind, type_=String(32)).label("job_kind"),
             model.id.label("job_id"),
             model.status.label("status"),
             model.created_at.label("created_at"),
+            (started_at if started_at is not None else literal(None, type_=DateTime(timezone=True))).label("started_at"),
             model.completed_at.label("completed_at"),
             model.attempt_count.label("attempts"),
             model.max_attempts.label("max_attempts"),
@@ -876,14 +962,15 @@ async def job_trace(
         )
 
     trace_rows = union_all(
-        trace_row(AIExecution, "ai_execution", AIExecution.error_code),
-        trace_row(AutomationExecution, "automation_execution", AutomationExecution.error_code),
-        trace_row(DocumentIngestionJob, "document_ingestion", ingestion_error_code()),
+        trace_row(AIExecution, "ai_execution", AIExecution.error_code, AIExecution.started_at),
+        trace_row(AutomationExecution, "automation_execution", AutomationExecution.error_code, AutomationExecution.started_at),
+        trace_row(DocumentIngestionJob, "document_ingestion", ingestion_error_code(), DocumentIngestionJob.started_at),
         select(
             literal("commerce_action", type_=String(32)).label("job_kind"),
             CommerceAction.id.label("job_id"),
             func.concat(CommerceAction.approval_status, "/", CommerceAction.execution_status).label("status"),
             CommerceAction.created_at.label("created_at"),
+            CommerceAction.execution_started_at.label("started_at"),
             CommerceAction.execution_completed_at.label("completed_at"),
             CommerceAction.execution_attempt_count.label("attempts"),
             literal(None, type_=Integer()).label("max_attempts"),
@@ -892,17 +979,19 @@ async def job_trace(
             CommerceAction.organization_id == user.organization_id,
             CommerceAction.correlation_id == correlation_id,
         ),
-        trace_row(CatalogSyncJob, "catalog_sync", CatalogSyncJob.last_error_code),
+        trace_row(CatalogSyncJob, "catalog_sync", CatalogSyncJob.last_error_code, CatalogSyncJob.started_at),
         trace_row(CatalogWebhookEvent, "catalog_webhook", CatalogWebhookEvent.last_error_code),
         trace_row(IntegrationDeliveryJob, "outbound_delivery", IntegrationDeliveryJob.last_error_code),
     ).subquery("job_trace")
+    event_limit = 100
     rows = await db.execute(
         select(trace_rows)
         .order_by(trace_rows.c.created_at, trace_rows.c.job_kind, trace_rows.c.job_id)
-        .limit(100)
+        .limit(event_limit + 1)
     )
+    records = rows.mappings().all()
     events = []
-    for row in rows.mappings():
+    for row in records[:event_limit]:
         raw_code = row["error_code"]
         safe_code = raw_code if isinstance(raw_code, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,80}", raw_code) else None
         events.append(
@@ -911,6 +1000,7 @@ async def job_trace(
                 job_kind=row["job_kind"],
                 status=row["status"],
                 created_at=row["created_at"],
+                started_at=row["started_at"],
                 completed_at=row["completed_at"],
                 attempts=row["attempts"],
                 max_attempts=row["max_attempts"],
@@ -921,6 +1011,7 @@ async def job_trace(
         correlation_id=correlation_id,
         generated_at=datetime.now(UTC),
         events=events,
+        truncated=len(records) > event_limit,
     )
 
 

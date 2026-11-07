@@ -25,11 +25,19 @@ The 24-hour window uses the terminal completion timestamp for jobs currently mar
 | Commerce requests need review | Open the commerce action queue in Operations and review the request, order, and stated consequences. | An authorized Owner/Admin explicitly approves or rejects the request. Approval does not guarantee successful provider execution. |
 | Commerce actions failed | Open the commerce action history and inspect the safe execution status and trace. Verify the Shopify connection and current order eligibility. | Resolve the provider or eligibility issue before using a supported retry/recovery path. Never repeat the mutation manually without checking the action's idempotency and authoritative order state. |
 
+## Overdue background jobs
+
+**Background jobs are waiting** shows the count by queue for this workspace. A queued job counts once it has been eligible to run for at least 15 minutes. Scheduled retries use their next-attempt time. Commerce actions use their approval time and count only while approved and queued. Requests awaiting approval appear separately.
+
+1. Open **Check background worker** from the alert and review the heartbeat.
+2. If no worker is active, check the worker process and Redis connectivity. If a worker is active, use the affected queue labels to check its job history and worker logs. A heartbeat alone cannot confirm a specific queue is draining.
+3. Refresh **Operational activity** after recovery. Jobs stop counting when claimed or when they are scheduled for a future retry. Leave queued jobs for the worker to claim.
+
 ## Worker and readiness status
 
 - **Worker inactive:** queued jobs may wait. Check the worker process and Redis connectivity using deployment tooling, then refresh the worker status card. Do not interpret an inactive heartbeat as proof that a particular job was lost.
 - **Readiness unavailable:** inspect the database and Redis checks separately. A failed readiness request does not identify which tenant job failed; use job history and trace references for that.
-- **No recent issues:** means no matching persisted terminal failures were counted in the last 24 hours and no unexpired commerce reviews were counted. It does not assert external provider uptime or zero transient errors.
+- **No recent issues:** means no matching recent terminal failures, overdue jobs in monitored queues, or pending commerce reviews were counted. It does not assert external provider uptime or zero transient errors.
 
 ## Correlation references and privacy
 

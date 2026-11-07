@@ -6,6 +6,7 @@ from uuid import UUID
 
 from sqlalchemy import and_, or_, select
 
+from app.workers.domain.lease_policy import COMMERCE_ACTION_LEASE as ACTION_LEASE_TIMEOUT
 from app.db.session import SessionLocal, set_tenant_context
 from app.integrations.providers.shopify.actions import (
     ShopifyOrderActionError,
@@ -18,7 +19,6 @@ from app.models import CommerceAction, CommerceActionAudit, Customer, ShopifyIns
 from app.services.mock_commerce import MockCommerceService
 
 logger = logging.getLogger(__name__)
-ACTION_LEASE_TIMEOUT = timedelta(minutes=5)
 MAX_EXECUTION_ATTEMPTS = 3
 
 

@@ -3,6 +3,7 @@
 import { useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, BadgeCheck, Ban, CircleAlert, ClipboardCheck, Clock3, RefreshCw, ShieldCheck, XCircle } from "lucide-react";
+import { SupportTraceLink } from "@/components/support-trace-link";
 import { Button } from "@/components/ui/button";
 import { Input, Select, Textarea } from "@/components/ui/input";
 import { getCurrentUser, currentUserQueryKey } from "@/features/auth/api/auth-api";
@@ -164,6 +165,7 @@ function ActionDetails({ action, audit, auditLoading, isReviewer, currentUserId,
     <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Selected request</p><h3 className="mt-1 text-lg font-bold capitalize">{action.action_type} · {action.order_number}</h3></div><span className="grid size-9 place-items-center rounded-xl bg-white text-blue-700"><Clock3 size={18}/></span></div>
     <dl className="mt-4 grid grid-cols-2 gap-2 text-xs"><Fact label="Approval" value={action.approval_status}/><Fact label="Execution" value={action.execution_status}/><Fact label="Requested by" value={action.requested_by_name}/><Fact label="Order total" value={`${action.order_total} ${action.currency}`}/>{action.refund_amount && <Fact label="Requested amount" value={`${action.refund_amount} ${action.currency}`}/>}</dl>
     <p className="mt-3 rounded-xl bg-white p-3 text-sm text-slate-700">{action.reason}</p>
+    {action.correlation_id && <p className="mt-2 text-xs text-slate-500">Support reference: <SupportTraceLink correlationId={action.correlation_id} /></p>}
     {action.execution_error_code && <p role="alert" className="mt-2 text-xs text-red-700">Execution failed: {action.execution_error_code}</p>}
     {decisionMessage && <p role="alert" className="mt-3 rounded-lg bg-red-50 p-2 text-xs text-red-700">{decisionMessage}</p>}
     {action.approval_status === "pending" && <div className="mt-3 flex flex-wrap gap-2">

@@ -6,6 +6,7 @@ from uuid import UUID
 
 from sqlalchemy import and_, or_, select
 
+from app.workers.domain.lease_policy import AI_EXECUTION_LEASE as LEASE_TIMEOUT
 from app.db.session import SessionLocal, set_tenant_context
 from app.features.ai.application.catalog_search import (
     catalog_has_active_products,
@@ -52,7 +53,6 @@ from app.services.widget_ai import (
 from app.workers.domain.retry_policy import retry_delay_seconds
 
 logger = logging.getLogger(__name__)
-LEASE_TIMEOUT = timedelta(minutes=3)
 __all__ = ["_question_order_number", "_safe_ai_failure_code"]
 
 

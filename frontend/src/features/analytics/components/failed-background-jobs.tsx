@@ -1,15 +1,20 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Select } from "@/components/ui/input";
 import { CircleAlert, LoaderCircle, RefreshCw, RotateCcw, Waypoints } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { analyticsQueryKeys, getFailedBackgroundJobs } from "@/features/analytics/api/analytics-api";
+import { analyticsQueryKeys, getFailedBackgroundJobs, type FailedJobKind } from "@/features/analytics/api/analytics-api";
 import { reprocessKnowledgeDocument, knowledgeKeys } from "@/features/knowledge/api/knowledge-api";
 import { aiQueryKeys, retryAIExecution } from "@/features/ai/api/ai-api";
 import { getCurrentUser } from "@/features/auth/api/auth-api";
 import { retryCatalogSyncJob, shopifyQueryKeys } from "@/features/integrations/api/shopify-api";
 
-const jobLabels: Record<string, string> = {
+const pageSize = 20;
+const maxOffset = 10_000;
+
+const jobLabels: Record<FailedJobKind, string> = {
   ai_execution: "AI response",
   automation_execution: "Automation",
   catalog_sync: "Catalog sync",
@@ -20,12 +25,43 @@ const jobLabels: Record<string, string> = {
 };
 
 export function FailedBackgroundJobs({ onTrace }: { onTrace?: (correlationId: string) => void }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const params = useSearchParams();
+  const selectedKind = params.get("failed_job_kind");
+  const jobKind = selectedKind && Object.hasOwn(jobLabels, selectedKind)
+    ? selectedKind as FailedJobKind
+    : undefined;
+
+  const requestedOffset = Number(params.get("failed_job_offset"));
+  const offset = Number.isInteger(requestedOffset) && requestedOffset >= 0 && requestedOffset <= maxOffset
+    && requestedOffset % pageSize === 0 ? requestedOffset : 0;
+
+  function navigateJobs(next: URLSearchParams) {
+    const query = next.toString();
+    router.replace(`${pathname}${query ? `?${query}` : ""}#failed-jobs`, { scroll: false });
+  }
+
+  function changePage(nextOffset: number) {
+    const next = new URLSearchParams(params.toString());
+    if (nextOffset) next.set("failed_job_offset", String(nextOffset));
+    else next.delete("failed_job_offset");
+    navigateJobs(next);
+  }
+
+  function changeJobKind(value: string) {
+    const next = new URLSearchParams(params.toString());
+    next.delete("failed_job_offset");
+    if (Object.hasOwn(jobLabels, value)) next.set("failed_job_kind", value);
+    else next.delete("failed_job_kind");
+    navigateJobs(next);
+  }
   const queryClient = useQueryClient();
   const user = useQuery({ queryKey: ["me"], queryFn: getCurrentUser });
   const jobs = useQuery({
-    queryKey: ["analytics", "background-failures", 20],
-    queryFn: () => getFailedBackgroundJobs(20),
-    refetchInterval: () => typeof document !== "undefined" && document.visibilityState === "visible" ? 60_000 : false,
+    queryKey: ["analytics", "background-failures", pageSize, jobKind, offset],
+    queryFn: () => getFailedBackgroundJobs(pageSize, jobKind, offset),
+    refetchInterval: () => offset === 0 && typeof document !== "undefined" && document.visibilityState === "visible" ? 60_000 : false,
     refetchIntervalInBackground: false,
   });
   const retry = useMutation({
@@ -59,23 +95,29 @@ export function FailedBackgroundJobs({ onTrace }: { onTrace?: (correlationId: st
     if (documentId) retryIngestion.mutate(documentId);
   }
 
-  return <section aria-labelledby="failed-jobs-title" className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
+  return <section id="failed-jobs" aria-labelledby="failed-jobs-title" className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
     <header className="flex flex-wrap items-start justify-between gap-3">
       <div>
         <p className="text-xs font-bold uppercase tracking-[.14em] text-blue-700">Background processing</p>
         <h2 id="failed-jobs-title" className="mt-1 text-lg font-semibold text-slate-950">Failed jobs</h2>
         <p className="mt-1 text-sm text-slate-500">Recent terminal failures for this workspace. Sensitive job payloads are omitted.</p>
       </div>
+      <div className="flex flex-wrap items-center gap-2">
+      <Select aria-label="Filter failed jobs by type" value={jobKind ?? ""} onChange={(event) => changeJobKind(event.target.value)}>
+        <option value="">All job types</option>
+        {Object.entries(jobLabels).map(([kind, label]) => <option key={kind} value={kind}>{label}</option>)}
+      </Select>
       <Button variant="secondary" size="sm" onClick={() => void jobs.refetch()} disabled={jobs.isFetching} aria-label="Refresh failed jobs">
         <RefreshCw size={14} className={jobs.isFetching ? "animate-spin" : ""}/><span className="hidden sm:inline">Refresh</span>
       </Button>
+      </div>
     </header>
 
     {jobs.isPending ? <div role="status" className="mt-5 flex items-center gap-2 rounded-xl bg-slate-50 p-5 text-sm text-slate-500"><LoaderCircle size={16} className="animate-spin"/>Loading failed jobs…</div>
       : jobs.isError ? <div role="alert" className="mt-5 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"><CircleAlert size={17} className="mt-0.5 shrink-0"/><span>Failed job history could not be loaded. Refresh to try again.</span></div>
-      : jobs.data.items.length === 0 ? <p className="mt-5 rounded-xl border border-emerald-100 bg-emerald-50/60 p-4 text-sm text-emerald-900">No terminal background job failures are recorded for this workspace.</p>
+      : jobs.data.items.length === 0 ? <p className="mt-5 rounded-xl border border-emerald-100 bg-emerald-50/60 p-4 text-sm text-emerald-900">{offset ? "No failed jobs on this page." : "No terminal background job failures match the selected filter."}</p>
       : <>
-        <p className="mt-5 text-xs text-slate-500">{jobs.data.total_failed} failed job{jobs.data.total_failed === 1 ? "" : "s"} total · showing the latest {jobs.data.items.length}</p>
+        <p className="mt-5 text-xs text-slate-500">{jobs.data.total_failed} failed job{jobs.data.total_failed === 1 ? "" : "s"} total · showing {offset + 1}–{offset + jobs.data.items.length}</p>
         <ul className="mt-3 divide-y divide-slate-100 rounded-xl border border-slate-200">
           {jobs.data.items.map((job) => <li key={`${job.job_kind}:${job.job_id}`} className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2 px-4 py-3">
             <div className="min-w-0">
@@ -96,5 +138,11 @@ export function FailedBackgroundJobs({ onTrace }: { onTrace?: (correlationId: st
         {retryIngestion.isError && <p role="alert" className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-800">Document processing could not be queued. Check that its source file is still available, then refresh.</p>}
         {retryIngestion.isSuccess && <p role="status" className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">Document processing queued. Its history is available in the Knowledge Library.</p>}
       </>}
+    {(offset > 0 || (jobs.data?.total_failed ?? 0) > pageSize) && (
+      <nav aria-label="Failed jobs pagination" className="mt-4 flex gap-2">
+        <Button size="sm" variant="secondary" disabled={offset === 0} onClick={() => changePage(offset - pageSize)}>Previous</Button>
+        <Button size="sm" variant="secondary" disabled={jobs.isFetching || offset + pageSize > maxOffset || offset + pageSize >= (jobs.data?.total_failed ?? 0)} onClick={() => changePage(offset + pageSize)}>Next</Button>
+      </nav>
+    )}
   </section>;
 }

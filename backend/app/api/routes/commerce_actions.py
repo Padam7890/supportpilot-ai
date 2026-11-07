@@ -1,3 +1,4 @@
+import re
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from uuid import UUID
@@ -45,6 +46,10 @@ def action_out(
     fields = CommerceActionOut.model_fields
     values = {name: getattr(action, name) for name in fields if hasattr(action, name)}
     values.update(requested_by_name=requested_by_name, reviewed_by_name=reviewed_by_name)
+    reference = action.correlation_id
+    values["correlation_id"] = (
+        reference if reference and re.fullmatch(r"[A-Za-z0-9._:-]{8,64}", reference) else None
+    )
     return CommerceActionOut.model_validate(values)
 
 

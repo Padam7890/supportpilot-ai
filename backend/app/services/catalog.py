@@ -11,6 +11,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.workers.domain.lease_policy import CATALOG_JOB_LEASE as JOB_LEASE
 from app.db.session import SessionLocal, set_tenant_context
 from app.core.observability import current_correlation_id
 from app.integrations.core.contracts.catalog import CatalogProductSnapshot
@@ -34,7 +35,6 @@ from app.workers.domain.retry_policy import retry_delay_seconds
 
 PAGE_SIZE = 20
 MAX_SYNC_ATTEMPTS = 5
-JOB_LEASE = timedelta(minutes=5)
 logger = logging.getLogger(__name__)
 
 

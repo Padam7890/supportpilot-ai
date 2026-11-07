@@ -1169,10 +1169,32 @@
             "title": "Failed",
             "type": "integer"
           },
+          "input_cost_per_million_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Cost Per Million Usd"
+          },
           "model_backed_responses": {
             "default": 0,
             "title": "Model Backed Responses",
             "type": "integer"
+          },
+          "output_cost_per_million_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Cost Per Million Usd"
           },
           "prompt_tokens": {
             "title": "Prompt Tokens",
@@ -2938,6 +2960,17 @@
               }
             ],
             "title": "Cancelled By User Id"
+          },
+          "correlation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correlation Id"
           },
           "created_at": {
             "format": "date-time",
@@ -5741,6 +5774,18 @@
             ],
             "title": "Max Attempts"
           },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
           "status": {
             "title": "Status",
             "type": "string"
@@ -5776,6 +5821,11 @@
             "format": "date-time",
             "title": "Generated At",
             "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           }
         },
         "required": [
@@ -6588,6 +6638,7 @@
           "code": {
             "enum": [
               "background_jobs_overdue",
+              "worker_leases_expired",
               "ai_execution_failed",
               "automation_execution_failed",
               "catalog_sync_failed",
@@ -13980,6 +14031,43 @@
               "minimum": 1,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 10000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "job_kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "ai_execution",
+                    "automation_execution",
+                    "document_ingestion",
+                    "commerce_action",
+                    "catalog_sync",
+                    "catalog_webhook",
+                    "outbound_delivery"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Job Kind"
             }
           }
         ],

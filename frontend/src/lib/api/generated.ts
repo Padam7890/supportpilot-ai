@@ -3232,11 +3232,15 @@ export interface components {
             executions: number;
             /** Failed */
             failed: number;
+            /** Input Cost Per Million Usd */
+            input_cost_per_million_usd?: number | null;
             /**
              * Model Backed Responses
              * @default 0
              */
             model_backed_responses: number;
+            /** Output Cost Per Million Usd */
+            output_cost_per_million_usd?: number | null;
             /** Prompt Tokens */
             prompt_tokens: number;
             /**
@@ -3929,6 +3933,8 @@ export interface components {
             cancelled_at: string | null;
             /** Cancelled By User Id */
             cancelled_by_user_id: string | null;
+            /** Correlation Id */
+            correlation_id?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -5067,6 +5073,8 @@ export interface components {
             job_kind: "ai_execution" | "automation_execution" | "document_ingestion" | "commerce_action" | "catalog_sync" | "catalog_webhook" | "outbound_delivery";
             /** Max Attempts */
             max_attempts: number | null;
+            /** Started At */
+            started_at?: string | null;
             /** Status */
             status: string;
         };
@@ -5081,6 +5089,11 @@ export interface components {
              * Format: date-time
              */
             generated_at: string;
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
         };
         /** KnowledgeBaseAuditOut */
         KnowledgeBaseAuditOut: {
@@ -5424,7 +5437,7 @@ export interface components {
              * Code
              * @enum {string}
              */
-            code: "background_jobs_overdue" | "ai_execution_failed" | "automation_execution_failed" | "catalog_sync_failed" | "catalog_webhook_failed" | "outbound_delivery_failed" | "document_ingestion_failed" | "commerce_approval_pending" | "commerce_execution_failed";
+            code: "background_jobs_overdue" | "worker_leases_expired" | "ai_execution_failed" | "automation_execution_failed" | "catalog_sync_failed" | "catalog_webhook_failed" | "outbound_delivery_failed" | "document_ingestion_failed" | "commerce_approval_pending" | "commerce_execution_failed";
             /** Count */
             count: number;
             /** Description */
@@ -9284,6 +9297,8 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
+                offset?: number;
+                job_kind?: ("ai_execution" | "automation_execution" | "document_ingestion" | "commerce_action" | "catalog_sync" | "catalog_webhook" | "outbound_delivery") | null;
             };
             header?: never;
             path?: never;

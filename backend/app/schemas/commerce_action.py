@@ -53,6 +53,7 @@ class CommerceActionOut(BaseModel):
     execution_attempt_count: int
     execution_result: dict[str, Any]
     execution_error_code: str | None
+    correlation_id: str | None = None
     created_at: datetime
     updated_at: datetime
     expires_at: datetime

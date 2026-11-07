@@ -1,5 +1,6 @@
 "use client";
 
+import { SupportTraceLink } from "@/components/support-trace-link";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, ExternalLink, PackageSearch, RefreshCw, ShieldCheck, Store, Unplug } from "lucide-react";
@@ -353,7 +354,7 @@ export function ShopifyIntegrationCard() {
           {catalog.data && !catalog.data.product_scope_granted && <p role="status" className="text-xs text-amber-800">Grant <code>read_products</code> before starting a catalog sync.</p>}
           {catalog.data?.product_count === 0 && catalog.data.product_scope_granted && !catalog.data.last_sync_at && <p className="rounded-lg bg-blue-50 p-3 text-xs leading-5 text-blue-900">No products have synced yet. Start a full catalog sync to make products available to the AI widget.</p>}
           {catalog.data?.product_count === 0 && catalog.data.product_scope_granted && catalog.data.last_sync_at && <p className="rounded-lg bg-blue-50 p-3 text-xs leading-5 text-blue-900">The last catalog sync succeeded but Shopify returned no products. Confirm that products exist in the connected store; an empty catalog is a successful sync, not a permissions error.</p>}
-          {catalog.data?.last_error_code && <div role="alert" className="space-y-1 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-800"><p className="font-semibold">Most recent completed sync failed: <code>{catalog.data.last_error_code}</code></p><p>{catalogSyncGuidance(catalog.data.last_error_code)}</p>{catalog.data.product_count > 0 && <p>{catalog.data.product_count} products from the last successful sync remain available. Last successful sync: {catalog.data.last_sync_at ? new Date(catalog.data.last_sync_at).toLocaleString("en-US", { timeZone: "UTC", timeZoneName: "short" }) : "not recorded"}.</p>}{latestFailedSync?.correlation_id && <p className="text-red-700">Support reference: <code>{latestFailedSync.correlation_id}</code></p>}</div>}
+          {catalog.data?.last_error_code && <div role="alert" className="space-y-1 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-800"><p className="font-semibold">Most recent completed sync failed: <code>{catalog.data.last_error_code}</code></p><p>{catalogSyncGuidance(catalog.data.last_error_code)}</p>{catalog.data.product_count > 0 && <p>{catalog.data.product_count} products from the last successful sync remain available. Last successful sync: {catalog.data.last_sync_at ? new Date(catalog.data.last_sync_at).toLocaleString("en-US", { timeZone: "UTC", timeZoneName: "short" }) : "not recorded"}.</p>}{latestFailedSync?.correlation_id && <p className="text-red-700">Support reference: <SupportTraceLink correlationId={latestFailedSync.correlation_id} /></p>}</div>}
           {syncCatalog.isError && <p role="alert" className="text-xs text-red-700">{syncCatalog.error instanceof ApiError ? syncCatalog.error.message : "Could not start the catalog sync."}</p>}
           {syncJob.data && <p role="status" className="text-xs text-slate-600">Sync status: <strong className="capitalize">{syncJob.data.status}</strong>{syncJob.data.status === "failed" && syncJob.data.last_error_code ? ` · ${syncJob.data.last_error_code}` : ""}</p>}
           {syncJob.isError && <p role="alert" className="text-xs text-red-700">Catalog sync status could not be refreshed.</p>}
@@ -367,7 +368,7 @@ export function ShopifyIntegrationCard() {
               <span className="text-slate-600">{job.records_seen} records · {job.attempt_count}/{job.max_attempts} attempts</span>
               <time className="w-full text-slate-500" dateTime={job.created_at}>{new Date(job.created_at).toLocaleString()}</time>
               {job.last_error_code && <code className="w-full text-red-700">{job.last_error_code}</code>}
-              {job.status === "failed" && job.correlation_id && <p className="w-full text-slate-500">Support reference: <code>{job.correlation_id}</code></p>}
+              {job.status === "failed" && job.correlation_id && <p className="w-full text-slate-500">Support reference: <SupportTraceLink correlationId={job.correlation_id} /></p>}
             </div>)}
           </div>
         </section>}
@@ -390,7 +391,7 @@ export function ShopifyIntegrationCard() {
                 <span className="font-medium text-slate-800">{event.event_type}</span><span className="capitalize text-slate-600">{event.processing_status} · {event.attempt_count} attempt{event.attempt_count === 1 ? "" : "s"}</span>
                 <time className="w-full text-slate-500" dateTime={event.received_at}>{new Date(event.received_at).toLocaleString()}</time>
                 {event.last_error_code && <code className="w-full text-red-700">{event.last_error_code}</code>}
-                {event.processing_status === "failed" && event.correlation_id && <p className="w-full text-slate-500">Support reference: <code>{event.correlation_id}</code></p>}
+                {event.processing_status === "failed" && event.correlation_id && <p className="w-full text-slate-500">Support reference: <SupportTraceLink correlationId={event.correlation_id} /></p>}
                 {canManageCatalog && event.manual_retry_available && shopifyConnection && <Button
                   type="button"
                   variant="secondary"
@@ -412,7 +413,7 @@ export function ShopifyIntegrationCard() {
                 {delivery.manual_retry_count > 0 && <span className="text-slate-500">{delivery.manual_retry_count}/3 manual retries</span>}
                 <time className="w-full text-slate-500" dateTime={delivery.created_at}>{new Date(delivery.created_at).toLocaleString()}</time>
                 {delivery.last_error_code && <code className="w-full text-red-700">{delivery.last_error_code}</code>}
-                {delivery.status === "failed" && delivery.correlation_id && <p className="w-full text-slate-500">Support reference: <code>{delivery.correlation_id}</code></p>}
+                {delivery.status === "failed" && delivery.correlation_id && <p className="w-full text-slate-500">Support reference: <SupportTraceLink correlationId={delivery.correlation_id} /></p>}
                 {canManageCatalog && delivery.manual_retry_available && shopifyConnection && <Button
                   type="button"
                   variant="secondary"

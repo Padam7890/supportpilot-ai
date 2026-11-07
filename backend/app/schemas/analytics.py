@@ -40,6 +40,8 @@ class AIUsageOut(BaseModel):
     completion_tokens: int
     total_tokens: int
     estimated_cost_usd: float | None
+    input_cost_per_million_usd: float | None = None
+    output_cost_per_million_usd: float | None = None
     daily: list[AIUsageDay]
     bots: list[AIBotUsage] = Field(default_factory=list)
     top_errors: list[AIExecutionErrorCount] = Field(default_factory=list)
@@ -131,6 +133,7 @@ class SupportResponseAnalyticsOut(BaseModel):
 class OperationalAlertOut(BaseModel):
     code: Literal[
         "background_jobs_overdue",
+        "worker_leases_expired",
         "ai_execution_failed",
         "automation_execution_failed",
         "catalog_sync_failed",
@@ -154,19 +157,22 @@ class OperationalAlertsOut(BaseModel):
     alerts: list[OperationalAlertOut]
 
 
+BackgroundJobKind = Literal[
+    "ai_execution",
+    "automation_execution",
+    "document_ingestion",
+    "commerce_action",
+    "catalog_sync",
+    "catalog_webhook",
+    "outbound_delivery",
+]
+
+
 class FailedBackgroundJobOut(BaseModel):
     job_id: UUID
     document_id: UUID | None = None
     correlation_id: str | None = None
-    job_kind: Literal[
-        "ai_execution",
-        "automation_execution",
-        "document_ingestion",
-        "commerce_action",
-        "catalog_sync",
-        "catalog_webhook",
-        "outbound_delivery",
-    ]
+    job_kind: BackgroundJobKind
     failed_at: datetime
     attempts: int
     error_code: str | None
@@ -193,6 +199,7 @@ class JobTraceEventOut(BaseModel):
     ]
     status: str
     created_at: datetime
+    started_at: datetime | None = None
     completed_at: datetime | None
     attempts: int
     max_attempts: int | None
@@ -203,6 +210,7 @@ class JobTraceOut(BaseModel):
     correlation_id: str
     generated_at: datetime
     events: list[JobTraceEventOut]
+    truncated: bool = False
 
 
 class AIEvaluationCreate(BaseModel):

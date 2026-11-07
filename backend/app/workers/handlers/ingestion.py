@@ -12,6 +12,7 @@ from uuid import UUID
 from pypdf import PdfReader
 from sqlalchemy import and_, or_, select
 
+from app.workers.domain.lease_policy import DOCUMENT_INGESTION_LEASE as LEASE_TIMEOUT
 from app.db.session import SessionLocal, set_tenant_context
 from app.models import (
     DocumentChunk,
@@ -30,7 +31,6 @@ from app.workers.domain.ingestion_errors import (
 from app.workers.domain.retry_policy import retry_delay_seconds
 
 logger = logging.getLogger(__name__)
-LEASE_TIMEOUT = timedelta(minutes=5)
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 JOB_CANDIDATE_BATCH_SIZE = 100
 
