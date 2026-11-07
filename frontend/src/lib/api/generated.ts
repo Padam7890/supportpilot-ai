@@ -2943,10 +2943,14 @@ export interface components {
             executions: number;
             /** Failed */
             failed: number;
+            /** P95 Latency Ms */
+            p95_latency_ms?: number | null;
             /** Prompt Tokens */
             prompt_tokens: number;
             /** Succeeded */
             succeeded: number;
+            /** Timed Execution Count */
+            timed_execution_count?: number | null;
         };
         /** AICitation */
         AICitation: {
@@ -4020,6 +4024,8 @@ export interface components {
         CommerceApprovalAnalyticsOut: {
             /** Approved */
             approved: number;
+            /** Average Approval To Completion Seconds */
+            average_approval_to_completion_seconds?: number | null;
             /** Average Review Seconds */
             average_review_seconds: number | null;
             /** Cancelled */
@@ -4037,15 +4043,21 @@ export interface components {
             execution_succeeded: number;
             /** Expired */
             expired: number;
+            /** Median Review Seconds */
+            median_review_seconds?: number | null;
             /** Pending */
             pending: number;
             /** Rejected */
             rejected: number;
+            /** Reviewed Count */
+            reviewed_count?: number | null;
             /**
              * Start Date
              * Format: date
              */
             start_date: string;
+            /** Timed Execution Count */
+            timed_execution_count?: number | null;
             /** Total */
             total: number;
         };
@@ -6508,8 +6520,12 @@ export interface components {
              * Format: date
              */
             end_date: string;
+            /** Longest Unanswered Seconds */
+            longest_unanswered_seconds?: number | null;
             /** Median First Response Seconds */
             median_first_response_seconds: number | null;
+            /** P95 First Response Seconds */
+            p95_first_response_seconds?: number | null;
             /** Responded */
             responded: number;
             /**
@@ -15531,6 +15547,7 @@ export interface operations {
                 team_id?: string | null;
                 needs_approval?: boolean;
                 unread_only?: boolean;
+                overdue_only?: boolean;
                 search?: string | null;
                 limit?: number;
                 cursor?: string | null;

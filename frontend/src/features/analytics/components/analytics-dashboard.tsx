@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, BarChart3, CircleDollarSign, ShieldCheck, Sparkles, ThumbsDown, ThumbsUp } from "lucide-react";
@@ -15,6 +16,7 @@ import {
   getEvaluationSummary,
   submitEvaluation,
   type AIEvaluationCreate,
+  type CommerceApprovalAnalytics,
 } from "../api/analytics-api";
 import { getRecommendationAnalytics, recommendationQueryKeys } from "@/features/recommendations/api/recommendation-api";
 import { automationKey, getAutomationMetrics, type AutomationMetrics } from "@/features/automations/api/automation-api";
@@ -127,8 +129,12 @@ export function AnalyticsDashboard() {
         </div>
         {!usage.data ? <p className="mt-5 text-sm text-slate-500">{usage.isPending ? "Loading AI usage…" : "Bot activity unavailable."}</p> : !usage.data.bots.length ? <p className="mt-5 rounded-xl bg-slate-50 p-4 text-sm text-slate-500">No bot executions were recorded in this date range.</p> : <div className="mt-5 overflow-x-auto">
           <table className="w-full min-w-[720px] text-left text-sm">
-            <thead><tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500"><th scope="col" className="pb-3 pr-4">Bot</th><th scope="col" className="pb-3 px-3">Runs</th><th scope="col" className="pb-3 px-3">Completed</th><th scope="col" className="pb-3 px-3">Failed</th><th scope="col" className="pb-3 px-3">Tokens</th><th scope="col" className="pb-3 px-3">Est. cost</th><th scope="col" className="pb-3 pl-3">Avg. latency</th></tr></thead>
-            <tbody>{usage.data.bots.map((bot) => <tr key={bot.bot_id} className="border-b border-slate-100 last:border-0"><th scope="row" className="py-3 pr-4 font-semibold text-slate-900">{bot.bot_name}</th><td className="px-3 py-3 text-slate-700">{bot.executions.toLocaleString()}</td><td className="px-3 py-3 text-emerald-800">{bot.succeeded.toLocaleString()}</td><td className={`px-3 py-3 ${bot.failed ? "text-rose-700" : "text-slate-500"}`}>{bot.failed.toLocaleString()}</td><td className="px-3 py-3 text-slate-700">{(bot.prompt_tokens + bot.completion_tokens).toLocaleString()}</td><td className="px-3 py-3 text-slate-700">{bot.estimated_cost_usd == null ? "Not configured" : `$${bot.estimated_cost_usd.toFixed(4)}`}</td><td className="pl-3 py-3 text-slate-700">{bot.average_latency_ms == null ? "—" : `${bot.average_latency_ms.toLocaleString()} ms`}</td></tr>)}</tbody>
+            <thead><tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500"><th scope="col" className="pb-3 pr-4">Bot</th><th scope="col" className="pb-3 px-3">Runs</th><th scope="col" className="pb-3 px-3">Completed</th><th scope="col" className="pb-3 px-3">Failed</th><th scope="col" className="pb-3 px-3">Tokens</th><th scope="col" className="pb-3 px-3">Est. cost</th><th scope="col" className="pb-3 px-3">Avg. latency</th><th scope="col" className="pb-3 pl-3">P95 latency</th></tr></thead>
+            <tbody>{usage.data.bots.map((bot) => <tr key={bot.bot_id} className="border-b border-slate-100 last:border-0"><th scope="row" className="py-3 pr-4 font-semibold text-slate-900">{bot.bot_name}</th><td className="px-3 py-3 text-slate-700">{bot.executions.toLocaleString()}</td><td className="px-3 py-3 text-emerald-800">{bot.succeeded.toLocaleString()}</td><td className={`px-3 py-3 ${bot.failed ? "text-rose-700" : "text-slate-500"}`}>{bot.failed.toLocaleString()}</td><td className="px-3 py-3 text-slate-700">{(bot.prompt_tokens + bot.completion_tokens).toLocaleString()}</td><td className="px-3 py-3 text-slate-700">{bot.estimated_cost_usd == null ? "Not configured" : `$${bot.estimated_cost_usd.toFixed(4)}`}</td><td className="pl-3 py-3 text-slate-700">{bot.average_latency_ms == null ? "—" : `${bot.average_latency_ms.toLocaleString()} ms`}</td>
+              <td className="pl-3 py-3 text-slate-700">
+                {bot.p95_latency_ms == null ? "—" : `${bot.p95_latency_ms.toLocaleString()} ms`}
+                {bot.timed_execution_count ? <span className="block text-xs text-slate-500">{bot.timed_execution_count.toLocaleString()} timed runs</span> : null}
+              </td></tr>)}</tbody>
           </table>
         </div>}
       </section>
@@ -205,25 +211,65 @@ export function AnalyticsDashboard() {
             <AutomationMetric label="Expired / cancelled" value={((commerceApprovals.data?.expired ?? 0) + (commerceApprovals.data?.cancelled ?? 0)).toLocaleString()}/>
             <AutomationMetric label="Executed" value={commerceApprovals.data?.execution_succeeded.toLocaleString() ?? "0"} tone="green"/>
             <AutomationMetric label="Execution failed" value={commerceApprovals.data?.execution_failed.toLocaleString() ?? "0"} tone={commerceApprovals.data?.execution_failed ? "red" : "neutral"}/>
-            <div className="col-span-2 rounded-xl bg-slate-50 p-3 sm:col-span-4 xl:col-span-7"><p className="text-xs font-medium text-slate-600">Average human review time</p><p className="mt-1 text-lg font-bold text-slate-950">{commerceApprovals.data?.average_review_seconds == null ? "No reviewed requests" : formatDuration(commerceApprovals.data.average_review_seconds)}</p><p className="mt-1 text-xs text-slate-500">Measured from request creation to an Owner/Admin approval or rejection.</p></div>
+            <div className="col-span-2 rounded-xl bg-slate-50 p-3 sm:col-span-4 xl:col-span-7"><p className="text-xs font-medium text-slate-600">Average human review time</p><p className="mt-1 text-lg font-bold text-slate-950">{commerceApprovals.data?.average_review_seconds == null ? "No reviewed requests" : formatDuration(commerceApprovals.data.average_review_seconds)}</p><p className="mt-1 text-xs text-slate-500">Measured from request creation to an Owner/Admin approval or rejection.</p>
+              {commerceApprovals.data?.median_review_seconds != null && (
+                <p className="mt-2 text-xs text-slate-600">
+                  Median {formatDuration(commerceApprovals.data.median_review_seconds)}
+                  {commerceApprovals.data.reviewed_count != null && ` across ${commerceApprovals.data.reviewed_count.toLocaleString()} reviewed requests`}
+                </p>
+              )}</div>
+            {commerceApprovals.data?.timed_execution_count != null && (
+              <div className="col-span-2 rounded-xl bg-slate-50 p-3 sm:col-span-4 xl:col-span-7">
+                <p className="text-xs font-medium text-slate-600">Average approval to execution completion</p>
+                <p className="mt-1 text-lg font-bold text-slate-950">
+                  {commerceApprovals.data.average_approval_to_completion_seconds == null
+                    ? "No timed executions"
+                    : formatDuration(commerceApprovals.data.average_approval_to_completion_seconds)}
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  Includes queue time and retries across {commerceApprovals.data.timed_execution_count.toLocaleString()} completed executions.
+                </p>
+              </div>
+            )}
           </div>}
+        {!commerceApprovals.isError && commerceApprovals.data && commerceApprovals.data.total > 0 && (
+          <CommerceApprovalTrend daily={commerceApprovals.data.daily} />
+        )}
       </section>
 
       <section aria-labelledby="support-response-title" className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div><h2 id="support-response-title" className="font-semibold">First response time</h2><p className="mt-1 text-xs text-slate-500">Time from the first customer message to the first teammate or AI reply, grouped by conversation start date.</p></div>
+          <div><h2 id="support-response-title" className="font-semibold">First response time</h2><p className="mt-1 text-xs text-slate-500">Time from the first customer message to the first teammate or AI reply. Outbound channel replies count when their delivery job succeeds. The date range follows the first customer message in UTC.</p></div>
           <span className="rounded-lg bg-blue-50 p-2 text-blue-700"><Activity size={18} aria-hidden="true"/></span>
         </div>
         {supportResponses.isPending ? <p role="status" className="mt-5 text-sm text-slate-500">Loading response-time metrics…</p>
           : supportResponses.isError ? <p role="alert" className="mt-5 rounded-xl bg-red-50 p-3 text-sm text-red-800">Response-time metrics could not be loaded. Other analytics remain available.</p>
           : supportResponses.data?.conversations === 0 ? <p className="mt-5 rounded-xl bg-slate-50 p-4 text-sm text-slate-500">No customer conversations were recorded in this date range.</p>
-          : <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+          : <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
             <AutomationMetric label="Conversations" value={supportResponses.data?.conversations.toLocaleString() ?? "0"}/>
             <AutomationMetric label="Received a reply" value={`${supportResponses.data?.responded.toLocaleString() ?? "0"}${supportResponses.data?.conversations ? ` · ${Math.round((supportResponses.data.responded / supportResponses.data.conversations) * 100)}%` : ""}`} tone="green"/>
             <AutomationMetric label="Awaiting first reply" value={supportResponses.data?.awaiting_first_response.toLocaleString() ?? "0"} tone={(supportResponses.data?.awaiting_first_response ?? 0) > 0 ? "blue" : "neutral"}/>
             <AutomationMetric label="Average first response" value={supportResponses.data?.average_first_response_seconds == null ? "No replies yet" : formatDuration(supportResponses.data.average_first_response_seconds)}/>
             <AutomationMetric label="Median first response" value={supportResponses.data?.median_first_response_seconds == null ? "No replies yet" : formatDuration(supportResponses.data.median_first_response_seconds)}/>
+            <AutomationMetric
+              label="P95 first response"
+              value={supportResponses.data?.p95_first_response_seconds == null
+                ? "—"
+                : formatDuration(supportResponses.data.p95_first_response_seconds)}
+            />
           </div>}
+        {!supportResponses.isError && supportResponses.data?.longest_unanswered_seconds != null && (
+          <p className="mt-4 text-xs text-slate-600">
+            Longest current wait in this range{" "}
+            <span className="font-semibold">{formatDuration(supportResponses.data.longest_unanswered_seconds)}</span>
+          </p>
+        )}
+        <Link
+          href="/dashboard/inbox?overdue_only=true"
+          className="mt-4 inline-flex text-sm font-semibold text-blue-700 underline-offset-4 hover:underline"
+        >
+          View overdue first replies in Inbox
+        </Link>
         {supportResponses.data && supportResponses.data.daily.length > 0 && <SupportResponseTrend daily={supportResponses.data.daily}/>}
       </section>
 
@@ -251,6 +297,44 @@ export function AnalyticsDashboard() {
       <RecommendationInsights data={recommendations.data} loading={recommendations.isPending} error={recommendations.isError}/>
     </>}
   </div>;
+}
+
+function CommerceApprovalTrend({ daily }: { daily: CommerceApprovalAnalytics["daily"] }) {
+  const activeDays = daily.filter((day) => day.total > 0);
+  if (!activeDays.length) return null;
+
+  return (
+    <details className="mt-5 rounded-xl border border-slate-200 p-3">
+      <summary className="cursor-pointer rounded text-sm font-semibold focus-visible:outline-2">
+        Daily commerce request outcomes
+      </summary>
+      <div className="mt-3 max-h-72 overflow-auto">
+        <table className="w-full whitespace-nowrap text-right text-xs tabular-nums">
+          <caption className="pb-2 text-left text-slate-500">
+            Current outcomes by request creation date in UTC. Dates with no requests are omitted.
+          </caption>
+          <thead>
+            <tr>
+              <th scope="col" className="p-2 text-left">Date</th>
+              {["Total", "Pending", "Approved", "Rejected", "Expired", "Cancelled"].map((label) => (
+                <th key={label} scope="col" className="p-2">{label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {activeDays.map((day) => (
+              <tr key={day.date} className="border-t border-slate-100">
+                <th scope="row" className="p-2 text-left font-medium"><time dateTime={day.date}>{day.date}</time></th>
+                {[day.total, day.pending, day.approved, day.rejected, day.expired, day.cancelled].map((count, index) => (
+                  <td key={index} className="p-2">{count.toLocaleString()}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  );
 }
 
 function formatDuration(seconds: number) {
@@ -304,7 +388,7 @@ function AutomationTrend({ daily, topErrors }: { daily: AutomationMetrics["daily
 function SupportResponseTrend({ daily }: { daily: import("../api/analytics-api").SupportResponseAnalytics["daily"] }) {
   const peak = Math.max(1, ...daily.map((point) => point.average_first_response_seconds ?? 0));
   return <div className="mt-5 border-t border-slate-100 pt-4">
-    <div className="flex items-center justify-between gap-3"><h3 className="text-sm font-semibold">Daily average response time</h3><span className="text-xs text-slate-500">UTC conversation start date</span></div>
+    <div className="flex items-center justify-between gap-3"><h3 className="text-sm font-semibold">Daily average response time</h3><span className="text-xs text-slate-500">UTC first customer message date</span></div>
     <div className="mt-3 flex h-24 items-end gap-1 overflow-x-auto border-b border-slate-100 pb-2" role="img" aria-label="Daily average first response time">
       {daily.map((point) => {
         const seconds = point.average_first_response_seconds ?? 0;

@@ -28,6 +28,8 @@ class AIBotUsage(BaseModel):
     completion_tokens: int
     estimated_cost_usd: float | None
     average_latency_ms: int | None
+    p95_latency_ms: int | None = None
+    timed_execution_count: int | None = None
 
 
 class AIUsageOut(BaseModel):
@@ -109,6 +111,10 @@ class CommerceApprovalAnalyticsOut(BaseModel):
     execution_succeeded: int
     execution_failed: int
     average_review_seconds: float | None
+    median_review_seconds: float | None = None
+    reviewed_count: int | None = None
+    average_approval_to_completion_seconds: float | None = None
+    timed_execution_count: int | None = None
     daily: list[CommerceApprovalDay]
 
 
@@ -127,6 +133,8 @@ class SupportResponseAnalyticsOut(BaseModel):
     awaiting_first_response: int
     average_first_response_seconds: float | None
     median_first_response_seconds: float | None
+    p95_first_response_seconds: float | None = None
+    longest_unanswered_seconds: float | None = None
     daily: list[SupportResponseDay]
 
 

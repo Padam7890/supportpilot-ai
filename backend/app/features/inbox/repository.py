@@ -7,10 +7,11 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import and_, exists, func, or_, select, tuple_
+from sqlalchemy import Integer, and_, case, cast, exists, func, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.features.conversations.response_metrics import first_reply_source
 from app.models import (
     CommerceAction,
     Conversation,
@@ -91,6 +92,7 @@ class InboxRepository:
         search: str | None,
         limit: int,
         cursor: str | None,
+        overdue_only: bool = False,
     ) -> tuple[list[dict], str | None]:
         normalized_search = search.strip() if search else ""
         filters = {
@@ -102,6 +104,8 @@ class InboxRepository:
             "unread_only": str(unread_only),
             "search": normalized_search.casefold() or None,
         }
+        if overdue_only:
+            filters["overdue_only"] = "True"
         fingerprint = _filter_fingerprint(filters)
 
         latest_conversations = (
@@ -198,13 +202,12 @@ class InboxRepository:
             .group_by(Conversation.ticket_id)
             .cte("inbox_first_customer_message")
         )
+        reply_source, reply_eligible, reply_at = first_reply_source()
         first_responses = (
             select(
                 first_customer_messages.c.ticket_id,
                 first_customer_messages.c.first_customer_at,
-                func.min(Message.created_at)
-                .filter(Message.sender_type.in_(("agent", "assistant")))
-                .label("first_response_at"),
+                func.min(reply_at).label("first_response_at"),
             )
             .select_from(
                 first_customer_messages
@@ -216,11 +219,12 @@ class InboxRepository:
                     ),
                 )
                 .outerjoin(
-                    Message,
+                    reply_source,
                     and_(
                         Message.organization_id == Conversation.organization_id,
                         Message.conversation_id == Conversation.id,
                         Message.created_at > first_customer_messages.c.first_customer_at,
+                        reply_eligible,
                     ),
                 )
             )
@@ -320,6 +324,27 @@ class InboxRepository:
                 )
             )
 
+        now = datetime.now(UTC)
+        raw_sla = Organization.first_response_sla_minutes[Ticket.priority]
+        raw_minutes = raw_sla.as_string()
+        parsed_minutes = case(
+            (
+                (func.jsonb_typeof(raw_sla) == "number") & raw_minutes.op("~")(r"^[0-9]{1,5}$"),
+                cast(raw_minutes, Integer),
+            ),
+            else_=None,
+        )
+        target_minutes = case(
+            (parsed_minutes.between(5, 10080), parsed_minutes),
+            else_=case(DEFAULT_FIRST_RESPONSE_SLA_MINUTES, value=Ticket.priority),
+        )
+        if overdue_only:
+            conditions.extend((
+                first_responses.c.first_customer_at.is_not(None),
+                first_responses.c.first_response_at.is_(None),
+                func.extract("epoch", now - first_responses.c.first_customer_at) >= target_minutes * 60,
+            ))
+
         statement = (
             select(
                 Ticket.id,
@@ -343,7 +368,7 @@ class InboxRepository:
                 latest_messages.c.sender_type.label("latest_sender_type"),
                 first_responses.c.first_customer_at,
                 first_responses.c.first_response_at,
-                Organization.first_response_sla_minutes,
+                target_minutes.label("sla_target_minutes"),
                 func.coalesce(unread_counts.c.unread_count, 0).label("unread_count"),
                 activity_at,
             )
@@ -388,20 +413,12 @@ class InboxRepository:
         has_more = len(rows) > limit
         rows = rows[:limit]
         items = []
-        now = datetime.now(UTC)
         for row in rows:
             preview = re.sub(r"\s+", " ", row["latest_content"] or "").strip()
             sla = None
             first_customer_at = row["first_customer_at"]
             if first_customer_at is not None:
-                stored_policy = row["first_response_sla_minutes"]
-                policy = stored_policy if isinstance(stored_policy, dict) else {}
-                raw_target = policy.get(row["priority"])
-                target_minutes = (
-                    raw_target
-                    if isinstance(raw_target, int) and 5 <= raw_target <= 10080
-                    else DEFAULT_FIRST_RESPONSE_SLA_MINUTES[row["priority"]]
-                )
+                target_minutes = row["sla_target_minutes"]
                 due_at = first_customer_at + timedelta(minutes=target_minutes)
                 response_at = row["first_response_at"]
                 if response_at is not None:

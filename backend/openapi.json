@@ -350,6 +350,17 @@
             "title": "Failed",
             "type": "integer"
           },
+          "p95_latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P95 Latency Ms"
+          },
           "prompt_tokens": {
             "title": "Prompt Tokens",
             "type": "integer"
@@ -357,6 +368,17 @@
           "succeeded": {
             "title": "Succeeded",
             "type": "integer"
+          },
+          "timed_execution_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timed Execution Count"
           }
         },
         "required": [
@@ -3216,6 +3238,17 @@
             "title": "Approved",
             "type": "integer"
           },
+          "average_approval_to_completion_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Approval To Completion Seconds"
+          },
           "average_review_seconds": {
             "anyOf": [
               {
@@ -3255,6 +3288,17 @@
             "title": "Expired",
             "type": "integer"
           },
+          "median_review_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Median Review Seconds"
+          },
           "pending": {
             "title": "Pending",
             "type": "integer"
@@ -3263,10 +3307,32 @@
             "title": "Rejected",
             "type": "integer"
           },
+          "reviewed_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed Count"
+          },
           "start_date": {
             "format": "date",
             "title": "Start Date",
             "type": "string"
+          },
+          "timed_execution_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timed Execution Count"
           },
           "total": {
             "title": "Total",
@@ -9246,6 +9312,17 @@
             "title": "End Date",
             "type": "string"
           },
+          "longest_unanswered_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Longest Unanswered Seconds"
+          },
           "median_first_response_seconds": {
             "anyOf": [
               {
@@ -9256,6 +9333,17 @@
               }
             ],
             "title": "Median First Response Seconds"
+          },
+          "p95_first_response_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P95 First Response Seconds"
           },
           "responded": {
             "title": "Responded",
@@ -22394,6 +22482,16 @@
             "schema": {
               "default": false,
               "title": "Unread Only",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "overdue_only",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Overdue Only",
               "type": "boolean"
             }
           },

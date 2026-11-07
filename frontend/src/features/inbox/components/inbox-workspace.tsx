@@ -30,9 +30,9 @@ import { getAttachmentValidationError } from "@/features/attachments/utils/valid
 
 const initialFilters: InboxFilters = { scope: "all", status: "", priority: "", teamId: "", search: "", needsApproval: false, unreadOnly: false };
 
-export function InboxWorkspace() {
+export function InboxWorkspace({ initialOverdueOnly = false }: { initialOverdueOnly?: boolean }) {
   const client = useQueryClient();
-  const [filters, setFilters] = useState(initialFilters);
+  const [filters, setFilters] = useState<InboxFilters>(() => ({ ...initialFilters, overdueOnly: initialOverdueOnly }));
   const [searchDraft, setSearchDraft] = useState("");
   const [selectedTicket, setSelectedTicket] = useState<InboxItem | null>(null);
   const [selectedConversation, setSelectedConversation] = useState("");
@@ -65,6 +65,7 @@ export function InboxWorkspace() {
     || Boolean(filters.search)
     || filters.needsApproval
     || filters.unreadOnly
+    || filters.overdueOnly
     || Boolean(searchDraft);
   const activeTicket = selectedTicket ? rows.find((item) => item.ticketId === selectedTicket.ticketId) ?? selectedTicket : null;
   const conversations = useQuery({
@@ -337,6 +338,17 @@ export function InboxWorkspace() {
             <button aria-pressed={filters.needsApproval} onClick={() => changeFilters((value) => ({ ...value, needsApproval: !value.needsApproval, unreadOnly: false }))} className={`shrink-0 rounded-full px-3 py-1.5 text-[11px] font-semibold transition ${filters.needsApproval ? "bg-amber-50 text-amber-700" : "bg-white text-slate-600 hover:bg-slate-100"}`}>Needs approval</button>
             <button aria-pressed={filters.unreadOnly} onClick={() => changeFilters((value) => ({ ...value, unreadOnly: !value.unreadOnly, needsApproval: false }))} className={`shrink-0 rounded-full px-3 py-1.5 text-[11px] font-semibold transition ${filters.unreadOnly ? "bg-blue-50 text-blue-700" : "bg-white text-slate-600 hover:bg-slate-100"}`}>Unread</button>
           </div>
+          <label className="flex items-center gap-2 text-xs">
+            <input
+              type="checkbox"
+              checked={Boolean(filters.overdueOnly)}
+              onChange={(event) => {
+                const overdueOnly = event.target.checked;
+                changeFilters((value) => ({ ...value, overdueOnly }));
+              }}
+            />
+            Overdue first reply
+          </label>
           <div className="flex flex-wrap items-center gap-2"><Select aria-label="Filter by status" className="py-1.5 text-xs" value={filters.status} onChange={(e) => changeFilters((value) => ({ ...value, status: e.target.value }))}><option value="">All statuses</option>{["open", "pending", "resolved", "closed"].map((s) => <option key={s} value={s}>{titleCase(s)}</option>)}</Select><Select aria-label="Filter by priority" className="py-1.5 text-xs" value={filters.priority} onChange={(e) => changeFilters((value) => ({ ...value, priority: e.target.value }))}><option value="">Any priority</option>{["low", "normal", "high", "urgent"].map((s) => <option key={s} value={s}>{titleCase(s)}</option>)}</Select><Select aria-label="Filter by team" className="py-1.5 text-xs" value={filters.teamId ?? ""} onChange={(e) => changeFilters((value) => ({ ...value, teamId: e.target.value }))}><option value="">All teams</option>{teams.data?.filter((team) => team.is_active).map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</Select>{teams.isPending && <span role="status" className="text-xs text-slate-500">Loading teams…</span>}{teams.isError && <span role="status" className="text-xs text-amber-700">Team filter unavailable</span>}{hasActiveFilters && <button type="button" onClick={clearFilters} className="shrink-0 rounded-lg px-2 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-50">Clear</button>}</div>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto" aria-live="polite">

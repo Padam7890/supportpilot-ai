@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, require_roles
 from app.core.config import settings
 from app.db.session import get_db
+from app.features.conversations.response_metrics import first_reply_source
 from app.models import (
     AIAgent,
     AIEvaluation,
@@ -175,7 +176,7 @@ async def operational_alerts(
         select(
             *overdue_counts,
             func.least(*oldest_by_queue),
-            sum(expired_lease_counts),
+            *expired_lease_counts,
             recent_failures(AIExecution, AIExecution.status == "failed", AIExecution.completed_at),
             recent_failures(
                 AutomationExecution, AutomationExecution.status == "failed", AutomationExecution.completed_at
@@ -204,9 +205,7 @@ async def operational_alerts(
         )
     )
     (
-        *queue_counts,
-        oldest_eligible_at,
-        expired_lease_count,
+        *queue_metrics,
         ai_failed,
         automation_failed,
         catalog_failed,
@@ -216,6 +215,20 @@ async def operational_alerts(
         approvals_pending,
         commerce_failed,
     ) = counts.one()
+
+    overdue_queue_count = len(overdue_queues)
+    queue_counts = queue_metrics[:overdue_queue_count]
+    oldest_eligible_at = queue_metrics[overdue_queue_count]
+    recovery_counts = queue_metrics[overdue_queue_count + 1:]
+    recovery_labels = (
+        "Automation runs", "Catalog syncs", "Outbound deliveries", "AI executions",
+        "Document processing", "Catalog webhooks", "Commerce actions",
+    )
+    recovery_breakdown = ", ".join(
+        f"{label} ({count})"
+        for label, count in zip(recovery_labels, recovery_counts, strict=True)
+        if count
+    )
 
     overdue_count = sum(queue_counts)
     overdue_breakdown = ", ".join(
@@ -234,8 +247,8 @@ async def operational_alerts(
     candidates = [
         (
             "worker_leases_expired", "attention", "Running jobs need worker recovery",
-            "One or more jobs are still marked running past their worker recovery deadline.",
-            int(expired_lease_count or 0), "Check background worker", "/dashboard/operations#background-worker",
+            f"Jobs still running past their worker recovery deadline: {recovery_breakdown}.",
+            sum(recovery_counts), "Check background worker", "/dashboard/operations#background-worker",
         ),
         (
             "background_jobs_overdue", "attention", "Background jobs are waiting",
@@ -312,6 +325,19 @@ async def support_response_analytics(
 ) -> SupportResponseAnalyticsOut:
     """Summarize first customer-to-team reply time, excluding message content."""
     start, end = date_window(start_date, end_date)
+    period_start = datetime.combine(start, time.min, tzinfo=UTC)
+    earlier_customer = Message.__table__.alias("earlier_customer_message")
+    had_customer_before_period = (
+        select(earlier_customer.c.id)
+        .where(
+            earlier_customer.c.organization_id == Conversation.organization_id,
+            earlier_customer.c.conversation_id == Conversation.id,
+            earlier_customer.c.sender_type == "customer",
+            earlier_customer.c.created_at < period_start,
+        )
+        .correlate(Conversation)
+        .exists()
+    )
     first_customer = (
         select(
             Conversation.organization_id.label("organization_id"),
@@ -325,28 +351,30 @@ async def support_response_analytics(
         )
         .where(
             Conversation.organization_id == user.organization_id,
-            date_predicate(Conversation.created_at, start, end),
+            Conversation.created_at < datetime.combine(end + timedelta(days=1), time.min, tzinfo=UTC),
             Message.sender_type == "customer",
+            date_predicate(Message.created_at, start, end),
+            ~had_customer_before_period,
         )
         .group_by(Conversation.organization_id, Conversation.id)
         .cte("first_customer_message")
     )
     response_messages = Message.__table__
+    response_with_delivery, delivery_eligible, response_at = first_reply_source()
     conversation_times = (
         select(
             first_customer.c.organization_id,
             first_customer.c.conversation_id,
             first_customer.c.first_customer_at,
-            func.min(response_messages.c.created_at)
-            .filter(response_messages.c.sender_type.in_(("agent", "assistant")))
-            .label("first_response_at"),
+            func.min(response_at).label("first_response_at"),
         )
         .select_from(
             first_customer.outerjoin(
-                response_messages,
+                response_with_delivery,
                 (response_messages.c.organization_id == first_customer.c.organization_id)
                 & (response_messages.c.conversation_id == first_customer.c.conversation_id)
-                & (response_messages.c.created_at > first_customer.c.first_customer_at),
+                & (response_messages.c.created_at > first_customer.c.first_customer_at)
+                & delivery_eligible,
             )
         )
         .group_by(
@@ -367,9 +395,13 @@ async def support_response_analytics(
             ),
             func.avg(latency_seconds).filter(conversation_times.c.first_response_at.is_not(None)),
             func.percentile_disc(0.5).within_group(latency_seconds),
+            func.percentile_disc(0.95).within_group(latency_seconds),
+            func.min(conversation_times.c.first_customer_at).filter(
+                conversation_times.c.first_response_at.is_(None)
+            ),
         )
     )
-    total, responded, average_seconds, median_seconds = summary.one()
+    total, responded, average_seconds, median_seconds, p95_seconds, oldest_unanswered_at = summary.one()
 
     utc_day = func.date(func.timezone("UTC", conversation_times.c.first_customer_at))
     daily_rows = await db.execute(
@@ -408,6 +440,13 @@ async def support_response_analytics(
         ),
         median_first_response_seconds=(
             round(float(median_seconds), 2) if median_seconds is not None else None
+        ),
+        p95_first_response_seconds=(
+            round(float(p95_seconds), 2) if p95_seconds is not None else None
+        ),
+        longest_unanswered_seconds=(
+            round(max(0.0, (datetime.now(UTC) - oldest_unanswered_at).total_seconds()), 2)
+            if oldest_unanswered_at is not None else None
         ),
         daily=daily,
     )
@@ -587,6 +626,11 @@ async def ai_usage(
             prompt * settings.ai_input_cost_per_million
             + completion * settings.ai_output_cost_per_million
         ) / 1_000_000
+    execution_duration = func.extract("epoch", AIExecution.completed_at - AIExecution.started_at)
+    timed_execution = (
+        (AIExecution.status == "succeeded")
+        & (AIExecution.completed_at >= AIExecution.started_at)
+    )
     bot_rows = await db.execute(
         select(
             AIExecution.ai_agent_id,
@@ -596,13 +640,9 @@ async def ai_usage(
             func.count(AIExecution.id).filter(AIExecution.status == "failed"),
             prompt_tokens,
             completion_tokens,
-            func.avg(
-                func.extract("epoch", AIExecution.completed_at - AIExecution.started_at)
-            ).filter(
-                AIExecution.status == "succeeded",
-                AIExecution.started_at.is_not(None),
-                AIExecution.completed_at.is_not(None),
-            ),
+            func.avg(execution_duration).filter(timed_execution),
+            func.percentile_cont(0.95).within_group(execution_duration).filter(timed_execution),
+            func.count(AIExecution.id).filter(timed_execution),
         )
         .join(
             AIAgent,
@@ -624,6 +664,8 @@ async def ai_usage(
         bot_prompt,
         bot_completion,
         latency,
+        p95_latency,
+        timed_count,
     ) in bot_rows.all():
         bot_prompt, bot_completion = int(bot_prompt or 0), int(bot_completion or 0)
         bot_cost = None
@@ -643,6 +685,8 @@ async def ai_usage(
                 completion_tokens=bot_completion,
                 estimated_cost_usd=bot_cost,
                 average_latency_ms=round(float(latency) * 1000) if latency is not None else None,
+                p95_latency_ms=round(float(p95_latency) * 1000) if p95_latency is not None else None,
+                timed_execution_count=int(timed_count),
             )
         )
     error_rows = await db.execute(
@@ -695,6 +739,14 @@ async def commerce_approval_analytics(
         CommerceAction.organization_id == user.organization_id,
         date_predicate(CommerceAction.created_at, start, end),
     )
+    reviewed = CommerceAction.approval_status.in_(("approved", "rejected")) & CommerceAction.reviewed_at.is_not(None)
+    review_duration = func.extract("epoch", CommerceAction.reviewed_at - CommerceAction.created_at)
+    completed = (
+        (CommerceAction.approval_status == "approved")
+        & CommerceAction.execution_status.in_(("succeeded", "failed"))
+        & (CommerceAction.execution_completed_at >= CommerceAction.reviewed_at)
+    )
+    approval_to_completion = CommerceAction.execution_completed_at - CommerceAction.reviewed_at
     totals_result = await db.execute(
         select(
             func.count(CommerceAction.id),
@@ -705,12 +757,17 @@ async def commerce_approval_analytics(
             func.count(CommerceAction.id).filter(CommerceAction.approval_status == "cancelled"),
             func.count(CommerceAction.id).filter(CommerceAction.execution_status == "succeeded"),
             func.count(CommerceAction.id).filter(CommerceAction.execution_status == "failed"),
-            func.avg(func.extract("epoch", CommerceAction.reviewed_at - CommerceAction.created_at)).filter(
-                CommerceAction.reviewed_at.is_not(None)
-            ),
+            func.avg(review_duration).filter(reviewed),
+            func.percentile_cont(0.5).within_group(review_duration).filter(reviewed),
+            func.count(CommerceAction.id).filter(reviewed),
+            func.avg(func.extract("epoch", approval_to_completion)).filter(completed),
+            func.count(CommerceAction.id).filter(completed),
         ).where(*predicate)
     )
-    total, pending, approved, rejected, expired, cancelled, executed, execution_failed, review_seconds = totals_result.one()
+    (
+        total, pending, approved, rejected, expired, cancelled, executed, execution_failed,
+        review_seconds, median_review, reviewed_count, completion_seconds, completion_count,
+    ) = totals_result.one()
 
     utc_created_date = func.date(func.timezone("UTC", CommerceAction.created_at))
     daily_rows = await db.execute(
@@ -751,6 +808,12 @@ async def commerce_approval_analytics(
         execution_succeeded=int(executed),
         execution_failed=int(execution_failed),
         average_review_seconds=round(float(review_seconds), 2) if review_seconds is not None else None,
+        median_review_seconds=round(float(median_review), 2) if median_review is not None else None,
+        reviewed_count=int(reviewed_count),
+        average_approval_to_completion_seconds=(
+            round(float(completion_seconds), 2) if completion_seconds is not None else None
+        ),
+        timed_execution_count=int(completion_count),
         daily=daily,
     )
 
