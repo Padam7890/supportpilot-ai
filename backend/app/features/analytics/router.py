@@ -2,7 +2,7 @@ import re
 from datetime import UTC, date, datetime, time, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import Integer, String, func, literal, select, union_all
+from sqlalchemy import Integer, String, Uuid, func, literal, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_roles
@@ -108,6 +108,11 @@ async def operational_alerts(
                 IntegrationDeliveryJob.created_at >= window_start,
             ),
             count_subquery(
+                DocumentIngestionJob,
+                DocumentIngestionJob.status == "failed",
+                DocumentIngestionJob.created_at >= window_start,
+            ),
+            count_subquery(
                 CommerceAction,
                 CommerceAction.approval_status == "pending",
                 CommerceAction.expires_at > generated_at,
@@ -125,6 +130,7 @@ async def operational_alerts(
         catalog_failed,
         webhook_failed,
         delivery_failed,
+        ingestion_failed,
         approvals_pending,
         commerce_failed,
     ) = counts.one()
@@ -154,6 +160,11 @@ async def operational_alerts(
             "outbound_delivery_failed", "attention", "Outbound deliveries failed",
             "Review recent channel messages that exhausted their delivery retries.",
             int(delivery_failed or 0), "View delivery analytics", "/dashboard/analytics#channel-delivery",
+        ),
+        (
+            "document_ingestion_failed", "attention", "Knowledge documents failed to process",
+            "Review recent document processing failures and retry them after checking the source file.",
+            int(ingestion_failed or 0), "Open Knowledge Library", "/dashboard/knowledge",
         ),
         (
             "commerce_approval_pending", "review", "Commerce requests need review",
@@ -721,16 +732,16 @@ async def failed_background_jobs(
 ) -> FailedBackgroundJobsOut:
     """List bounded tenant-owned terminal failures without private job payloads."""
     sources = [
-        (AIExecution, AIExecution.status == "failed", AIExecution.completed_at, AIExecution.error_code, AIExecution.attempt_count, AIExecution.manual_retry_count, "ai_execution"),
-        (AutomationExecution, AutomationExecution.status == "failed", AutomationExecution.completed_at, AutomationExecution.error_code, AutomationExecution.attempt_count, None, "automation_execution"),
-        (CatalogSyncJob, CatalogSyncJob.status == "failed", CatalogSyncJob.completed_at, CatalogSyncJob.last_error_code, CatalogSyncJob.attempt_count, CatalogSyncJob.manual_retry_count, "catalog_sync"),
-        (CatalogWebhookEvent, CatalogWebhookEvent.status == "failed", CatalogWebhookEvent.completed_at, CatalogWebhookEvent.last_error_code, CatalogWebhookEvent.attempt_count, None, "catalog_webhook"),
-        (DocumentIngestionJob, DocumentIngestionJob.status == "failed", DocumentIngestionJob.completed_at, None, DocumentIngestionJob.attempt_count, None, "document_ingestion"),
-        (CommerceAction, CommerceAction.execution_status == "failed", CommerceAction.execution_completed_at, CommerceAction.execution_error_code, CommerceAction.execution_attempt_count, None, "commerce_action"),
-        (IntegrationDeliveryJob, IntegrationDeliveryJob.status == "failed", IntegrationDeliveryJob.completed_at, IntegrationDeliveryJob.last_error_code, IntegrationDeliveryJob.attempt_count, None, "outbound_delivery"),
+        (AIExecution, AIExecution.status == "failed", AIExecution.completed_at, AIExecution.error_code, AIExecution.attempt_count, AIExecution.manual_retry_count, "ai_execution", None),
+        (AutomationExecution, AutomationExecution.status == "failed", AutomationExecution.completed_at, AutomationExecution.error_code, AutomationExecution.attempt_count, None, "automation_execution", None),
+        (CatalogSyncJob, CatalogSyncJob.status == "failed", CatalogSyncJob.completed_at, CatalogSyncJob.last_error_code, CatalogSyncJob.attempt_count, CatalogSyncJob.manual_retry_count, "catalog_sync", None),
+        (CatalogWebhookEvent, CatalogWebhookEvent.status == "failed", CatalogWebhookEvent.completed_at, CatalogWebhookEvent.last_error_code, CatalogWebhookEvent.attempt_count, None, "catalog_webhook", None),
+        (DocumentIngestionJob, DocumentIngestionJob.status == "failed", DocumentIngestionJob.completed_at, None, DocumentIngestionJob.attempt_count, None, "document_ingestion", DocumentIngestionJob.document_id),
+        (CommerceAction, CommerceAction.execution_status == "failed", CommerceAction.execution_completed_at, CommerceAction.execution_error_code, CommerceAction.execution_attempt_count, None, "commerce_action", None),
+        (IntegrationDeliveryJob, IntegrationDeliveryJob.status == "failed", IntegrationDeliveryJob.completed_at, IntegrationDeliveryJob.last_error_code, IntegrationDeliveryJob.attempt_count, None, "outbound_delivery", None),
     ]
     statements = []
-    for model, failed_condition, failed_at, error_code, attempts, manual_retries, kind in sources:
+    for model, failed_condition, failed_at, error_code, attempts, manual_retries, kind, resource_id in sources:
         statements.append(
             select(
                 model.id.label("job_id"),
@@ -739,6 +750,8 @@ async def failed_background_jobs(
                 attempts.label("attempts"),
                 (error_code if error_code is not None else literal(None, type_=String(80))).label("error_code"),
                 (manual_retries if manual_retries is not None else literal(0)).label("manual_retry_count"),
+                (resource_id if resource_id is not None else literal(None, type_=Uuid(as_uuid=True))).label("resource_id"),
+                model.correlation_id.label("correlation_id"),
             ).where(model.organization_id == user.organization_id, failed_condition)
         )
 
@@ -756,6 +769,13 @@ async def failed_background_jobs(
         items.append(
             FailedBackgroundJobOut(
                 job_id=row["job_id"],
+                document_id=row["resource_id"] if row["job_kind"] == "document_ingestion" else None,
+                correlation_id=(
+                    row["correlation_id"]
+                    if isinstance(row["correlation_id"], str)
+                    and re.fullmatch(r"[A-Za-z0-9._:-]{8,64}", row["correlation_id"])
+                    else None
+                ),
                 job_kind=row["job_kind"],
                 failed_at=row["failed_at"],
                 attempts=row["attempts"],

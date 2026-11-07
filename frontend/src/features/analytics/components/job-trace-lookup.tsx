@@ -2,7 +2,7 @@
 
 import { useMutation } from "@tanstack/react-query";
 import { Search, Waypoints } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { getJobTrace, type JobTrace } from "../api/analytics-api";
@@ -17,9 +17,19 @@ const jobLabels: Record<JobTrace["events"][number]["job_kind"], string> = {
   outbound_delivery: "Outbound delivery",
 };
 
-export function JobTraceLookup() {
+export function JobTraceLookup({ requestedCorrelationId }: { requestedCorrelationId?: string | null }) {
   const [correlationId, setCorrelationId] = useState("");
   const trace = useMutation({ mutationFn: getJobTrace });
+  const { mutate } = trace;
+  const lastRequestedId = useRef<string | null>(null);
+
+  useEffect(() => {
+    const requestedId = requestedCorrelationId?.trim();
+    if (!requestedId || requestedId === lastRequestedId.current) return;
+    lastRequestedId.current = requestedId;
+    setCorrelationId(requestedId);
+    mutate(requestedId);
+  }, [requestedCorrelationId, mutate]);
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

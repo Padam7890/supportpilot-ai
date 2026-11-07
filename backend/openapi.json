@@ -4106,6 +4106,29 @@
             "title": "Attempts",
             "type": "integer"
           },
+          "correlation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correlation Id"
+          },
+          "document_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id"
+          },
           "error_code": {
             "anyOf": [
               {
@@ -5693,6 +5716,8 @@
             "enum": [
               "ai_execution",
               "automation_execution",
+              "document_ingestion",
+              "commerce_action",
               "catalog_sync",
               "catalog_webhook",
               "outbound_delivery"
@@ -6562,6 +6587,7 @@
               "catalog_sync_failed",
               "catalog_webhook_failed",
               "outbound_delivery_failed",
+              "document_ingestion_failed",
               "commerce_approval_pending",
               "commerce_execution_failed"
             ],

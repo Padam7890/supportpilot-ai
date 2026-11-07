@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
+import { useState } from "react";
 import { Activity, CheckCircle2, CircleAlert, Database, RefreshCw, Server, Workflow } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getSystemReadiness, getWorkerHealth, type WorkerHealth } from "@/features/dashboard/api/system-status-api";
@@ -11,6 +12,7 @@ import { JobTraceLookup } from "@/features/analytics/components/job-trace-lookup
 import { ApiError } from "@/lib/api/errors";
 
 export default function OperationsPage() {
+  const [requestedCorrelationId, setRequestedCorrelationId] = useState<string | null>(null);
   const readiness = useQuery({
     queryKey: ["system-readiness"],
     queryFn: getSystemReadiness,
@@ -35,8 +37,8 @@ export default function OperationsPage() {
     </>}
     <WorkerCard worker={worker}/>
     <OperationalAlerts />
-    <FailedBackgroundJobs />
-    <JobTraceLookup />
+    <FailedBackgroundJobs onTrace={setRequestedCorrelationId} />
+    <JobTraceLookup requestedCorrelationId={requestedCorrelationId} />
     <div id="commerce-actions"><CommerceActionsWorkspace /></div>
     <p className="flex items-start gap-2 rounded-xl bg-slate-50 p-4 text-xs leading-5 text-slate-500"><Activity size={15} className="mt-0.5 shrink-0"/>The readiness panel reports only checks returned by the readiness API. It does not display worker throughput or provider health that the system does not currently measure.</p>
   </div>;

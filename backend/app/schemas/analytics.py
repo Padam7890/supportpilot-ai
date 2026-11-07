@@ -135,6 +135,7 @@ class OperationalAlertOut(BaseModel):
         "catalog_sync_failed",
         "catalog_webhook_failed",
         "outbound_delivery_failed",
+        "document_ingestion_failed",
         "commerce_approval_pending",
         "commerce_execution_failed",
     ]
@@ -154,6 +155,8 @@ class OperationalAlertsOut(BaseModel):
 
 class FailedBackgroundJobOut(BaseModel):
     job_id: UUID
+    document_id: UUID | None = None
+    correlation_id: str | None = None
     job_kind: Literal[
         "ai_execution",
         "automation_execution",
@@ -161,8 +164,6 @@ class FailedBackgroundJobOut(BaseModel):
         "commerce_action",
         "catalog_sync",
         "catalog_webhook",
-        "document_ingestion",
-        "commerce_action",
         "outbound_delivery",
     ]
     failed_at: datetime
@@ -183,6 +184,8 @@ class JobTraceEventOut(BaseModel):
     job_kind: Literal[
         "ai_execution",
         "automation_execution",
+        "document_ingestion",
+        "commerce_action",
         "catalog_sync",
         "catalog_webhook",
         "outbound_delivery",

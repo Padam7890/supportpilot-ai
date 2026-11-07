@@ -4418,6 +4418,10 @@ export interface components {
         FailedBackgroundJobOut: {
             /** Attempts */
             attempts: number;
+            /** Correlation Id */
+            correlation_id?: string | null;
+            /** Document Id */
+            document_id?: string | null;
             /** Error Code */
             error_code: string | null;
             /**
@@ -5055,7 +5059,7 @@ export interface components {
              * Job Kind
              * @enum {string}
              */
-            job_kind: "ai_execution" | "automation_execution" | "catalog_sync" | "catalog_webhook" | "outbound_delivery";
+            job_kind: "ai_execution" | "automation_execution" | "document_ingestion" | "commerce_action" | "catalog_sync" | "catalog_webhook" | "outbound_delivery";
             /** Max Attempts */
             max_attempts: number | null;
             /** Status */
@@ -5415,7 +5419,7 @@ export interface components {
              * Code
              * @enum {string}
              */
-            code: "ai_execution_failed" | "automation_execution_failed" | "catalog_sync_failed" | "catalog_webhook_failed" | "outbound_delivery_failed" | "commerce_approval_pending" | "commerce_execution_failed";
+            code: "ai_execution_failed" | "automation_execution_failed" | "catalog_sync_failed" | "catalog_webhook_failed" | "outbound_delivery_failed" | "document_ingestion_failed" | "commerce_approval_pending" | "commerce_execution_failed";
             /** Count */
             count: number;
             /** Description */
