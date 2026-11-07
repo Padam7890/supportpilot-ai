@@ -7,6 +7,7 @@ import { getSystemReadiness, getWorkerHealth, type WorkerHealth } from "@/featur
 import { CommerceActionsWorkspace } from "@/features/commerce-actions/components/commerce-actions-workspace";
 import { OperationalAlerts } from "@/features/analytics/components/operational-alerts";
 import { FailedBackgroundJobs } from "@/features/analytics/components/failed-background-jobs";
+import { JobTraceLookup } from "@/features/analytics/components/job-trace-lookup";
 import { ApiError } from "@/lib/api/errors";
 
 export default function OperationsPage() {
@@ -35,6 +36,7 @@ export default function OperationsPage() {
     <WorkerCard worker={worker}/>
     <OperationalAlerts />
     <FailedBackgroundJobs />
+    <JobTraceLookup />
     <div id="commerce-actions"><CommerceActionsWorkspace /></div>
     <p className="flex items-start gap-2 rounded-xl bg-slate-50 p-4 text-xs leading-5 text-slate-500"><Activity size={15} className="mt-0.5 shrink-0"/>The readiness panel reports only checks returned by the readiness API. It does not display worker throughput or provider health that the system does not currently measure.</p>
   </div>;

@@ -1,26 +1,35 @@
 import type { HTMLAttributes, ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 export function Panel({ className, ...props }: HTMLAttributes<HTMLElement>) {
-  return <section className={cn("rounded-2xl border border-slate-200 bg-white shadow-sm", className)} {...props} />;
+  return (
+    <Card
+      data-slot="panel"
+      className={cn("rounded-2xl shadow-sm ring-border/60", className)}
+      {...(props as HTMLAttributes<HTMLDivElement>)}
+    />
+  );
 }
 
-export function PanelHeader({ title, description, action }: {
+export function PanelHeader({
+  title,
+  description,
+  action,
+}: {
   title: string;
   description?: string;
   action?: ReactNode;
 }) {
   return (
-    <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 px-5 py-4 sm:px-6">
-      <div>
-        <h2 className="card-title">{title}</h2>
-        {description && <p className="helper-text mt-1">{description}</p>}
-      </div>
-      {action}
-    </div>
+    <CardHeader className="border-b border-border/60 pb-4">
+      <CardTitle className="card-title font-semibold">{title}</CardTitle>
+      {description ? <CardDescription className="helper-text">{description}</CardDescription> : null}
+      {action ? <CardAction>{action}</CardAction> : null}
+    </CardHeader>
   );
 }
 
 export function PanelBody({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("p-5 sm:p-6", className)} {...props} />;
+  return <CardContent className={cn("sm:p-6", className)} {...props} />;
 }

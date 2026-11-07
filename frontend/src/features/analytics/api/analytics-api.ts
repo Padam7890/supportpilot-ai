@@ -10,6 +10,7 @@ export type CommerceApprovalAnalytics = components["schemas"]["CommerceApprovalA
 export type SupportResponseAnalytics = components["schemas"]["SupportResponseAnalyticsOut"];
 export type OperationalAlerts = components["schemas"]["OperationalAlertsOut"];
 export type FailedBackgroundJobs = components["schemas"]["FailedBackgroundJobsOut"];
+export type JobTrace = components["schemas"]["JobTraceOut"];
 
 export const analyticsQueryKeys = {
   usage: (start: string, end: string) => ["analytics", "ai-usage", start, end] as const,
@@ -38,6 +39,10 @@ export const getSupportResponseAnalytics = (start: string, end: string) =>
 export const getOperationalAlerts = () => api<OperationalAlerts>("/analytics/operational-alerts");
 export const getFailedBackgroundJobs = (limit = 20) =>
   api<FailedBackgroundJobs>(`/analytics/background-failures?limit=${limit}`);
+export const getJobTrace = (correlationId: string) => {
+  const params = new URLSearchParams({ correlation_id: correlationId });
+  return api<JobTrace>(`/analytics/job-trace?${params.toString()}`);
+};
 
 export const submitEvaluation = (data: AIEvaluationCreate) =>
   api<AIEvaluation>("/analytics/evaluations", { method: "POST", body: JSON.stringify(data) });

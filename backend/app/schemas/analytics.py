@@ -176,6 +176,29 @@ class FailedBackgroundJobsOut(BaseModel):
     items: list[FailedBackgroundJobOut]
 
 
+class JobTraceEventOut(BaseModel):
+    job_id: UUID
+    job_kind: Literal[
+        "ai_execution",
+        "automation_execution",
+        "catalog_sync",
+        "catalog_webhook",
+        "outbound_delivery",
+    ]
+    status: str
+    created_at: datetime
+    completed_at: datetime | None
+    attempts: int
+    max_attempts: int
+    error_code: str | None
+
+
+class JobTraceOut(BaseModel):
+    correlation_id: str
+    generated_at: datetime
+    events: list[JobTraceEventOut]
+
+
 class AIEvaluationCreate(BaseModel):
     execution_id: UUID
     rating: Literal["helpful", "not_helpful"]

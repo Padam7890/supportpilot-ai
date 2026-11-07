@@ -12,6 +12,7 @@ import { TypographyScalePicker } from "./typography-scale-picker";
 import { ApiError } from "@/lib/api/errors";
 import { formatDate } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { FormField } from "@/components/ui/form-field";
 import { Input, Select } from "@/components/ui/input";
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
 import { createInvitation, getOrganization, listInvitations, listMembers, revokeInvitation, updateMember as patchMember, updateOrganization } from "../api/organization-api";
@@ -118,13 +119,13 @@ export default function SettingsPage() {
             <div className="mb-4 hidden items-center gap-3 border-b border-slate-200 px-2 pb-5 md:flex"><span className="grid size-9 place-items-center rounded-xl bg-blue-50 text-blue-700"><Settings2 size={19}/></span><span className="text-lg font-semibold">Settings</span></div>
             <label className="relative mb-4 block">
               <Search size={15} aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
-              <input
+              <Input
                 type="search"
                 aria-label="Search settings"
                 value={settingsSearch}
                 onChange={(event) => setSettingsSearch(event.target.value)}
                 placeholder="Search settings"
-                className="min-h-10 w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-900 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30"
+                className="pl-9"
               />
             </label>
             <nav className="flex gap-2 overflow-x-auto md:block md:space-y-6" aria-label="Settings navigation">
@@ -202,5 +203,5 @@ function sectionDescription(section: SettingsSection) {
 }
 
 function Field({ label, error, children }: { label: string; error?: string; children: React.ReactNode }) {
-  return <label className="form-label block space-y-1.5"><span>{label}</span>{children}{error && <span className="helper-text block text-red-600">{error}</span>}</label>;
+  return <FormField label={label} error={error}>{children}</FormField>;
 }

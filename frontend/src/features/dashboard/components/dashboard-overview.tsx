@@ -6,6 +6,7 @@ import { ArrowDownRight, ArrowRight, ArrowUpRight, CircleAlert, Clock3, Inbox, P
 import { getDashboardStats, dashboardQueryKeys } from "../api/dashboard-api";
 import { Button } from "@/components/ui/button";
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
+import { StatusAlert } from "@/components/ui/status-alert";
 
 export default function DashboardPage() {
   const stats = useQuery({ queryKey: dashboardQueryKeys.stats, queryFn: getDashboardStats });
@@ -18,7 +19,11 @@ export default function DashboardPage() {
         <div><p className="text-[13px] font-semibold text-[var(--text-accent)]">Workspace overview</p><h1 className="page-title mt-1">Good work starts here.</h1><p className="page-subtitle mt-2">A live view of your customer support operation.</p></div>
         <div className="flex gap-2"><Link href="/dashboard/customers"><Button variant="secondary"><Users size={16}/> Add customer</Button></Link><Link href="/dashboard/tickets"><Button><Plus size={17}/> New ticket</Button></Link></div>
       </div>
-      {stats.isError && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">Could not load workspace statistics. Try refreshing the page.</div>}
+      {stats.isError && (
+        <StatusAlert tone="error" title="Could not load workspace statistics">
+          Try refreshing the page.
+        </StatusAlert>
+      )}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard title="All tickets" value={data?.total_tickets} icon={<Inbox size={18}/>} subtitle="Across your workspace" tone="blue" loading={stats.isPending}/>
         <StatCard title="Open" value={data?.open_tickets} icon={<CircleAlert size={18}/>} subtitle="Need a first response" tone="orange" loading={stats.isPending}/>

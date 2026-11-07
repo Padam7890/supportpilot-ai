@@ -362,6 +362,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/analytics/job-trace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Job Trace
+         * @description Show safe lifecycle summaries for jobs started by one workspace request.
+         */
+        get: operations["job_trace_api_v1_analytics_job_trace_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/analytics/operational-alerts": {
         parameters: {
             query?: never;
@@ -5010,6 +5030,46 @@ export interface components {
             organization_name: string;
             /** Role */
             role: string;
+        };
+        /** JobTraceEventOut */
+        JobTraceEventOut: {
+            /** Attempts */
+            attempts: number;
+            /** Completed At */
+            completed_at: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Error Code */
+            error_code: string | null;
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /**
+             * Job Kind
+             * @enum {string}
+             */
+            job_kind: "ai_execution" | "automation_execution" | "catalog_sync" | "catalog_webhook" | "outbound_delivery";
+            /** Max Attempts */
+            max_attempts: number;
+            /** Status */
+            status: string;
+        };
+        /** JobTraceOut */
+        JobTraceOut: {
+            /** Correlation Id */
+            correlation_id: string;
+            /** Events */
+            events: components["schemas"]["JobTraceEventOut"][];
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
         };
         /** KnowledgeBaseAuditOut */
         KnowledgeBaseAuditOut: {
@@ -9680,6 +9740,118 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IntegrationDeliveryAnalyticsOut"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    job_trace_api_v1_analytics_job_trace_get: {
+        parameters: {
+            query: {
+                correlation_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobTraceOut"];
                 };
             };
             /** @description RFC 9457 Problem Details response */

@@ -1,39 +1,41 @@
-import type { InputHTMLAttributes, Ref, TextareaHTMLAttributes } from "react";
+import * as React from "react";
+import { Input as InputPrimitive } from "@base-ui/react/input";
 import { cn } from "@/lib/utils";
+import { Textarea as TextareaPrimitive } from "@/components/ui/textarea";
 
-export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
+const fieldClassName =
+  "typo-input w-full min-w-0 rounded-lg border border-input bg-background px-3 shadow-sm transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50";
+
+function Input({ className, type, ...props }: React.ComponentProps<"input">) {
   return (
-    <input
-      className={cn(
-        "typo-input min-h-10 w-full rounded-xl border border-slate-200 bg-white px-3.5 shadow-sm outline-none placeholder:text-[var(--text-disabled)] focus:border-blue-300 focus:ring-0 focus-visible:outline-none! disabled:bg-slate-100",
-        className,
-      )}
+    <InputPrimitive
+      type={type}
+      data-slot="input"
+      className={cn(fieldClassName, "min-h-10 py-2", className)}
       {...props}
     />
   );
 }
 
-export function Select({ className, ...props }: InputHTMLAttributes<HTMLSelectElement>) {
+function Select({ className, ...props }: React.ComponentProps<"select">) {
   return (
     <select
-      className={cn(
-        "typo-input min-h-10 w-full rounded-xl border border-slate-200 bg-white px-3.5 shadow-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100",
-        className,
-      )}
+      data-slot="select"
+      className={cn(fieldClassName, "min-h-10 py-2", className)}
       {...props}
     />
   );
 }
 
-export function Textarea({ className, ref, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement> & { ref?: Ref<HTMLTextAreaElement> }) {
-  return (
-    <textarea
+const Textarea = React.forwardRef<HTMLTextAreaElement, React.ComponentProps<"textarea">>(
+  ({ className, ...props }, ref) => (
+    <TextareaPrimitive
       ref={ref}
-      className={cn(
-        "typo-input min-h-28 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-3 shadow-sm outline-none placeholder:text-[var(--text-disabled)] focus:border-blue-500 focus:ring-2 focus:ring-blue-100",
-        className,
-      )}
+      className={cn(fieldClassName, "min-h-28 py-3", className)}
       {...props}
     />
-  );
-}
+  ),
+);
+Textarea.displayName = "Textarea";
+
+export { Input, Select, Textarea };

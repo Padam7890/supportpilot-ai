@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MotionConfig } from "motion/react";
 import { useEffect, useState, type ReactNode } from "react";
 import { ensureTypographyScaleFromStorage } from "@/lib/typography-scale";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 export function Providers({ children }: { children: ReactNode }) {
   useEffect(() => {
@@ -20,7 +21,9 @@ export function Providers({ children }: { children: ReactNode }) {
   );
   return (
     <MotionConfig reducedMotion="user">
-      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      <TooltipProvider>
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      </TooltipProvider>
     </MotionConfig>
   );
 }

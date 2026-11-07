@@ -35,6 +35,8 @@ from app.schemas.analytics import (
     CommerceApprovalDay,
     FailedBackgroundJobOut,
     FailedBackgroundJobsOut,
+    JobTraceEventOut,
+    JobTraceOut,
     IntegrationDeliveryAnalyticsOut,
     IntegrationDeliveryDay,
     IntegrationDeliveryError,
@@ -766,6 +768,66 @@ async def failed_background_jobs(
         generated_at=datetime.now(UTC),
         total_failed=int(total_failed or 0),
         items=items,
+    )
+
+
+@router.get("/job-trace", response_model=JobTraceOut)
+async def job_trace(
+    correlation_id: str = Query(min_length=8, max_length=64),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> JobTraceOut:
+    """Show safe lifecycle summaries for jobs started by one workspace request."""
+    if re.fullmatch(r"[A-Za-z0-9._:-]{8,64}", correlation_id) is None:
+        raise HTTPException(status_code=422, detail="Invalid correlation ID")
+
+    def trace_row(model, kind: str, error_column):
+        return select(
+            literal(kind, type_=String(32)).label("job_kind"),
+            model.id.label("job_id"),
+            model.status.label("status"),
+            model.created_at.label("created_at"),
+            model.completed_at.label("completed_at"),
+            model.attempt_count.label("attempts"),
+            model.max_attempts.label("max_attempts"),
+            error_column.label("error_code"),
+        ).where(
+            model.organization_id == user.organization_id,
+            model.correlation_id == correlation_id,
+        )
+
+    trace_rows = union_all(
+        trace_row(AIExecution, "ai_execution", AIExecution.error_code),
+        trace_row(AutomationExecution, "automation_execution", AutomationExecution.error_code),
+        trace_row(CatalogSyncJob, "catalog_sync", CatalogSyncJob.last_error_code),
+        trace_row(CatalogWebhookEvent, "catalog_webhook", CatalogWebhookEvent.last_error_code),
+        trace_row(IntegrationDeliveryJob, "outbound_delivery", IntegrationDeliveryJob.last_error_code),
+    ).subquery("job_trace")
+    rows = await db.execute(
+        select(trace_rows)
+        .order_by(trace_rows.c.created_at, trace_rows.c.job_kind, trace_rows.c.job_id)
+        .limit(100)
+    )
+    events = []
+    for row in rows.mappings():
+        raw_code = row["error_code"]
+        safe_code = raw_code if isinstance(raw_code, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,80}", raw_code) else None
+        events.append(
+            JobTraceEventOut(
+                job_id=row["job_id"],
+                job_kind=row["job_kind"],
+                status=row["status"],
+                created_at=row["created_at"],
+                completed_at=row["completed_at"],
+                attempts=row["attempts"],
+                max_attempts=row["max_attempts"],
+                error_code=safe_code,
+            )
+        )
+    return JobTraceOut(
+        correlation_id=correlation_id,
+        generated_at=datetime.now(UTC),
+        events=events,
     )
 
 

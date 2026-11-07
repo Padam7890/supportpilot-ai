@@ -134,10 +134,12 @@ class DocumentIngestionJob(UUIDPrimaryKey, TimestampMixin, Base):
             "created_at",
         ),
         Index("ix_document_ingestion_jobs_org_document", "organization_id", "document_id"),
+        Index("ix_document_ingestion_jobs_org_correlation", "organization_id", "correlation_id"),
     )
 
     organization_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     document_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    correlation_id: Mapped[str | None] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(20), default="queued", nullable=False)
     attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     max_attempts: Mapped[int] = mapped_column(Integer, default=3, nullable=False)

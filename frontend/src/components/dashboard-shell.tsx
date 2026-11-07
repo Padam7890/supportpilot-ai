@@ -88,6 +88,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     const saved = window.localStorage.getItem("supportpilot-theme");
     const enabled = saved === "dark";
     document.documentElement.dataset.theme = enabled ? "dark" : "light";
+    document.documentElement.classList.toggle("dark", enabled);
     window.dispatchEvent(new Event("supportpilot-theme-change"));
     ensureTypographyScaleFromStorage();
   }, []);
@@ -100,6 +101,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   function toggleTheme() {
     const enabled = !dark;
     document.documentElement.dataset.theme = enabled ? "dark" : "light";
+    document.documentElement.classList.toggle("dark", enabled);
     window.localStorage.setItem("supportpilot-theme", enabled ? "dark" : "light");
     window.dispatchEvent(new Event("supportpilot-theme-change"));
   }

@@ -9,4 +9,7 @@ if [ ! -f "$lock_marker" ] || [ "$(cat "$lock_marker")" != "$lock_hash" ]; then
   printf '%s\n' "$lock_hash" > "$lock_marker"
 fi
 
+# Keep vendored shadcn animation CSS in sync when node_modules is present.
+npm run vendor:shadcn-css --silent 2>/dev/null || true
+
 exec npm run dev -- --hostname 0.0.0.0
