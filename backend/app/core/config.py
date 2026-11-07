@@ -21,8 +21,9 @@ class Settings(BaseSettings):
         ...,
         repr=False,
     )
-    access_token_expire_minutes: int = 15
-    refresh_token_expire_days: int = 7
+    # Short-lived access JWT; refresh flow extends browser sessions without frequent re-login.
+    access_token_expire_minutes: int = 120
+    refresh_token_expire_days: int = 30
     invitation_expire_hours: int = 72
     ai_provider_base_url: str | None = None
     ai_provider_api_key: SecretStr | None = Field(default=None, repr=False)

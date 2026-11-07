@@ -11,16 +11,18 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, Request, status
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
+from app.features.automations.service import enqueue_customer_message_workflows
 from app.models import (
     Conversation,
     Customer,
     Message,
     RecommendationEvent,
+    SupportWidget,
     Ticket,
     TicketActivity,
     WidgetOrderVerification,
@@ -167,6 +169,20 @@ async def public_widget_config(
 ) -> PublicWidgetConfigOut:
     await rate_limit_widget(request, public_id)
     widget, organization = await require_allowed_widget_origin(request, public_id, db)
+    now = datetime.now(UTC)
+    await db.execute(
+        update(SupportWidget)
+        .where(
+            SupportWidget.id == widget.id,
+            SupportWidget.organization_id == widget.organization_id,
+            or_(
+                SupportWidget.last_widget_load_at.is_(None),
+                SupportWidget.last_widget_load_at < now - timedelta(minutes=5),
+            ),
+        )
+        .values(last_widget_load_at=now)
+        .execution_options(synchronize_session=False)
+    )
     return PublicWidgetConfigOut(
         store_name=organization.name,
         collect_contact=widget.collect_contact,
@@ -268,6 +284,7 @@ async def start_widget_conversation(
         ticket_id=ticket.id,
         channel="shopify_widget",
         status="active",
+        ai_agent_id=widget.ai_agent_id,
         ai_mode="ai" if widget.ai_enabled else "human",
     )
     db.add(conversation)
@@ -283,6 +300,13 @@ async def start_widget_conversation(
     db.add(message)
     await db.flush()
     await enqueue_widget_reply(db=db, widget=widget, conversation=conversation, message=message)
+    await enqueue_customer_message_workflows(
+        db,
+        organization_id=widget.organization_id,
+        ticket_id=ticket.id,
+        conversation_id=conversation.id,
+        message_id=message.id,
+    )
     ticket.updated_at = now
     conversation.updated_at = now
     submission.ticket_id = ticket.id
@@ -468,6 +492,13 @@ async def continue_widget_conversation(
     conversation.updated_at = datetime.now(UTC)
     ticket.updated_at = conversation.updated_at
     await enqueue_widget_reply(db=db, widget=widget, conversation=conversation, message=message)
+    await enqueue_customer_message_workflows(
+        db,
+        organization_id=conversation.organization_id,
+        ticket_id=ticket.id,
+        conversation_id=conversation.id,
+        message_id=message.id,
+    )
     await db.flush()
     return WidgetMessageOut(
         id=message.id,

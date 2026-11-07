@@ -19,6 +19,7 @@ from app.integrations.providers.shopify.client import (
     request_oauth_token,
     resolve_token_scopes,
 )
+from app.integrations.providers.shopify.commerce import ShopifyCommerceAdapter
 from app.integrations.providers.shopify.orders import (
     find_exact_order,
     lookup_authorized_order,
@@ -40,6 +41,7 @@ __all__ = [
     "REQUIRED_SCOPES",
     "ShopifyAPIError",
     "ShopifyCatalogProvider",
+    "ShopifyCommerceAdapter",
     "ShopifyOrderActionError",
     "ShopifyProductCatalogAdapter",
     "cancel_shopify_order",

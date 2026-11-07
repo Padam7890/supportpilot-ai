@@ -18,3 +18,5 @@ export const sendInternalNote = (conversationId: string, content: string) =>
   api<Message>(`/conversations/${conversationId}/notes`, { method: "POST", body: JSON.stringify({ content }) });
 export const updateConversationAIMode = (conversationId: string, mode: "ai" | "human") =>
   api<Conversation>(`/conversations/${conversationId}/ai-mode`, { method: "PATCH", body: JSON.stringify({ mode }) });
+export const updateConversationAIAgent = (conversationId: string, ai_agent_id: string | null) =>
+  api<Conversation>(`/conversations/${conversationId}/ai-agent`, { method: "PATCH", body: JSON.stringify({ ai_agent_id }) });

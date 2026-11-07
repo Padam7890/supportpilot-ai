@@ -13,6 +13,8 @@ class WidgetConfigCreate(BaseModel):
     collect_contact: bool = True
     ai_enabled: bool = False
     ai_reply_mode: Literal["draft_only", "auto_reply"] = "draft_only"
+    ai_agent_id: UUID | None = None
+    ai_agent_ids: list[UUID] | None = Field(default=None, min_length=1, max_length=10)
 
 
 class WidgetConfigUpdate(BaseModel):
@@ -22,16 +24,43 @@ class WidgetConfigUpdate(BaseModel):
     collect_contact: bool = True
     ai_enabled: bool = False
     ai_reply_mode: Literal["draft_only", "auto_reply"] = "draft_only"
+    ai_agent_id: UUID | None = None
+    ai_agent_ids: list[UUID] | None = Field(default=None, min_length=1, max_length=10)
 
 
 class WidgetConfigOut(BaseModel):
     public_id: str
+    ai_agent_id: UUID
+    ai_agent_ids: list[UUID] = Field(default_factory=list)
     allowed_origins: list[str]
     enabled: bool
     collect_contact: bool
     ai_enabled: bool = False
     ai_reply_mode: Literal["draft_only", "auto_reply"] = "draft_only"
+    last_widget_load_at: datetime | None = None
+    last_customer_message_at: datetime | None = None
     created_at: datetime
+
+
+class WidgetRoutingPreviewIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    message: str = Field(min_length=1, max_length=1000)
+    ai_agent_ids: list[UUID] = Field(min_length=1, max_length=10)
+
+    @field_validator("message")
+    @classmethod
+    def clean_message(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Enter a sample customer message")
+        return cleaned
+
+
+class WidgetRoutingPreviewOut(BaseModel):
+    ai_agent_id: UUID
+    ai_agent_name: str
+    configured_bot_count: int
+    routing_rule: Literal["best_source_match_then_primary_fallback"] = "best_source_match_then_primary_fallback"
 
 
 class PublicWidgetConfigOut(BaseModel):

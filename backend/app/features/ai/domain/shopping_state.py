@@ -279,6 +279,7 @@ async def analyze_shopping_turn(
     *,
     categories: list[str],
     brands: list[str],
+    allowed_tools: list[str] | None = None,
 ) -> tuple[ShoppingTurnAnalysis, dict[str, int], str | None]:
     from app.services.ai_execution import generate_completion, is_provider_configured
 
@@ -289,6 +290,12 @@ async def analyze_shopping_turn(
         return deterministic, {}, None
     if not is_provider_configured():
         return deterministic, {}, None
+    configured_tools = (
+        allowed_tools
+        if allowed_tools is not None
+        else ["recommend_products", "compare_products"]
+    )
+    available_tools = sorted(set(configured_tools) & {"recommend_products", "compare_products"})
     system = (
         "You route a shopping conversation into a closed set of safe recommendation operations. Return JSON matching the given fields only. "
         "Actions: start_or_refine, add_preference, remove_preference, change_budget, change_category, change_brand, reject, find_alternatives, reset, compare, unsupported, accept_handoff, none. "
@@ -296,7 +303,7 @@ async def analyze_shopping_turn(
         "Use change_budget/category/brand to replace that one value. 'X only' means required_brand; ordinary brand preference is soft. 'Better camera' increases a soft preference, it is not a hard constraint. "
         "Never invent a preference. For first through fourth, first two, or compare them, use 1-based positions in last_displayed_recommendations. "
         "Set unsupported only for product advice the catalog cannot support; set none for unrelated greetings/support questions. "
-        "The only available tools are recommend_products and compare_products. Do not propose commerce actions. "
+        f"The only available tools are {', '.join(available_tools) or 'none'}. Do not propose commerce actions. "
         "Use find_alternatives when the shopper rejects a shown product or asks for similar/another options. Preserve all strict constraints."
     )
     current = state.model_dump(mode="json")
@@ -320,6 +327,7 @@ async def analyze_shopping_turn(
             "accept_handoff",
             "none",
         ],
+        "available_tools": available_tools,
     }
     content, usage, model_name = await generate_completion(
         [

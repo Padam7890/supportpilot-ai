@@ -1,6 +1,7 @@
 """Tenant-scoped integration connection and credential persistence helpers."""
 
 from datetime import UTC, datetime
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,9 +10,43 @@ from app.integrations.credentials import (
     delete_connection_credentials,
     store_encrypted_credential,
 )
-from app.models import IntegrationConnection, ShopifyInstallation
+from app.models import IntegrationConnection, IntegrationConnectionAudit, ShopifyInstallation
 
-__all__ = ["disconnect_generic_connection", "sync_shopify_connection"]
+__all__ = ["disconnect_generic_connection", "record_connection_audit", "sync_shopify_connection"]
+
+
+def record_connection_audit(
+    db: AsyncSession,
+    connection: IntegrationConnection,
+    *,
+    event_type: str,
+    actor_user_id: UUID | None,
+    auth_mode: str | None = None,
+    granted_scopes: list[str] | None = None,
+    previous_ai_agent_id: UUID | None = None,
+    ai_agent_id: UUID | None = None,
+) -> None:
+    """Record secret-free lifecycle and bot-routing metadata in the current transaction."""
+    if event_type not in {"connected", "reauthorized", "disconnected", "bot_routing_changed"}:
+        raise ValueError("Unsupported integration connection audit event")
+    details: dict[str, object] = {}
+    if auth_mode:
+        details["auth_mode"] = auth_mode
+    if granted_scopes is not None:
+        details["granted_scopes"] = sorted(set(granted_scopes))
+    if event_type == "bot_routing_changed":
+        details["previous_ai_agent_id"] = str(previous_ai_agent_id) if previous_ai_agent_id else None
+        details["ai_agent_id"] = str(ai_agent_id) if ai_agent_id else None
+    db.add(
+        IntegrationConnectionAudit(
+            organization_id=connection.organization_id,
+            connection_id=connection.id,
+            actor_user_id=actor_user_id,
+            provider_id=connection.provider_id,
+            event_type=event_type,
+            details=details,
+        )
+    )
 
 
 async def sync_shopify_connection(

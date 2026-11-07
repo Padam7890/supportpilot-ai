@@ -4,15 +4,21 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import event, select, update
+from sqlalchemy.exc import IntegrityError
 
-from app.core.security import hash_password
-from app.db.session import SessionLocal, set_tenant_context
+from app.core.security import create_access_token, hash_password
+from app.db.session import SessionLocal, engine, set_tenant_context
+from app.features.ai.application.context import load_execution_context
 from app.models import (
+    AIAgentKnowledgeBase,
+    AIExecution,
     DocumentChunk,
     DocumentIngestionJob,
+    KnowledgeDocument,
     KnowledgeDocumentSource,
     PlatformOwner,
+    User,
 )
 from app.worker import claim_one, process_job
 from tests.auth_helpers import verify_registration, workspace_login
@@ -287,3 +293,377 @@ async def test_ingestion_claim_is_tenant_scoped(client):
     assert claimed is not None
     assert claimed[1] == UUID(uploaded_a.json()["id"])
     assert claimed[1] != UUID(uploaded_b.json()["id"])
+
+
+@pytest.mark.anyio
+async def test_default_ai_configuration_and_cross_tenant_assignments(client):
+    owner_a = await approved_workspace(client, "ai-agent-a")
+    owner_b = await approved_workspace(client, "ai-agent-b")
+    headers_a = bearer(owner_a["access_token"])
+    headers_b = bearer(owner_b["access_token"])
+    bases_a = (await client.get("/api/v1/knowledge/bases", headers=headers_a)).json()
+    agents_a = (await client.get("/api/v1/ai/agents", headers=headers_a)).json()
+    assert len(bases_a["items"]) == 1 and bases_a["items"][0]["is_default"] is True
+    assert len(agents_a["items"]) == 1 and agents_a["items"][0]["is_default"] is True
+    assert agents_a["items"][0]["knowledge_base_ids"] == [bases_a["items"][0]["id"]]
+
+    base_a = (await client.post("/api/v1/knowledge/bases", headers=headers_a, json={"name": "Private policies"})).json()
+    shared_base = (await client.post("/api/v1/knowledge/bases", headers=headers_a, json={"name": "Shared product facts"})).json()
+    base_b = (await client.post("/api/v1/knowledge/bases", headers=headers_b, json={"name": "Other tenant"})).json()
+    rejected = await client.post("/api/v1/ai/agents", headers=headers_a, json={
+        "name": "Cross tenant attempt", "knowledge_base_ids": [base_b["id"]]
+    })
+    assert rejected.status_code == 422
+    created = await client.post("/api/v1/ai/agents", headers=headers_a, json={
+        "name": "Returns assistant", "system_instructions": "Be concise.",
+        "knowledge_base_ids": [base_a["id"], shared_base["id"]],
+    })
+    assert created.status_code == 201, created.text
+    assert set(created.json()["knowledge_base_ids"]) == {base_a["id"], shared_base["id"]}
+    second = await client.post("/api/v1/ai/agents", headers=headers_a, json={
+        "name": "Product assistant", "knowledge_base_ids": [shared_base["id"]],
+    })
+    assert second.status_code == 201, second.text
+    assert second.json()["knowledge_base_ids"] == [shared_base["id"]]
+
+    assignment_queries = 0
+
+    def count_assignment_query(_connection, _cursor, statement, _parameters, _context, _many):
+        nonlocal assignment_queries
+        if "ai_agent_knowledge_bases" in statement:
+            assignment_queries += 1
+
+    event.listen(engine.sync_engine, "before_cursor_execute", count_assignment_query)
+    try:
+        listed = (await client.get("/api/v1/ai/agents", headers=headers_a)).json()["items"]
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", count_assignment_query)
+    assignments = {agent["name"]: set(agent["knowledge_base_ids"]) for agent in listed}
+    assert assignment_queries == 1
+    assert assignments["Returns assistant"] == {base_a["id"], shared_base["id"]}
+    assert assignments["Product assistant"] == {shared_base["id"]}
+
+    default_deactivation = await client.post(
+        f"/api/v1/ai/agents/{agents_a['items'][0]['id']}/deactivate", headers=headers_a
+    )
+    assert default_deactivation.status_code == 409
+
+
+@pytest.mark.anyio
+async def test_assignment_composite_foreign_key_rejects_cross_tenant_base(client):
+    owner_a = await approved_workspace(client, "ai-fk-a")
+    owner_b = await approved_workspace(client, "ai-fk-b")
+    organization_a = UUID(owner_a["user"]["organization_id"])
+    default_agent = (await client.get(
+        "/api/v1/ai/agents", headers=bearer(owner_a["access_token"])
+    )).json()["items"][0]
+    foreign_base = (await client.get(
+        "/api/v1/knowledge/bases", headers=bearer(owner_b["access_token"])
+    )).json()["items"][0]
+
+    async with SessionLocal() as db:
+        await set_tenant_context(db, organization_a)
+        db.add(AIAgentKnowledgeBase(
+            organization_id=organization_a,
+            ai_agent_id=UUID(default_agent["id"]),
+            knowledge_base_id=UUID(foreign_base["id"]),
+        ))
+        with pytest.raises(IntegrityError):
+            await db.flush()
+        await db.rollback()
+
+
+@pytest.mark.anyio
+async def test_ai_agent_audit_is_tenant_scoped_and_never_stores_instruction_text(client):
+    owner = await approved_workspace(client, "agent-audit")
+    other_owner = await approved_workspace(client, "agent-audit-other")
+    owner_headers = bearer(owner["access_token"])
+    other_headers = bearer(other_owner["access_token"])
+    initial_instruction = "Unique private instruction phrase 9d2f"
+    created = await client.post(
+        "/api/v1/ai/agents",
+        headers=owner_headers,
+        json={"name": "Returns bot", "system_instructions": initial_instruction},
+    )
+    assert created.status_code == 201, created.text
+    agent_id = created.json()["id"]
+
+    changed_instruction = "Another private instruction phrase 1ab7"
+    updated = await client.put(
+        f"/api/v1/ai/agents/{agent_id}",
+        headers=owner_headers,
+        json={"name": "Returns assistant", "system_instructions": changed_instruction},
+    )
+    assert updated.status_code == 200, updated.text
+    # Repeating the same settings is idempotent and must not create a false audit event.
+    repeated = await client.put(
+        f"/api/v1/ai/agents/{agent_id}",
+        headers=owner_headers,
+        json={"name": "Returns assistant", "system_instructions": changed_instruction},
+    )
+    assert repeated.status_code == 200, repeated.text
+
+    audit_response = await client.get(
+        f"/api/v1/ai/agents/{agent_id}/audit?limit=10", headers=owner_headers
+    )
+    assert audit_response.status_code == 200, audit_response.text
+    audit = audit_response.json()
+    assert audit["total"] == 2
+    assert {item["event_type"] for item in audit["items"]} == {"created", "updated"}
+    serialized_audit = audit_response.text
+    assert initial_instruction not in serialized_audit
+    assert changed_instruction not in serialized_audit
+    updated_event = next(item for item in audit["items"] if item["event_type"] == "updated")
+    assert updated_event["actor_name"] == owner["user"]["full_name"]
+    assert updated_event["config_version"] == updated.json()["config_version"]
+
+    cross_tenant = await client.get(
+        f"/api/v1/ai/agents/{agent_id}/audit", headers=other_headers
+    )
+    assert cross_tenant.status_code == 404
+
+    organization_id = UUID(owner["user"]["organization_id"])
+    user_id = UUID(owner["user"]["id"])
+    async with SessionLocal.begin() as session:
+        await set_tenant_context(session, organization_id)
+        member = await session.get(User, user_id)
+        assert member is not None
+        member.role = "viewer"
+    viewer_headers = bearer(create_access_token(str(user_id), str(organization_id)))
+    denied = await client.get(f"/api/v1/ai/agents/{agent_id}/audit", headers=viewer_headers)
+    assert denied.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_knowledge_configuration_enforces_owner_admin_agent_viewer_permissions(client):
+    owner = await approved_workspace(client, "knowledge-viewer")
+    owner_headers = bearer(owner["access_token"])
+    base = (await client.post(
+        "/api/v1/knowledge/bases", headers=owner_headers, json={"name": "Returns"}
+    )).json()
+    uploaded = await upload_text(client, owner, "returns.txt", b"Returns are accepted within 30 days.")
+    assert uploaded.status_code == 202, uploaded.text
+    document_id = uploaded.json()["id"]
+    organization_id = UUID(owner["user"]["organization_id"])
+    user_id = UUID(owner["user"]["id"])
+    async def set_role(role: str) -> dict[str, str]:
+        async with SessionLocal.begin() as session:
+            await set_tenant_context(session, organization_id)
+            user = await session.get(User, user_id)
+            assert user is not None
+            user.role = role
+        return bearer(create_access_token(str(user_id), str(organization_id)))
+
+    agent_headers = await set_role("agent")
+    assert (await client.post(
+        "/api/v1/knowledge/bases", headers=agent_headers, json={"name": "Agent write"}
+    )).status_code == 403
+    assert (await upload_text(
+        client, {"access_token": agent_headers["Authorization"].removeprefix("Bearer ")},
+        "agent.txt", b"No configuration write access",
+    )).status_code == 403
+    assert (await client.post(
+        "/api/v1/ai/agents", headers=agent_headers,
+        json={"name": "Agent bot", "knowledge_base_ids": [base["id"]]},
+    )).status_code == 403
+
+    admin_headers = await set_role("admin")
+    admin_base = await client.post(
+        "/api/v1/knowledge/bases", headers=admin_headers, json={"name": "Admin managed"}
+    )
+    assert admin_base.status_code == 201, admin_base.text
+    admin_bot = await client.post(
+        "/api/v1/ai/agents", headers=admin_headers,
+        json={"name": "Admin managed bot", "knowledge_base_ids": [admin_base.json()["id"]]},
+    )
+    assert admin_bot.status_code == 201, admin_bot.text
+
+    viewer_headers = await set_role("viewer")
+
+    assert (await client.get("/api/v1/knowledge/bases", headers=viewer_headers)).status_code == 200
+    assert (await client.get(
+        f"/api/v1/knowledge/documents/{document_id}", headers=viewer_headers
+    )).status_code == 200
+    assert (await client.get("/api/v1/ai/agents", headers=viewer_headers)).status_code == 200
+    assert (await client.post(
+        "/api/v1/knowledge/bases", headers=viewer_headers, json={"name": "Forbidden"}
+    )).status_code == 403
+    assert (await upload_text(
+        client,
+        {"access_token": viewer_headers["Authorization"].removeprefix("Bearer ")},
+        "viewer.txt",
+        b"No write access",
+    )).status_code == 403
+    assert (await client.post(
+        f"/api/v1/knowledge/documents/{document_id}/reprocess", headers=viewer_headers
+    )).status_code == 403
+    assert (await client.delete(
+        f"/api/v1/knowledge/documents/{document_id}", headers=viewer_headers
+    )).status_code == 403
+    assert (await client.post(
+        "/api/v1/ai/agents",
+        headers=viewer_headers,
+        json={"name": "Forbidden bot", "knowledge_base_ids": [base["id"]]},
+    )).status_code == 403
+
+
+@pytest.mark.anyio
+async def test_ai_execution_retrieval_uses_only_assigned_knowledge_bases(client):
+    owner = await approved_workspace(client, "ai-agent-retrieval")
+    headers = bearer(owner["access_token"])
+    organization_id = UUID(owner["user"]["organization_id"])
+    user_id = UUID(owner["user"]["id"])
+    default_base = (await client.get("/api/v1/knowledge/bases", headers=headers)).json()["items"][0]
+    private_base = (await client.post("/api/v1/knowledge/bases", headers=headers, json={"name": "Returns"})).json()
+    custom = await client.post("/api/v1/ai/agents", headers=headers, json={
+        "name": "Returns bot",
+        "system_instructions": "Follow the original returns policy wording.",
+        "knowledge_base_ids": [private_base["id"]],
+    })
+    assert custom.status_code == 201, custom.text
+
+    async with SessionLocal() as db:
+        await set_tenant_context(db, organization_id)
+        for base_id, name, excerpt in (
+            (UUID(default_base["id"]), "general.txt", "general only passage"),
+            (UUID(private_base["id"]), "returns.txt", "returns policy passage"),
+        ):
+            document = KnowledgeDocument(
+                organization_id=organization_id, knowledge_base_id=base_id,
+                name=name, content_type="text/plain", size_bytes=30, status="ready",
+                uploaded_by_user_id=user_id,
+            )
+            db.add(document)
+            await db.flush()
+            db.add(DocumentChunk(
+                organization_id=organization_id, document_id=document.id,
+                chunk_index=0, content=excerpt,
+            ))
+        execution = AIExecution(
+            organization_id=organization_id, requested_by_user_id=user_id,
+            kind="playground", status="running", question="returns policy",
+            ai_agent_id=UUID(custom.json()["id"]),
+            ai_agent_config_version=custom.json()["config_version"],
+            ai_agent_instructions_snapshot=custom.json()["system_instructions"],
+        )
+        db.add(execution)
+        await db.flush()
+        execution_id = execution.id
+        await db.commit()
+
+    loaded = await load_execution_context(organization_id, execution_id)
+    assert loaded is not None
+    _execution, _question, _transcript, context, citations, _outcomes, _integration = loaded
+    assert [item["document_name"] for item in context] == ["returns.txt"]
+    assert [item["document_name"] for item in citations] == ["returns.txt"]
+
+    updated_agent = await client.put(
+        f"/api/v1/ai/agents/{custom.json()['id']}",
+        headers=headers,
+        json={
+            "name": "Returns bot",
+            "system_instructions": "Use the newly edited returns policy wording.",
+        },
+    )
+    assert updated_agent.status_code == 200, updated_agent.text
+    loaded_after_edit = await load_execution_context(organization_id, execution_id)
+    assert loaded_after_edit is not None
+    assert "Follow the original returns policy wording." in loaded_after_edit[0].instructions
+    assert "newly edited" not in loaded_after_edit[0].instructions
+
+    # A job queued against the bot must resolve its current assignments when
+    # the worker loads context, rather than retaining access to a removed base.
+    async with SessionLocal() as db:
+        await set_tenant_context(db, organization_id)
+        queued = AIExecution(
+            organization_id=organization_id,
+            requested_by_user_id=user_id,
+            kind="playground",
+            status="queued",
+            question="returns policy",
+            ai_agent_id=UUID(custom.json()["id"]),
+            ai_agent_config_version=updated_agent.json()["config_version"],
+            ai_agent_instructions_snapshot=updated_agent.json()["system_instructions"],
+        )
+        db.add(queued)
+        await db.commit()
+        queued_execution_id = queued.id
+
+    removed = await client.put(
+        f"/api/v1/ai/agents/{custom.json()['id']}/knowledge-bases",
+        headers=headers,
+        json={"knowledge_base_ids": []},
+    )
+    assert removed.status_code == 200, removed.text
+    async with SessionLocal() as db:
+        await set_tenant_context(db, organization_id)
+        await db.execute(
+            update(AIExecution)
+            .where(AIExecution.organization_id == organization_id, AIExecution.id == queued_execution_id)
+            .values(status="running")
+        )
+        await db.commit()
+    queued_context = await load_execution_context(organization_id, queued_execution_id)
+    assert queued_context is not None
+    assert queued_context[3] == []
+    assert queued_context[4] == []
+
+    # Even a retained assignment cannot retrieve sources after a base is archived.
+    restored = await client.put(
+        f"/api/v1/ai/agents/{custom.json()['id']}/knowledge-bases",
+        headers=headers,
+        json={"knowledge_base_ids": [private_base["id"]]},
+    )
+    assert restored.status_code == 200, restored.text
+    archived = await client.post(
+        f"/api/v1/knowledge/bases/{private_base['id']}/archive", headers=headers
+    )
+    assert archived.status_code == 200, archived.text
+    async with SessionLocal() as db:
+        await set_tenant_context(db, organization_id)
+        archived_execution = AIExecution(
+            organization_id=organization_id,
+            requested_by_user_id=user_id,
+            kind="playground",
+            status="running",
+            question="returns policy",
+            ai_agent_id=UUID(custom.json()["id"]),
+            ai_agent_config_version=updated_agent.json()["config_version"],
+            ai_agent_instructions_snapshot=updated_agent.json()["system_instructions"],
+        )
+        db.add(archived_execution)
+        await db.commit()
+        archived_execution_id = archived_execution.id
+    archived_context = await load_execution_context(organization_id, archived_execution_id)
+    assert archived_context is not None
+    assert archived_context[3] == []
+    assert archived_context[4] == []
+
+    inactive_agent = await client.post(
+        "/api/v1/ai/agents",
+        headers=headers,
+        json={"name": "Inactive assistant", "knowledge_base_ids": [default_base["id"]]},
+    )
+    assert inactive_agent.status_code == 201, inactive_agent.text
+    deactivated = await client.post(
+        f"/api/v1/ai/agents/{inactive_agent.json()['id']}/deactivate", headers=headers
+    )
+    assert deactivated.status_code == 200, deactivated.text
+    async with SessionLocal() as db:
+        await set_tenant_context(db, organization_id)
+        inactive_execution = AIExecution(
+            organization_id=organization_id,
+            requested_by_user_id=user_id,
+            kind="playground",
+            status="running",
+            question="returns policy",
+            ai_agent_id=UUID(inactive_agent.json()["id"]),
+            ai_agent_config_version=inactive_agent.json()["config_version"],
+        )
+        db.add(inactive_execution)
+        await db.commit()
+        inactive_execution_id = inactive_execution.id
+    inactive_context = await load_execution_context(organization_id, inactive_execution_id)
+    assert inactive_context is not None
+    assert inactive_context[3] == []
+    assert inactive_context[4] == []

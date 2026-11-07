@@ -1,5 +1,3 @@
-import hashlib
-import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from uuid import UUID
@@ -28,38 +26,16 @@ from app.schemas.commerce_action import (
 from app.schemas.errors import COMMON_ERROR_RESPONSES
 from app.services.shopify_access import installation_for
 from app.services.shopify_order_lookup import verified_lookup
+from app.services.commerce_action_identity import (
+    commerce_action_fingerprint,
+    commerce_idempotency_hash,
+)
 
 router = APIRouter(
     prefix="/commerce/actions", tags=["Commerce actions"], responses=COMMON_ERROR_RESPONSES
 )
 IDEMPOTENCY_KEY_MAX_LENGTH = 128
 ACTION_TTL = timedelta(days=7)
-
-
-def fingerprint(payload: CommerceActionCreate) -> str:
-    canonical = json.dumps(
-        {
-            "ticket_id": str(payload.ticket_id),
-            "order_number": payload.order_number.strip().lstrip("#").casefold(),
-            "action_type": payload.action_type,
-            "provider": payload.provider,
-            "refund_amount": str(payload.refund_amount)
-            if payload.refund_amount is not None
-            else None,
-            "cancel_refund": payload.cancel_refund,
-            "cancel_restock": payload.cancel_restock,
-            "cancel_notify_customer": payload.cancel_notify_customer,
-            "cancellation_reason": payload.cancellation_reason,
-            "reason": payload.reason.strip(),
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(canonical.encode()).hexdigest()
-
-
-def idempotency_hash(key: str) -> str:
-    return hashlib.sha256(key.strip().encode()).hexdigest()
 
 
 def action_out(
@@ -140,8 +116,8 @@ async def create_commerce_action(
     user: User = Depends(require_roles("owner", "admin", "agent")),
 ) -> CommerceActionOut:
     normalized_key = idempotency_key.strip()
-    key_digest = idempotency_hash(normalized_key)
-    request_digest = fingerprint(data)
+    key_digest = commerce_idempotency_hash(normalized_key)
+    request_digest = commerce_action_fingerprint(data)
     existing = await db.scalar(
         select(CommerceAction).where(
             CommerceAction.organization_id == user.organization_id,

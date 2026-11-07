@@ -29,17 +29,50 @@ class SupportWidget(TimestampMixin, UUIDPrimaryKey, Base):
         UniqueConstraint("public_id", name="uq_support_widgets_public_id"),
         UniqueConstraint("organization_id", "id", name="uq_support_widgets_org_id"),
         Index("ix_support_widgets_org_enabled", "organization_id", "enabled"),
+        ForeignKeyConstraint(
+            ["organization_id", "ai_agent_id"],
+            ["ai_agents.organization_id", "ai_agents.id"],
+            name="fk_support_widgets_org_agent",
+            ondelete="RESTRICT",
+        ),
     )
 
     organization_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
     )
     public_id: Mapped[str] = mapped_column(String(48), nullable=False)
+    ai_agent_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     allowed_origins: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     collect_contact: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     ai_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     ai_reply_mode: Mapped[str] = mapped_column(String(20), default="draft_only", nullable=False)
+    last_widget_load_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class SupportWidgetAIAgent(Base):
+    """Tenant-owned set of bots eligible to answer through one storefront widget."""
+
+    __tablename__ = "support_widget_ai_agents"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "widget_id"],
+            ["support_widgets.organization_id", "support_widgets.id"],
+            name="fk_support_widget_ai_agents_org_widget",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "ai_agent_id"],
+            ["ai_agents.organization_id", "ai_agents.id"],
+            name="fk_support_widget_ai_agents_org_agent",
+            ondelete="CASCADE",
+        ),
+        Index("ix_support_widget_ai_agents_org_agent", "organization_id", "ai_agent_id"),
+    )
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    widget_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    ai_agent_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
 
 
 class WidgetSubmission(UUIDPrimaryKey, Base):

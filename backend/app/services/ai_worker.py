@@ -11,8 +11,15 @@ from app.features.ai.application.catalog_search import (
     catalog_has_active_products,
     load_candidates,
 )
+from app.features.ai.application.conversational_intents import playground_conversational_reply
 from app.features.ai.application.context import load_execution_context
 from app.features.ai.application.intent_extraction import extract_intent
+from app.features.ai.application.knowledge_inventory import (
+    format_knowledge_inventory,
+    is_knowledge_inventory_question,
+    load_knowledge_inventory,
+)
+from app.features.ai.application.retrieval_search import citations_remain_authorized
 from app.features.ai.application.widget_orders import (
     _question_order_number,
     verified_widget_order_reply,
@@ -26,6 +33,7 @@ from app.features.ai.domain.failure_codes import safe_ai_failure_code as _safe_a
 from app.features.ai.domain.ranking import build_recommendation_result
 from app.features.ai.infrastructure.llm_gateway import execution_token_budget
 from app.models import (
+    AIAgent,
     AIExecution,
     RecommendationSettings,
 )
@@ -101,6 +109,7 @@ async def fail_exhausted_ai_leases(organization_id: UUID) -> bool:
             return False
         execution.status = "failed"
         execution.integration_context_encrypted = None
+        execution.playground_history = None
         execution.error_code = "worker_lease_expired"
         if execution.kind == "widget_reply":
             execution.reply_status = "failed"
@@ -112,30 +121,115 @@ async def fail_exhausted_ai_leases(organization_id: UUID) -> bool:
         return True
 
 
+async def finish_no_knowledge_execution(organization_id: UUID, execution_id: UUID) -> None:
+    """Complete a non-widget run without calling the model when retrieval is empty."""
+    await finish_deterministic_ai_execution(
+        organization_id,
+        execution_id,
+        draft=(
+            "I couldn't find relevant information in this AI bot's assigned knowledge sources, "
+            "so I can't answer accurately yet. Add or assign a source that covers this question."
+        ),
+        safe_summary=(
+            "No matching knowledge was found in the active bot’s assigned sources; no model answer was generated."
+        ),
+        tool_name="tenant_knowledge_search",
+        result_count=0,
+    )
+
+
+async def finish_deterministic_ai_execution(
+    organization_id: UUID,
+    execution_id: UUID,
+    *,
+    draft: str,
+    safe_summary: str,
+    tool_name: str,
+    result_count: int,
+) -> None:
+    """Persist a deterministic AI result without retaining private request context."""
+    now = datetime.now(UTC)
+    async with SessionLocal() as db:
+        await set_tenant_context(db, organization_id)
+        row = await db.scalar(
+            select(AIExecution)
+            .where(
+                AIExecution.id == execution_id,
+                AIExecution.organization_id == organization_id,
+                AIExecution.status == "running",
+            )
+            .with_for_update()
+        )
+        if row is None:
+            await db.rollback()
+            return
+        row.status = "succeeded"
+        row.integration_context_encrypted = None
+        row.playground_history = None
+        row.draft = draft
+        row.safe_summary = safe_summary
+        row.citations = []
+        row.tool_outcomes = [{"tool": tool_name, "status": "completed", "result_count": result_count}]
+        row.usage = {}
+        row.model_name = None
+        row.error_code = None
+        row.completed_at = now
+        await db.commit()
+
+
 async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> None:
     now = datetime.now(UTC)
+    correlation_id: str | None = None
     try:
         loaded = await load_execution_context(organization_id, execution_id)
         if loaded is None:
             return
         execution, question, transcript, context, citations, outcomes, integration_context = loaded
+        correlation_id = execution.correlation_id
         if execution.kind == "recommendation":
+            allowed_tools = execution.ai_agent_tools_snapshot
+            if allowed_tools is None:
+                async with SessionLocal() as db:
+                    await set_tenant_context(db, organization_id)
+                    agent = await db.scalar(
+                        select(AIAgent).where(
+                            AIAgent.id == execution.ai_agent_id,
+                            AIAgent.organization_id == organization_id,
+                        )
+                    )
+                    allowed_tools = list(agent.allowed_tools or []) if agent is not None else []
+            if "recommend_products" not in allowed_tools:
+                from app.schemas.recommendations import RecommendationResult
+
+                result = RecommendationResult(
+                    response_type="unsupported",
+                    explanation="Product recommendations are disabled for this AI bot. Contact a workspace administrator if you need them enabled.",
+                    available_actions=["refine_search"],
+                )
+                usage, model_name = {}, None
+            else:
+                result = None
             async with SessionLocal() as db:
                 await set_tenant_context(db, organization_id)
-                candidates, categories, brands = await load_candidates(
-                    db, organization_id, question
-                )
-                catalog_empty = (
-                    not await catalog_has_active_products(db, organization_id)
-                    if not candidates
-                    else False
-                )
-                policy = await db.scalar(
-                    select(RecommendationSettings).where(
-                        RecommendationSettings.organization_id == organization_id
+                if result is None:
+                    candidates, categories, brands = await load_candidates(
+                        db, organization_id, question
                     )
-                )
-            if policy is not None and not policy.enabled:
+                    catalog_empty = (
+                        not await catalog_has_active_products(db, organization_id)
+                        if not candidates
+                        else False
+                    )
+                    policy = await db.scalar(
+                        select(RecommendationSettings).where(
+                            RecommendationSettings.organization_id == organization_id
+                        )
+                    )
+                else:
+                    candidates, categories, brands = [], [], []
+                    catalog_empty = False
+                    policy = None
+            if result is None and policy is not None and not policy.enabled:
                 from app.schemas.recommendations import RecommendationResult
 
                 usage, model_name = {}, None
@@ -144,7 +238,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                     explanation="Product recommendations are currently disabled for this store.",
                     available_actions=["refine_search"],
                 )
-            else:
+            elif result is None:
                 intent, usage, model_name = await extract_intent(question, categories, brands)
                 excluded_ids: set[UUID] = set()
                 if policy is not None:
@@ -191,6 +285,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                     await db.rollback()
                     return
                 row.status = "succeeded"
+                row.playground_history = None
                 row.recommendation_result = result.model_dump(mode="json")
                 row.safe_summary = (
                     f"Recommendation request completed with {len(result.products)} result(s)."
@@ -285,35 +380,102 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             )
             if shopping_outcome:
                 return
-            if not context:
+        if execution.kind == "playground" and is_knowledge_inventory_question(question):
+            async with SessionLocal() as db:
+                await set_tenant_context(db, organization_id)
+                inventory = await load_knowledge_inventory(
+                    db,
+                    organization_id=organization_id,
+                    ai_agent_id=execution.ai_agent_id,
+                )
+                answer, document_count = format_knowledge_inventory(inventory)
+                row = await db.scalar(
+                    select(AIExecution)
+                    .where(
+                        AIExecution.id == execution_id,
+                        AIExecution.organization_id == organization_id,
+                        AIExecution.kind == "playground",
+                        AIExecution.status == "running",
+                    )
+                    .with_for_update()
+                )
+                if row is None:
+                    await db.rollback()
+                    return
+                row.status = "succeeded"
+                row.playground_history = None
+                row.integration_context_encrypted = None
+                row.draft = answer
+                row.safe_summary = (
+                    f"Listed {document_count} ready document(s) in this bot’s active assigned sources; no model call was made."
+                )
+                row.citations = []
+                row.tool_outcomes = [
+                    {
+                        "tool": "knowledge_source_inventory",
+                        "status": "completed",
+                        "result_count": document_count,
+                    }
+                ]
+                row.usage = {}
+                row.model_name = None
+                row.error_code = None
+                row.completed_at = now
+                await db.commit()
+            return
+        if execution.kind == "playground":
+            conversational_reply = playground_conversational_reply(question)
+            if conversational_reply is not None:
+                draft, intent = conversational_reply
+                await finish_deterministic_ai_execution(
+                    organization_id,
+                    execution_id,
+                    draft=draft,
+                    safe_summary=(
+                        f"A deterministic {intent} response was returned without document retrieval or a model call."
+                    ),
+                    tool_name="playground_conversation_intent",
+                    result_count=0,
+                )
+                return
+        if not context and not integration_context:
+            if execution.kind == "widget_reply":
                 await finish_widget_reply(
                     organization_id,
                     execution_id,
                     draft=widget_missing_knowledge_reply(execution.question),
                     reply_status="escalated",
-                    safe_summary="No matching tenant knowledge was found. The shopper received a clear next step without unsupported claims.",
+                    safe_summary="No matching knowledge was found in the active bot’s assigned sources. The shopper received a safe next step.",
                     citations=[],
-                    outcomes=[],
+                    outcomes=[{
+                        "tool": "tenant_knowledge_search",
+                        "status": "completed",
+                        "result_count": 0,
+                    }],
                     usage={},
                     model_name=None,
                 )
                 return
-            if not is_provider_configured():
-                logger.warning(
-                    "Widget AI provider is not configured: execution_id=%s", execution_id
-                )
-                await finish_widget_reply(
-                    organization_id,
-                    execution_id,
-                    draft=AI_TEMPORARY_FAILURE_REPLY,
-                    reply_status="escalated",
-                    safe_summary="The AI provider is unavailable. A safe handoff reply was prepared.",
-                    citations=[],
-                    outcomes=[],
-                    usage={},
-                    model_name=None,
-                )
-                return
+            await finish_no_knowledge_execution(organization_id, execution_id)
+            return
+        if execution.kind == "widget_reply" and not is_provider_configured():
+            logger.warning(
+                "Widget AI provider is not configured: execution_id=%s correlation_id=%s",
+                execution_id,
+                correlation_id,
+            )
+            await finish_widget_reply(
+                organization_id,
+                execution_id,
+                draft=AI_TEMPORARY_FAILURE_REPLY,
+                reply_status="escalated",
+                safe_summary="The AI provider is unavailable. A safe handoff reply was prepared.",
+                citations=[],
+                outcomes=[],
+                usage={},
+                model_name=None,
+            )
+            return
         result = await create_grounded_draft(
             organization_id=organization_id,
             execution_id=execution_id,
@@ -346,13 +508,56 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                     AIExecution.id == execution_id,
                     AIExecution.organization_id == organization_id,
                     AIExecution.status == "running",
-                )
+                ).with_for_update()
             )
             if row is None:
                 await db.rollback()
                 return
+            active_agent = await db.scalar(
+                select(AIAgent)
+                .where(
+                    AIAgent.id == row.ai_agent_id,
+                    AIAgent.organization_id == organization_id,
+                    AIAgent.status == "active",
+                )
+                .with_for_update()
+            )
+            if active_agent is None:
+                row.status = "succeeded"
+                row.integration_context_encrypted = None
+                row.playground_history = None
+                row.draft = "This AI bot is inactive. Activate it and run the request again."
+                row.safe_summary = "The selected AI bot was deactivated before the answer completed."
+                row.citations = []
+                row.error_code = None
+                row.completed_at = now
+                await db.commit()
+                return
+            if not await citations_remain_authorized(
+                db,
+                organization_id=organization_id,
+                ai_agent_id=row.ai_agent_id,
+                citations=citations,
+            ):
+                row.status = "succeeded"
+                row.integration_context_encrypted = None
+                row.playground_history = None
+                row.draft = (
+                    "A knowledge source used for this answer changed before it completed. "
+                    "Please run the request again to use the bot’s current sources."
+                )
+                row.safe_summary = (
+                    "A cited knowledge source was removed or changed before this answer completed; "
+                    "the generated response was suppressed."
+                )
+                row.citations = []
+                row.error_code = None
+                row.completed_at = now
+                await db.commit()
+                return
             row.status = "succeeded"
             row.integration_context_encrypted = None
+            row.playground_history = None
             row.draft = str(result.get("draft", ""))[:12000]
             output_label = "Reply draft" if row.kind == "reply_draft" else "Playground answer"
             row.safe_summary = (
@@ -369,8 +574,9 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
     except Exception as exc:  # noqa: BLE001 - record failures safely and keep the worker alive
         failure_code = _safe_ai_failure_code(exc)
         logger.warning(
-            "AI execution failed: execution_id=%s error_type=%s failure_code=%s",
+            "AI execution failed: execution_id=%s correlation_id=%s error_type=%s failure_code=%s",
             execution_id,
+            correlation_id,
             type(exc).__name__,
             failure_code,
         )
@@ -399,6 +605,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                     row.reply_status = "failed" if exhausted else "processing"
                 if exhausted:
                     row.integration_context_encrypted = None
+                    row.playground_history = None
                 row.error_code = failure_code
                 row.safe_summary = (
                     "The AI request could not be completed. You can create a new request."

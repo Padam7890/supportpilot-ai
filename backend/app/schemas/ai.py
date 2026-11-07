@@ -2,11 +2,18 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints
+
+
+class AIPlaygroundTurn(BaseModel):
+    role: Literal["user", "assistant"]
+    content: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=600)]
 
 
 class AIPlaygroundRequest(BaseModel):
     question: Annotated[str, StringConstraints(strip_whitespace=True, min_length=4, max_length=2000)]
+    ai_agent_id: uuid.UUID | None = None
+    conversation_history: list[AIPlaygroundTurn] = Field(default_factory=list, max_length=6)
 
 
 class AIReplyDraftRequest(BaseModel):
@@ -18,14 +25,41 @@ class AIReplyDraftRequest(BaseModel):
 class AICitation(BaseModel):
     document_id: uuid.UUID
     document_name: str
+    knowledge_base_name: str | None = None
     chunk_index: int
     excerpt: str
+    match_basis: Literal["chunk_content", "source_title"] | None = None
+
+
+class AIPlaygroundRetrievalPreviewRequest(BaseModel):
+    question: Annotated[str, StringConstraints(strip_whitespace=True, min_length=4, max_length=2000)]
+    ai_agent_id: uuid.UUID | None = None
+    conversation_history: list[AIPlaygroundTurn] = Field(default_factory=list, max_length=6)
+
+
+class AIPlaygroundRetrievalPreviewOut(BaseModel):
+    ai_agent_id: uuid.UUID
+    ai_agent_name: str
+    status: Literal[
+        "matched", "no_matches", "no_assigned_bases", "no_ready_documents", "query_too_broad"
+    ]
+    active_assigned_base_count: int
+    ready_document_count: int
+    matched_passage_count: int
+    retrieval_terms: list[Annotated[str, StringConstraints(max_length=80)]] = Field(
+        default_factory=list,
+        max_length=64,
+    )
+    sources: list[AICitation]
 
 
 class AIExecutionOut(BaseModel):
     id: uuid.UUID
+    ai_agent_id: uuid.UUID | None = None
+    ai_agent_config_version: int
     kind: Literal["playground", "reply_draft", "widget_reply", "recommendation"]
     status: Literal["queued", "running", "succeeded", "failed"]
+    correlation_id: str | None = None
     delivery_mode: Literal["draft_only", "auto_reply"] | None = None
     reply_status: Literal["processing", "draft_ready", "sent", "escalated", "failed"] | None = None
     safe_summary: str | None
@@ -51,9 +85,18 @@ class AIExecutionPage(BaseModel):
     offset: int
 
 
+class AIExecutionRetryOut(BaseModel):
+    id: uuid.UUID
+    status: Literal["queued"]
+    manual_retry_count: int
+    message: str
+
+
 class WidgetAIReplyStatusOut(BaseModel):
     status: Literal["processing", "draft_ready", "sent", "escalated", "failed"]
     delivery_mode: Literal["draft_only", "auto_reply"]
+    ai_agent_name: str
+    correlation_id: str | None = None
     draft: str | None
     safe_summary: str | None
     citations: list[AICitation]

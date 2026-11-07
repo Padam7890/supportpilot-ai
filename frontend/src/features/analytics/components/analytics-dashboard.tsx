@@ -2,18 +2,22 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BarChart3, CircleDollarSign, LoaderCircle, Sparkles, ThumbsDown, ThumbsUp } from "lucide-react";
+import { Activity, BarChart3, CircleDollarSign, LoaderCircle, ShieldCheck, Sparkles, ThumbsDown, ThumbsUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/input";
 import { listAIExecutions } from "@/features/ai/api/ai-api";
 import {
   analyticsQueryKeys,
+  getIntegrationDeliveryAnalytics,
   getAIUsage,
+  getCommerceApprovalAnalytics,
+  getSupportResponseAnalytics,
   getEvaluationSummary,
   submitEvaluation,
   type AIEvaluationCreate,
 } from "../api/analytics-api";
 import { getRecommendationAnalytics, recommendationQueryKeys } from "@/features/recommendations/api/recommendation-api";
+import { automationKey, getAutomationMetrics, type AutomationMetrics } from "@/features/automations/api/automation-api";
 
 function dateValue(value: Date) {
   return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
@@ -41,9 +45,29 @@ export function AnalyticsDashboard() {
     queryFn: () => getEvaluationSummary(startDate, endDate),
     enabled: startDate <= endDate,
   });
+  const deliveryAnalytics = useQuery({
+    queryKey: analyticsQueryKeys.integrationDeliveries(startDate, endDate),
+    queryFn: () => getIntegrationDeliveryAnalytics(startDate, endDate),
+    enabled: startDate <= endDate,
+  });
+  const commerceApprovals = useQuery({
+    queryKey: analyticsQueryKeys.commerceApprovals(startDate, endDate),
+    queryFn: () => getCommerceApprovalAnalytics(startDate, endDate),
+    enabled: startDate <= endDate,
+  });
+  const supportResponses = useQuery({
+    queryKey: analyticsQueryKeys.supportResponses(startDate, endDate),
+    queryFn: () => getSupportResponseAnalytics(startDate, endDate),
+    enabled: startDate <= endDate,
+  });
   const recommendations = useQuery({
     queryKey: recommendationQueryKeys.analytics(startDate, endDate),
     queryFn: () => getRecommendationAnalytics(startDate, endDate),
+    enabled: startDate <= endDate,
+  });
+  const automationMetrics = useQuery({
+    queryKey: [...automationKey, "metrics", startDate, endDate],
+    queryFn: () => getAutomationMetrics(30, startDate, endDate),
     enabled: startDate <= endDate,
   });
   const executions = useQuery({ queryKey: ["ai-executions", "analytics"], queryFn: () => listAIExecutions(100, 0) });
@@ -61,17 +85,125 @@ export function AnalyticsDashboard() {
 
   return <div className="space-y-7">
     <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-      <div><p className="text-xs font-bold uppercase tracking-[.16em] text-blue-700">Workspace insights</p><h1 className="mt-1 text-3xl font-bold tracking-tight">Analytics</h1><p className="mt-2 text-sm text-slate-500">AI usage and teammate feedback from real workspace activity.</p></div>
+      <div><p className="sidebar-group text-[var(--text-accent)]">Workspace insights</p><h1 className="page-title mt-1">Analytics</h1><p className="page-subtitle mt-2">AI usage, recommendation activity, workflow health, and teammate feedback.</p></div>
       <div className="flex flex-wrap items-end gap-3"><label className="text-xs font-semibold text-slate-600">From<input aria-label="Analytics start date" type="date" value={startDate} max={endDate} onChange={(event) => setStartDate(event.target.value)} className="mt-1 block rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"/></label><label className="text-xs font-semibold text-slate-600">To<input aria-label="Analytics end date" type="date" value={endDate} min={startDate} onChange={(event) => setEndDate(event.target.value)} className="mt-1 block rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"/></label></div>
     </header>
 
     {(usage.isError || evaluations.isError) && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">Analytics could not be loaded. Refresh the page or adjust the selected date range.</div>}
     {usage.isPending || evaluations.isPending ? <div role="status" className="flex items-center gap-2 rounded-xl bg-white p-8 text-sm text-slate-500"><LoaderCircle className="animate-spin" size={17}/>Loading analytics…</div> : <>
-      <section aria-label="AI usage summary" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <section aria-label="AI usage summary" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <Metric title="AI requests" value={usage.data?.executions.toLocaleString() ?? "0"} detail={`${usage.data?.succeeded ?? 0} completed · ${usage.data?.failed ?? 0} failed`} icon={<Sparkles size={18}/>} />
         <Metric title="Tokens used" value={usage.data?.total_tokens.toLocaleString() ?? "0"} detail={`${usage.data?.prompt_tokens.toLocaleString() ?? "0"} input · ${usage.data?.completion_tokens.toLocaleString() ?? "0"} output`} icon={<BarChart3 size={18}/>} />
         <Metric title="Estimated AI cost" value={usage.data?.estimated_cost_usd == null ? "Not configured" : `$${usage.data.estimated_cost_usd.toFixed(4)}`} detail={usage.data?.estimated_cost_usd == null ? "Set provider token rates to estimate cost" : "Based on configured input and output rates"} icon={<CircleDollarSign size={18}/>} />
         <Metric title="Helpful feedback" value={evaluations.data?.helpful_rate == null ? "No ratings" : `${Math.round(evaluations.data.helpful_rate * 100)}%`} detail={`${evaluations.data?.rated ?? 0} teammate ratings`} icon={<ThumbsUp size={18}/>} />
+        <Metric title="Document citation coverage" value={usage.data?.document_citation_rate == null ? "No model replies" : `${Math.round(usage.data.document_citation_rate * 100)}%`} detail={usage.data?.document_citation_rate == null ? "No eligible model-generated responses" : `${usage.data.responses_with_document_citations} cited of ${usage.data.model_backed_responses} model-generated responses`} icon={<ShieldCheck size={18}/>} />
+      </section>
+
+      <section aria-labelledby="ai-bot-usage-title" className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div><h2 id="ai-bot-usage-title" className="font-semibold">AI bot activity</h2><p className="mt-1 text-xs text-slate-500">Execution, token, cost, and response-time totals by bot for the selected date range.</p></div>
+          <span className="rounded-lg bg-violet-50 p-2 text-violet-700"><Sparkles size={18} aria-hidden="true"/></span>
+        </div>
+        {!usage.data?.bots.length ? <p className="mt-5 rounded-xl bg-slate-50 p-4 text-sm text-slate-500">No bot executions were recorded in this date range.</p> : <div className="mt-5 overflow-x-auto">
+          <table className="w-full min-w-[720px] text-left text-sm">
+            <thead><tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500"><th scope="col" className="pb-3 pr-4">Bot</th><th scope="col" className="pb-3 px-3">Runs</th><th scope="col" className="pb-3 px-3">Completed</th><th scope="col" className="pb-3 px-3">Failed</th><th scope="col" className="pb-3 px-3">Tokens</th><th scope="col" className="pb-3 px-3">Est. cost</th><th scope="col" className="pb-3 pl-3">Avg. latency</th></tr></thead>
+            <tbody>{usage.data.bots.map((bot) => <tr key={bot.bot_id} className="border-b border-slate-100 last:border-0"><th scope="row" className="py-3 pr-4 font-semibold text-slate-900">{bot.bot_name}</th><td className="px-3 py-3 text-slate-700">{bot.executions.toLocaleString()}</td><td className="px-3 py-3 text-emerald-800">{bot.succeeded.toLocaleString()}</td><td className={`px-3 py-3 ${bot.failed ? "text-rose-700" : "text-slate-500"}`}>{bot.failed.toLocaleString()}</td><td className="px-3 py-3 text-slate-700">{(bot.prompt_tokens + bot.completion_tokens).toLocaleString()}</td><td className="px-3 py-3 text-slate-700">{bot.estimated_cost_usd == null ? "Not configured" : `$${bot.estimated_cost_usd.toFixed(4)}`}</td><td className="pl-3 py-3 text-slate-700">{bot.average_latency_ms == null ? "—" : `${bot.average_latency_ms.toLocaleString()} ms`}</td></tr>)}</tbody>
+          </table>
+        </div>}
+      </section>
+
+      <section id="ai-errors-title" aria-labelledby="ai-errors-heading" className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div><h2 id="ai-errors-heading" className="font-semibold">AI execution failures</h2><p className="mt-1 text-xs text-slate-500">Stable error codes for executions that exhausted their retry policy in the selected date range.</p></div>
+          <span className="rounded-lg bg-rose-50 p-2 text-rose-700"><Activity size={18} aria-hidden="true"/></span>
+        </div>
+        {!usage.data?.top_errors.length ? <p className="mt-5 rounded-xl bg-slate-50 p-4 text-sm text-slate-500">No terminal AI execution failures were recorded in this date range.</p> : <ul className="mt-5 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+          {usage.data.top_errors.map((item) => <li key={item.code} className="flex items-center justify-between gap-3 rounded-xl border border-rose-100 bg-rose-50/50 px-3 py-2.5 text-sm"><code className="min-w-0 truncate text-rose-900">{item.code}</code><span className="shrink-0 rounded-full bg-white px-2 py-1 text-xs font-semibold text-rose-900">{item.count}</span></li>)}
+        </ul>}
+        {usage.data?.daily.some((day) => day.failed > 0) && <p className="mt-3 text-xs text-slate-500">Daily totals include {usage.data.daily.reduce((sum, day) => sum + day.failed, 0).toLocaleString()} failed runs across the selected period.</p>}
+      </section>
+
+      <section aria-label="Automation run health" className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div><h2 className="font-semibold">Automation run health</h2><p className="mt-1 text-xs text-slate-500">Tenant-scoped workflow executions for the selected date range.</p></div>
+          <span className="rounded-lg bg-violet-50 p-2 text-violet-700"><BarChart3 size={18} aria-hidden="true"/></span>
+        </div>
+        {automationMetrics.isPending ? <p role="status" className="mt-5 text-sm text-slate-500">Loading automation metrics…</p>
+          : automationMetrics.isError ? <p role="alert" className="mt-5 rounded-xl bg-red-50 p-3 text-sm text-red-800">Automation metrics could not be loaded. Other analytics remain available.</p>
+          : !automationMetrics.data || automationMetrics.data.total === 0 ? <p className="mt-5 rounded-xl bg-slate-50 p-4 text-sm text-slate-500">No workflow executions in this date range.</p>
+              : <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-5">
+                <AutomationMetric label="Total runs" value={automationMetrics.data?.total.toLocaleString() ?? "0"}/>
+                <AutomationMetric label="Succeeded" value={automationMetrics.data?.succeeded.toLocaleString() ?? "0"} tone="green"/>
+                <AutomationMetric label="In progress" value={((automationMetrics.data?.queued ?? 0) + (automationMetrics.data?.running ?? 0)).toLocaleString()} tone="blue"/>
+                <AutomationMetric label="Failed" value={automationMetrics.data?.failed.toLocaleString() ?? "0"} tone={(automationMetrics.data?.failed ?? 0) > 0 ? "red" : "neutral"}/>
+                <AutomationMetric label="Avg. duration" value={automationMetrics.data?.average_duration_ms == null ? "—" : `${automationMetrics.data.average_duration_ms.toLocaleString()} ms`}/>
+              </div>}
+        {!automationMetrics.isPending && !automationMetrics.isError && automationMetrics.data && automationMetrics.data.total > 0 && <AutomationTrend daily={automationMetrics.data.daily} topErrors={automationMetrics.data.top_errors}/>}
+      </section>
+
+      <section id="channel-delivery" aria-labelledby="delivery-health-title" className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div><h2 id="delivery-health-title" className="font-semibold">Channel delivery health</h2><p className="mt-1 text-xs text-slate-500">Outbound integration deliveries recorded in this workspace during the selected date range.</p></div>
+          <span className="rounded-lg bg-amber-50 p-2 text-amber-800"><BarChart3 size={18} aria-hidden="true"/></span>
+        </div>
+        {deliveryAnalytics.isPending ? <p role="status" className="mt-5 text-sm text-slate-500">Loading delivery metrics…</p>
+          : deliveryAnalytics.isError ? <p role="alert" className="mt-5 rounded-xl bg-red-50 p-3 text-sm text-red-800">Channel delivery metrics could not be loaded. Other analytics remain available.</p>
+          : deliveryAnalytics.data?.total === 0 ? <p className="mt-5 rounded-xl bg-slate-50 p-4 text-sm text-slate-500">No outbound integration deliveries were recorded in this date range.</p>
+          : <>
+            <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+              <AutomationMetric label="Total deliveries" value={deliveryAnalytics.data?.total.toLocaleString() ?? "0"}/>
+              <AutomationMetric label="Succeeded" value={deliveryAnalytics.data?.succeeded.toLocaleString() ?? "0"} tone="green"/>
+              <AutomationMetric label="Failed" value={deliveryAnalytics.data?.failed.toLocaleString() ?? "0"} tone={(deliveryAnalytics.data?.failed ?? 0) > 0 ? "red" : "neutral"}/>
+              <AutomationMetric label="Queued" value={deliveryAnalytics.data?.queued.toLocaleString() ?? "0"} tone="blue"/>
+              <AutomationMetric label="Running" value={deliveryAnalytics.data?.running.toLocaleString() ?? "0"} tone="blue"/>
+              <AutomationMetric label="Avg. attempts" value={deliveryAnalytics.data?.average_attempts?.toFixed(2) ?? "—"}/>
+            </div>
+            <div className="mt-5 flex flex-wrap gap-2" aria-label="Delivery counts by provider">
+              {deliveryAnalytics.data?.providers.map((provider) => <span key={provider.provider_id} className="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-700"><span className="font-semibold">{provider.provider_id}</span><span className="ml-2">{provider.succeeded}/{provider.total} succeeded · {provider.failed} failed</span></span>)}
+            </div>
+            {(deliveryAnalytics.data?.top_errors.length ?? 0) > 0 && <div className="mt-5 rounded-xl border border-rose-100 bg-rose-50/60 p-4">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-rose-900">Most common delivery errors</h3>
+              <ul className="mt-2 flex flex-wrap gap-2">{deliveryAnalytics.data?.top_errors.map((item) => <li key={item.code} className="rounded-lg bg-white px-3 py-2 text-xs text-rose-900"><code>{item.code}</code><span className="ml-2 font-semibold">{item.count}</span></li>)}</ul>
+            </div>}
+          </>}
+      </section>
+
+      <section aria-labelledby="commerce-approval-title" className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div><h2 id="commerce-approval-title" className="font-semibold">Commerce approval activity</h2><p className="mt-1 text-xs text-slate-500">Human review outcomes and time to review for order requests in the selected period.</p></div>
+          <span className="rounded-lg bg-amber-50 p-2 text-amber-800"><ShieldCheck size={18} aria-hidden="true"/></span>
+        </div>
+        {commerceApprovals.isPending ? <p role="status" className="mt-5 text-sm text-slate-500">Loading approval metrics…</p>
+          : commerceApprovals.isError ? <p role="alert" className="mt-5 rounded-xl bg-red-50 p-3 text-sm text-red-800">Commerce approval metrics could not be loaded. Other analytics remain available.</p>
+          : commerceApprovals.data?.total === 0 ? <p className="mt-5 rounded-xl bg-slate-50 p-4 text-sm text-slate-500">No commerce approval requests were recorded in this date range.</p>
+          : <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-7">
+            <AutomationMetric label="Requests" value={commerceApprovals.data?.total.toLocaleString() ?? "0"}/>
+            <AutomationMetric label="Pending" value={commerceApprovals.data?.pending.toLocaleString() ?? "0"} tone="blue"/>
+            <AutomationMetric label="Approved" value={commerceApprovals.data?.approved.toLocaleString() ?? "0"} tone="green"/>
+            <AutomationMetric label="Rejected" value={commerceApprovals.data?.rejected.toLocaleString() ?? "0"} tone={commerceApprovals.data?.rejected ? "red" : "neutral"}/>
+            <AutomationMetric label="Expired / cancelled" value={((commerceApprovals.data?.expired ?? 0) + (commerceApprovals.data?.cancelled ?? 0)).toLocaleString()}/>
+            <AutomationMetric label="Executed" value={commerceApprovals.data?.execution_succeeded.toLocaleString() ?? "0"} tone="green"/>
+            <AutomationMetric label="Execution failed" value={commerceApprovals.data?.execution_failed.toLocaleString() ?? "0"} tone={commerceApprovals.data?.execution_failed ? "red" : "neutral"}/>
+            <div className="col-span-2 rounded-xl bg-slate-50 p-3 sm:col-span-4 xl:col-span-7"><p className="text-xs font-medium text-slate-600">Average human review time</p><p className="mt-1 text-lg font-bold text-slate-950">{commerceApprovals.data?.average_review_seconds == null ? "No reviewed requests" : formatDuration(commerceApprovals.data.average_review_seconds)}</p><p className="mt-1 text-xs text-slate-500">Measured from request creation to an Owner/Admin approval or rejection.</p></div>
+          </div>}
+      </section>
+
+      <section aria-labelledby="support-response-title" className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div><h2 id="support-response-title" className="font-semibold">First response time</h2><p className="mt-1 text-xs text-slate-500">Time from the first customer message to the first teammate or AI reply, grouped by conversation start date.</p></div>
+          <span className="rounded-lg bg-blue-50 p-2 text-blue-700"><Activity size={18} aria-hidden="true"/></span>
+        </div>
+        {supportResponses.isPending ? <p role="status" className="mt-5 text-sm text-slate-500">Loading response-time metrics…</p>
+          : supportResponses.isError ? <p role="alert" className="mt-5 rounded-xl bg-red-50 p-3 text-sm text-red-800">Response-time metrics could not be loaded. Other analytics remain available.</p>
+          : supportResponses.data?.conversations === 0 ? <p className="mt-5 rounded-xl bg-slate-50 p-4 text-sm text-slate-500">No customer conversations were recorded in this date range.</p>
+          : <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+            <AutomationMetric label="Conversations" value={supportResponses.data?.conversations.toLocaleString() ?? "0"}/>
+            <AutomationMetric label="Received a reply" value={`${supportResponses.data?.responded.toLocaleString() ?? "0"}${supportResponses.data?.conversations ? ` · ${Math.round((supportResponses.data.responded / supportResponses.data.conversations) * 100)}%` : ""}`} tone="green"/>
+            <AutomationMetric label="Awaiting first reply" value={supportResponses.data?.awaiting_first_response.toLocaleString() ?? "0"} tone={(supportResponses.data?.awaiting_first_response ?? 0) > 0 ? "blue" : "neutral"}/>
+            <AutomationMetric label="Average first response" value={supportResponses.data?.average_first_response_seconds == null ? "No replies yet" : formatDuration(supportResponses.data.average_first_response_seconds)}/>
+            <AutomationMetric label="Median first response" value={supportResponses.data?.median_first_response_seconds == null ? "No replies yet" : formatDuration(supportResponses.data.median_first_response_seconds)}/>
+          </div>}
+        {supportResponses.data && supportResponses.data.daily.length > 0 && <SupportResponseTrend daily={supportResponses.data.daily}/>}
       </section>
 
       <div className="grid gap-6 xl:grid-cols-[1.5fr_1fr]">
@@ -95,6 +227,72 @@ export function AnalyticsDashboard() {
       </div>
       <RecommendationInsights data={recommendations.data} loading={recommendations.isPending} error={recommendations.isError}/>
     </>}
+  </div>;
+}
+
+function formatDuration(seconds: number) {
+  if (seconds < 60) return `${Math.round(seconds)} sec`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
+  const hours = seconds / 3600;
+  return hours >= 24 ? `${(hours / 24).toFixed(1)} days` : `${hours.toFixed(1)} hours`;
+}
+
+function AutomationMetric({ label, value, tone = "neutral" }: { label: string; value: string; tone?: "neutral" | "green" | "blue" | "red" }) {
+  const toneClass = {
+    neutral: "bg-slate-50 text-slate-950",
+    green: "bg-emerald-50 text-emerald-950",
+    blue: "bg-blue-50 text-blue-950",
+    red: "bg-rose-50 text-rose-950",
+  }[tone];
+  return <div className={`min-w-0 rounded-xl p-3 ${toneClass}`}><p className="text-xs font-medium opacity-70">{label}</p><p className="mt-1 truncate text-lg font-bold">{value}</p></div>;
+}
+
+function AutomationTrend({ daily, topErrors }: { daily: AutomationMetrics["daily"]; topErrors: AutomationMetrics["top_errors"] }) {
+  const peak = Math.max(1, ...daily.map((point) => point.total));
+  return <div className="mt-6 border-t border-slate-100 pt-5">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <div><h3 className="text-sm font-semibold">Daily workflow outcomes</h3><p className="mt-1 text-xs text-slate-500">Runs grouped by UTC creation date</p></div>
+      <ul aria-label="Chart legend" className="flex gap-3 text-xs text-slate-600"><li className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-emerald-500"/>Succeeded</li><li className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-rose-500"/>Failed</li><li className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-slate-300"/>Other</li></ul>
+    </div>
+    <div className="mt-4 flex h-36 items-end gap-1 overflow-x-auto border-b border-slate-100 pb-2" role="img" aria-label="Daily workflow runs grouped by outcome">
+      {daily.map((point) => {
+        const other = point.total - point.succeeded - point.failed;
+        const barHeight = Math.max(point.total ? 4 : 1, Math.round((point.total / peak) * 100));
+        const successHeight = point.total ? Math.round((point.succeeded / point.total) * barHeight) : 0;
+        const failedHeight = point.total ? Math.round((point.failed / point.total) * barHeight) : 0;
+        const otherHeight = Math.max(point.total ? 1 : 0, barHeight - successHeight - failedHeight);
+        return <div key={point.date} title={`${point.date}: ${point.total} runs, ${point.succeeded} succeeded, ${point.failed} failed`} className="flex min-w-2 flex-1 flex-col justify-end">
+          <div className="flex flex-col justify-end overflow-hidden rounded-t-sm" style={{ height: `${barHeight}%` }}>
+            {successHeight > 0 && <span className="bg-emerald-500" style={{ height: `${successHeight}px` }} />}
+            {failedHeight > 0 && <span className="bg-rose-500" style={{ height: `${failedHeight}px` }} />}
+            {other > 0 && <span className="bg-slate-300" style={{ height: `${otherHeight}px` }} />}
+          </div><span className="sr-only">{point.date}: {point.total} runs, {point.succeeded} succeeded, {point.failed} failed, {other} other.</span>
+        </div>;
+      })}
+    </div>
+    <div className="mt-2 flex justify-between text-[11px] text-slate-400"><span>{daily[0]?.date}</span><span>{daily.at(-1)?.date}</span></div>
+    {topErrors.length > 0 && <div className="mt-5 rounded-xl border border-rose-100 bg-rose-50/60 p-4">
+      <h4 className="text-xs font-semibold uppercase tracking-wide text-rose-900">Most common workflow errors</h4>
+      <ul className="mt-2 flex flex-wrap gap-2">{topErrors.map((item) => <li key={item.code} className="rounded-lg bg-white px-3 py-2 text-xs text-rose-900"><code>{item.code}</code><span className="ml-2 font-semibold">{item.count}</span></li>)}</ul>
+    </div>}
+  </div>;
+}
+
+function SupportResponseTrend({ daily }: { daily: import("../api/analytics-api").SupportResponseAnalytics["daily"] }) {
+  const peak = Math.max(1, ...daily.map((point) => point.average_first_response_seconds ?? 0));
+  return <div className="mt-5 border-t border-slate-100 pt-4">
+    <div className="flex items-center justify-between gap-3"><h3 className="text-sm font-semibold">Daily average response time</h3><span className="text-xs text-slate-500">UTC conversation start date</span></div>
+    <div className="mt-3 flex h-24 items-end gap-1 overflow-x-auto border-b border-slate-100 pb-2" role="img" aria-label="Daily average first response time">
+      {daily.map((point) => {
+        const seconds = point.average_first_response_seconds ?? 0;
+        const height = seconds ? Math.max(4, Math.round((seconds / peak) * 100)) : 1;
+        return <div key={point.date} title={`${point.date}: ${seconds ? formatDuration(seconds) : "no replies"} · ${point.responded}/${point.conversations} replied`} className="flex min-w-2 flex-1 flex-col justify-end">
+          <span className="rounded-t-sm bg-blue-500" style={{ height: `${height}%` }}/>
+          <span className="sr-only">{point.date}: {seconds ? formatDuration(seconds) : "no replies"}; {point.responded} of {point.conversations} conversations replied.</span>
+        </div>;
+      })}
+    </div>
+    <div className="mt-2 flex justify-between text-[11px] text-slate-400"><span>{daily[0]?.date}</span><span>{daily.at(-1)?.date}</span></div>
   </div>;
 }
 
@@ -130,5 +328,5 @@ function Funnel({ label, count }: { label: string; count: number }) { return <di
 function LeaderList({ title, items }: { title: string; items: { product_id: string; title: string; count: number }[] }) { return <section className="rounded-2xl border border-slate-200 bg-white p-5"><h3 className="font-semibold">{title}</h3>{items.length ? <ol className="mt-3 space-y-2">{items.slice(0, 5).map((item, index) => <li key={`${item.product_id}-${index}`} className="flex items-center justify-between gap-3 text-sm"><span className="truncate text-slate-700">{item.title}</span><span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold">{item.count}</span></li>)}</ol> : <p className="mt-3 text-sm text-slate-500">No activity in this date range.</p>}</section>; }
 
 function Metric({ title, value, detail, icon }: { title: string; value: string; detail: string; icon: React.ReactNode }) {
-  return <article className="rounded-2xl border border-slate-200 bg-white p-5"><div className="flex items-center justify-between text-slate-500"><p className="text-sm font-medium">{title}</p>{icon}</div><p className="mt-3 truncate text-2xl font-bold tracking-tight text-slate-950">{value}</p><p className="mt-1 text-xs text-slate-500">{detail}</p></article>;
+  return <article className="rounded-2xl border border-slate-200 bg-white p-5"><div className="flex items-center justify-between text-[var(--text-muted)]"><p className="helper-text font-medium">{title}</p>{icon}</div><p className="kpi-value mt-3 truncate">{value}</p><p className="meta-text mt-1">{detail}</p></article>;
 }

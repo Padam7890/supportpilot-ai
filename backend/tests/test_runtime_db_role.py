@@ -1,11 +1,25 @@
 import pytest
 
 from scripts.assert_runtime_db_role import (
+    EXPECTED_TENANT_TABLES,
     has_read_only_migration_ledger_privileges,
     has_safe_auth_policies,
     has_safe_widget_policies,
     is_tenant_scoped_policy,
 )
+
+
+def test_runtime_rls_inventory_includes_knowledge_base_and_ai_bot_tables():
+    assert {
+        "knowledge_bases",
+        "ai_agents",
+        "ai_agent_knowledge_bases",
+    } <= EXPECTED_TENANT_TABLES
+    assert {
+        "automation_workflows",
+        "automation_workflow_versions",
+        "automation_executions",
+    } <= EXPECTED_TENANT_TABLES
 
 
 def test_pre_auth_tables_are_scoped_to_identity_or_challenge_token():

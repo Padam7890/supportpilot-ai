@@ -21,6 +21,7 @@ class IngestionJobOut(BaseModel):
 
 class KnowledgeDocumentOut(BaseModel):
     id: uuid.UUID
+    knowledge_base_id: uuid.UUID
     name: str
     content_type: str
     size_bytes: int
@@ -38,9 +39,16 @@ class KnowledgeDocumentPage(BaseModel):
     offset: int
 
 
+class KnowledgeDocumentMove(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    knowledge_base_id: uuid.UUID
+
+
 class KnowledgeSearchResult(BaseModel):
     document_id: uuid.UUID
     document_name: str
+    knowledge_base_name: str
     chunk_index: int
     excerpt: str
 

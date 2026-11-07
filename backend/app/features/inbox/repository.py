@@ -3,7 +3,7 @@ import hashlib
 import hmac
 import json
 import re
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -17,9 +17,14 @@ from app.models import (
     ConversationReadState,
     Customer,
     Message,
+    Organization,
     Ticket,
+    Team,
+    TeamMember,
     User,
 )
+
+DEFAULT_FIRST_RESPONSE_SLA_MINUTES = {"low": 1440, "normal": 480, "high": 120, "urgent": 30}
 
 
 def _filter_fingerprint(filters: dict[str, str | None]) -> str:
@@ -80,19 +85,22 @@ class InboxRepository:
         scope: str,
         status: str | None,
         priority: str | None,
+        team_id: UUID | None,
         needs_approval: bool,
         unread_only: bool,
         search: str | None,
         limit: int,
         cursor: str | None,
     ) -> tuple[list[dict], str | None]:
+        normalized_search = search.strip() if search else ""
         filters = {
             "scope": scope,
             "status": status,
             "priority": priority,
+            "team_id": str(team_id) if team_id else None,
             "needs_approval": str(needs_approval),
             "unread_only": str(unread_only),
-            "search": search.strip().casefold() if search else None,
+            "search": normalized_search.casefold() or None,
         }
         fingerprint = _filter_fingerprint(filters)
 
@@ -171,6 +179,54 @@ class InboxRepository:
             .group_by(Conversation.ticket_id)
             .subquery()
         )
+        first_customer_messages = (
+            select(
+                Conversation.ticket_id.label("ticket_id"),
+                func.min(Message.created_at).label("first_customer_at"),
+            )
+            .join(
+                Message,
+                and_(
+                    Message.organization_id == Conversation.organization_id,
+                    Message.conversation_id == Conversation.id,
+                ),
+            )
+            .where(
+                Conversation.organization_id == organization_id,
+                Message.sender_type == "customer",
+            )
+            .group_by(Conversation.ticket_id)
+            .cte("inbox_first_customer_message")
+        )
+        first_responses = (
+            select(
+                first_customer_messages.c.ticket_id,
+                first_customer_messages.c.first_customer_at,
+                func.min(Message.created_at)
+                .filter(Message.sender_type.in_(("agent", "assistant")))
+                .label("first_response_at"),
+            )
+            .select_from(
+                first_customer_messages
+                .join(
+                    Conversation,
+                    and_(
+                        Conversation.organization_id == organization_id,
+                        Conversation.ticket_id == first_customer_messages.c.ticket_id,
+                    ),
+                )
+                .outerjoin(
+                    Message,
+                    and_(
+                        Message.organization_id == Conversation.organization_id,
+                        Message.conversation_id == Conversation.id,
+                        Message.created_at > first_customer_messages.c.first_customer_at,
+                    ),
+                )
+            )
+            .group_by(first_customer_messages.c.ticket_id, first_customer_messages.c.first_customer_at)
+            .cte("inbox_first_response")
+        )
 
         activity_at = func.greatest(
             Ticket.updated_at,
@@ -182,10 +238,29 @@ class InboxRepository:
             conditions.append(Ticket.assignee_id == user.id)
         elif scope == "unassigned":
             conditions.append(Ticket.assignee_id.is_(None))
+        elif scope == "my_teams":
+            member_team_ids = (
+                select(TeamMember.team_id)
+                .join(
+                    Team,
+                    and_(
+                        Team.organization_id == TeamMember.organization_id,
+                        Team.id == TeamMember.team_id,
+                        Team.is_active.is_(True),
+                    ),
+                )
+                .where(
+                    TeamMember.organization_id == organization_id,
+                    TeamMember.user_id == user.id,
+                )
+            )
+            conditions.append(Ticket.team_id.in_(member_team_ids))
         if status:
             conditions.append(Ticket.status == status)
         if priority:
             conditions.append(Ticket.priority == priority)
+        if team_id:
+            conditions.append(Ticket.team_id == team_id)
         if needs_approval:
             conditions.append(
                 exists(
@@ -198,14 +273,36 @@ class InboxRepository:
             )
         if unread_only:
             conditions.append(func.coalesce(unread_counts.c.unread_count, 0) > 0)
-        if search:
-            term = f"%{search.strip()}%"
+        if normalized_search:
+            escaped_search = (
+                normalized_search
+                .replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_")
+            )
+            term = f"%{escaped_search}%"
             conditions.append(
                 or_(
-                    Ticket.subject.ilike(term),
-                    Ticket.description.ilike(term),
-                    Customer.name.ilike(term),
-                    Customer.email.ilike(term),
+                    Ticket.subject.ilike(term, escape="\\"),
+                    Ticket.description.ilike(term, escape="\\"),
+                    Customer.name.ilike(term, escape="\\"),
+                    Customer.email.ilike(term, escape="\\"),
+                    exists(
+                        select(Message.id)
+                        .join(
+                            Conversation,
+                            and_(
+                                Conversation.id == Message.conversation_id,
+                                Conversation.organization_id == Message.organization_id,
+                            ),
+                        )
+                        .where(
+                            Message.organization_id == organization_id,
+                            Conversation.ticket_id == Ticket.id,
+                            Message.sender_type != "internal_note",
+                            Message.content.ilike(term, escape="\\"),
+                        )
+                    ),
                 )
             )
 
@@ -234,6 +331,9 @@ class InboxRepository:
                 Customer.email.label("customer_email"),
                 User.id.label("assignee_id"),
                 User.full_name.label("assignee_name"),
+                Team.id.label("team_id"),
+                Team.name.label("team_name"),
+                Team.is_active.label("team_is_active"),
                 func.coalesce(
                     latest_messages.c.conversation_id,
                     latest_conversations.c.conversation_id,
@@ -241,6 +341,9 @@ class InboxRepository:
                 latest_messages.c.content.label("latest_content"),
                 latest_messages.c.created_at.label("latest_message_at"),
                 latest_messages.c.sender_type.label("latest_sender_type"),
+                first_responses.c.first_customer_at,
+                first_responses.c.first_response_at,
+                Organization.first_response_sla_minutes,
                 func.coalesce(unread_counts.c.unread_count, 0).label("unread_count"),
                 activity_at,
             )
@@ -251,9 +354,14 @@ class InboxRepository:
                     Customer.organization_id == Ticket.organization_id,
                 ),
             )
+            .join(Organization, Organization.id == Ticket.organization_id)
             .outerjoin(
                 User,
                 and_(User.id == Ticket.assignee_id, User.organization_id == Ticket.organization_id),
+            )
+            .outerjoin(
+                Team,
+                and_(Team.id == Ticket.team_id, Team.organization_id == Ticket.organization_id),
             )
             .outerjoin(
                 latest_conversations,
@@ -270,6 +378,7 @@ class InboxRepository:
                 ),
             )
             .outerjoin(unread_counts, unread_counts.c.ticket_id == Ticket.id)
+            .outerjoin(first_responses, first_responses.c.ticket_id == Ticket.id)
             .where(*conditions)
             .order_by(activity_at.desc(), Ticket.id.desc())
             .limit(limit + 1)
@@ -279,8 +388,36 @@ class InboxRepository:
         has_more = len(rows) > limit
         rows = rows[:limit]
         items = []
+        now = datetime.now(UTC)
         for row in rows:
             preview = re.sub(r"\s+", " ", row["latest_content"] or "").strip()
+            sla = None
+            first_customer_at = row["first_customer_at"]
+            if first_customer_at is not None:
+                stored_policy = row["first_response_sla_minutes"]
+                policy = stored_policy if isinstance(stored_policy, dict) else {}
+                raw_target = policy.get(row["priority"])
+                target_minutes = (
+                    raw_target
+                    if isinstance(raw_target, int) and 5 <= raw_target <= 10080
+                    else DEFAULT_FIRST_RESPONSE_SLA_MINUTES[row["priority"]]
+                )
+                due_at = first_customer_at + timedelta(minutes=target_minutes)
+                response_at = row["first_response_at"]
+                if response_at is not None:
+                    sla_status = "met" if response_at <= due_at else "breached"
+                elif now >= due_at:
+                    sla_status = "overdue"
+                elif due_at - now <= timedelta(minutes=min(60, max(5, target_minutes * 0.25))):
+                    sla_status = "at_risk"
+                else:
+                    sla_status = "on_track"
+                sla = {
+                    "status": sla_status,
+                    "target_minutes": target_minutes,
+                    "due_at": due_at,
+                    "responded_at": response_at,
+                }
             items.append(
                 {
                     "ticket_id": row["id"],
@@ -298,6 +435,15 @@ class InboxRepository:
                         if row["assignee_id"]
                         else None
                     ),
+                    "team": (
+                        {
+                            "id": row["team_id"],
+                            "name": row["team_name"],
+                            "is_active": row["team_is_active"],
+                        }
+                        if row["team_id"]
+                        else None
+                    ),
                     "latest_message": (
                         {
                             "preview": preview[:240],
@@ -308,6 +454,7 @@ class InboxRepository:
                         else None
                     ),
                     "unread_count": int(row["unread_count"]),
+                    "first_response_sla": sla,
                     "updated_at": row["activity_at"],
                 }
             )

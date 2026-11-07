@@ -82,7 +82,7 @@ def test_legacy_route_imports_reexport_feature_routers():
     assert legacy_tickets_router is tickets_router
 
 
-def test_default_provider_registration_is_centralized_and_resolves_catalog_capability():
+def test_default_provider_registration_is_centralized_and_resolves_shopify_capabilities():
     registry = build_integration_registry()
 
     assert isinstance(registry, IntegrationRegistry)
@@ -92,3 +92,9 @@ def test_default_provider_registration_is_centralized_and_resolves_catalog_capab
         "shopify", IntegrationCapability.PRODUCT_CATALOG, ShopifyProductCatalogAdapter
     )
     assert isinstance(adapter, ShopifyProductCatalogAdapter)
+    from app.integrations.core.interfaces import CommerceCapability
+
+    commerce = registry.get_capability(
+        "shopify", IntegrationCapability.COMMERCE, CommerceCapability
+    )
+    assert isinstance(commerce, CommerceCapability)

@@ -100,14 +100,22 @@ def test_incoming_message_contract_is_strict_and_provider_scoped():
         IncomingMessage.model_validate({**event.model_dump(), "untrusted_org_id": "other"})
 
 
-def test_shopify_provider_registers_only_catalog_and_verified_webhook_capabilities():
+def test_shopify_provider_registers_catalog_commerce_and_verified_webhook_capabilities():
     from app.integrations.providers.shopify.provider import ShopifyCatalogProvider
 
-    provider = ShopifyCatalogProvider(lambda connection: None)
+    async def commerce_credentials(_connection):
+        return "shop.myshopify.com", "token", frozenset({"read_orders", "read_customers"})
+
+    provider = ShopifyCatalogProvider(lambda connection: None, commerce_credentials)
     assert provider.descriptor.capabilities == frozenset(
-        {IntegrationCapability.PRODUCT_CATALOG, IntegrationCapability.WEBHOOKS}
+        {
+            IntegrationCapability.COMMERCE,
+            IntegrationCapability.PRODUCT_CATALOG,
+            IntegrationCapability.WEBHOOKS,
+        }
     )
     assert provider.get_capability(IntegrationCapability.WEBHOOKS) is not None
+    assert provider.get_capability(IntegrationCapability.COMMERCE) is not None
     assert provider.get_capability(IntegrationCapability.MESSAGING) is None
 
 

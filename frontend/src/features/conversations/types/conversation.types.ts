@@ -4,6 +4,8 @@ export type Conversation = {
   channel: string;
   status: string;
   ai_mode: "ai" | "human";
+  ai_agent_id: string;
+  ai_agent_override: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -18,4 +20,7 @@ export type Message = {
   content_type: string;
   created_at: string;
   updated_at: string;
+  delivery_status?: "received" | "accepted" | "sent" | "delivered" | "failed" | "unknown" | null;
+  delivery_job_status?: "queued" | "running" | "succeeded" | "failed" | "cancelled" | null;
+  delivery_error_code?: string | null;
 };

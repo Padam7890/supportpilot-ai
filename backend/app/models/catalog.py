@@ -161,11 +161,25 @@ class CatalogSyncJob(UUIDPrimaryKey, TimestampMixin, Base):
             "attempt_count >= 0 AND attempt_count <= max_attempts", name="ck_catalog_sync_attempts"
         ),
         CheckConstraint("max_attempts > 0", name="ck_catalog_sync_max_attempts"),
+        CheckConstraint(
+            "manual_retry_count >= 0 AND manual_retry_count <= 3",
+            name="ck_catalog_sync_manual_retry_count",
+        ),
+        CheckConstraint(
+            "(manual_retry_count = 0 AND last_manual_retry_by_user_id IS NULL AND last_manual_retry_at IS NULL) "
+            "OR (manual_retry_count > 0 AND last_manual_retry_by_user_id IS NOT NULL AND last_manual_retry_at IS NOT NULL)",
+            name="ck_catalog_sync_manual_retry_metadata",
+        ),
         ForeignKeyConstraint(
             ["organization_id", "connection_id"],
             ["integration_connections.organization_id", "integration_connections.id"],
             name="fk_catalog_sync_jobs_org_connection",
             ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "last_manual_retry_by_user_id"],
+            ["users.organization_id", "users.id"],
+            name="fk_catalog_sync_jobs_org_manual_retry_actor",
         ),
         Index(
             "ix_catalog_sync_jobs_queue",
@@ -185,17 +199,25 @@ class CatalogSyncJob(UUIDPrimaryKey, TimestampMixin, Base):
     connection_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     mode: Mapped[str] = mapped_column(String(16), nullable=False)
     status: Mapped[str] = mapped_column(String(16), default="queued", nullable=False)
+    correlation_id: Mapped[str | None] = mapped_column(String(64))
     cursor: Mapped[str | None] = mapped_column(String(2048))
     updated_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     sync_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     attempt_count: Mapped[int] = mapped_column(default=0, nullable=False)
     max_attempts: Mapped[int] = mapped_column(default=5, nullable=False)
+    manual_retry_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    last_manual_retry_by_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
+    last_manual_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     records_seen: Mapped[int] = mapped_column(default=0, nullable=False)
     last_error_code: Mapped[str | None] = mapped_column(String(80))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    @property
+    def manual_retry_available(self) -> bool:
+        return self.status == "failed" and self.manual_retry_count < 3
 
 
 class CatalogWebhookEvent(UUIDPrimaryKey, TimestampMixin, Base):
@@ -208,6 +230,10 @@ class CatalogWebhookEvent(UUIDPrimaryKey, TimestampMixin, Base):
         CheckConstraint(
             "attempt_count >= 0 AND attempt_count <= max_attempts",
             name="ck_catalog_webhook_attempts",
+        ),
+        CheckConstraint(
+            "manual_retry_count >= 0 AND manual_retry_count <= 3",
+            name="ck_catalog_webhook_manual_retry_count",
         ),
         UniqueConstraint(
             "organization_id",
@@ -241,8 +267,10 @@ class CatalogWebhookEvent(UUIDPrimaryKey, TimestampMixin, Base):
     external_product_id: Mapped[str] = mapped_column(String(512), nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     status: Mapped[str] = mapped_column(String(16), default="queued", nullable=False)
+    correlation_id: Mapped[str | None] = mapped_column(String(64))
     attempt_count: Mapped[int] = mapped_column(default=0, nullable=False)
     max_attempts: Mapped[int] = mapped_column(default=5, nullable=False)
+    manual_retry_count: Mapped[int] = mapped_column(default=0, nullable=False)
     next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

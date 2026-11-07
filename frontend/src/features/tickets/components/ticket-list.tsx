@@ -12,15 +12,24 @@ import { formatDate } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input, Select, Textarea } from "@/components/ui/input";
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
-import { createTicket, listTickets } from "../api/ticket-api";
+import { bulkUpdateTickets, createTicket, listTickets, type BulkTicketChanges } from "../api/ticket-api";
 import { createTicketSchema } from "../schemas/ticket.schema";
 import { listCustomersForTicket } from "@/features/customers/api/customer-api";
+import { getCurrentUser } from "@/features/auth/api/auth-api";
+import { listMembers } from "@/features/organization/api/organization-api";
+import { listTeams, teamQueryKey } from "@/features/organization/api/team-api";
 
 export default function TicketsPage() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
   const [priority, setPriority] = useState("");
   const [page, setPage] = useState(0);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkStatus, setBulkStatus] = useState("");
+  const [bulkPriority, setBulkPriority] = useState("");
+  const [bulkAssignee, setBulkAssignee] = useState("__unchanged");
+  const [bulkTeam, setBulkTeam] = useState("__unchanged");
+  const [bulkNotice, setBulkNotice] = useState("");
   const queryClient = useQueryClient();
   const params = useMemo(() => {
     const query = new URLSearchParams({ limit: "10", offset: String(page * 10) });
@@ -31,6 +40,10 @@ export default function TicketsPage() {
   }, [page, priority, search, status]);
   const tickets = useQuery({ queryKey: ["tickets", params], queryFn: () => listTickets(params) });
   const customers = useQuery({ queryKey: ["customers", "ticket-form"], queryFn: listCustomersForTicket });
+  const me = useQuery({ queryKey: ["me"], queryFn: getCurrentUser });
+  const canAssign = me.data?.role === "owner" || me.data?.role === "admin";
+  const members = useQuery({ queryKey: ["users"], queryFn: listMembers, enabled: canAssign && selectedIds.length > 0 });
+  const teams = useQuery({ queryKey: teamQueryKey, queryFn: listTeams, enabled: canAssign });
   const form = useForm<z.infer<typeof createTicketSchema>>({ resolver: zodResolver(createTicketSchema), defaultValues: { priority: "normal" } });
   const create = useMutation({
     mutationFn: createTicket,
@@ -40,7 +53,36 @@ export default function TicketsPage() {
       await queryClient.invalidateQueries({ queryKey: ["ticket-stats"] });
     },
   });
+  const bulkUpdate = useMutation({
+    mutationFn: bulkUpdateTickets,
+    onSuccess: async (result) => {
+      setBulkNotice(`${result.changed_count} of ${result.updated_count} selected tickets updated.`);
+      setSelectedIds([]);
+      setBulkStatus("");
+      setBulkPriority("");
+      setBulkAssignee("__unchanged");
+      setBulkTeam("__unchanged");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["tickets"] }),
+        queryClient.invalidateQueries({ queryKey: ["inbox"] }),
+        queryClient.invalidateQueries({ queryKey: ["ticket-stats"] }),
+      ]);
+    },
+  });
   const pages = Math.max(1, Math.ceil((tickets.data?.total ?? 0) / 10));
+  const pageTicketIds = tickets.data?.items.map((ticket) => ticket.id) ?? [];
+  const allPageSelected = pageTicketIds.length > 0 && pageTicketIds.every((id) => selectedIds.includes(id));
+  const hasBulkChanges = Boolean(bulkStatus || bulkPriority || (canAssign && (bulkAssignee !== "__unchanged" || bulkTeam !== "__unchanged")));
+
+  function submitBulkUpdate() {
+    const changes: BulkTicketChanges = { ticket_ids: selectedIds };
+    if (bulkStatus) changes.status = bulkStatus as NonNullable<BulkTicketChanges["status"]>;
+    if (bulkPriority) changes.priority = bulkPriority as NonNullable<BulkTicketChanges["priority"]>;
+    if (canAssign && bulkAssignee !== "__unchanged") changes.assignee_id = bulkAssignee || null;
+    if (canAssign && bulkTeam !== "__unchanged") changes.team_id = bulkTeam || null;
+    setBulkNotice("");
+    bulkUpdate.mutate(changes);
+  }
 
   return (
     <div className="space-y-6">
@@ -52,6 +94,7 @@ export default function TicketsPage() {
           <label className="space-y-1.5 text-sm font-medium text-slate-700">Priority<Select {...form.register("priority")}><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option></Select></label>
           <label className="space-y-1.5 text-sm font-medium text-slate-700 md:col-span-2">Subject<Input placeholder="What does the customer need help with?" {...form.register("subject")}/>{form.formState.errors.subject && <span className="block text-xs text-red-600">{form.formState.errors.subject.message}</span>}</label>
           <label className="space-y-1.5 text-sm font-medium text-slate-700 md:col-span-2">Description<Textarea placeholder="Add a few details to help your team get started." {...form.register("description")}/></label>
+          {canAssign && <label className="space-y-1.5 text-sm font-medium text-slate-700">Route to team<Select {...form.register("team_id", { setValueAs: (value) => value || null })}><option value="">No team</option>{teams.data?.filter((team) => team.is_active).map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</Select></label>}
           {create.isError && <p role="alert" className="text-sm text-red-700 md:col-span-2">{create.error instanceof ApiError ? create.error.message : "Ticket could not be created."}</p>}
           <div className="md:col-span-2"><Button type="submit" disabled={create.isPending || (customers.data?.items.length ?? 0) === 0}>{create.isPending ? "Creating…" : "Create ticket"}</Button>{customers.data?.items.length === 0 && <p className="mt-2 text-xs text-amber-700">Add a customer before creating a ticket.</p>}</div>
         </form>
@@ -59,9 +102,22 @@ export default function TicketsPage() {
       <Panel>
         <PanelHeader title="All tickets" description={`${tickets.data?.total ?? 0} tickets in this view`}/>
         <PanelBody className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-[minmax(220px,1fr)_180px_180px]"><div className="relative"><Search size={17} className="absolute left-3 top-3.5 text-slate-400"/><Input aria-label="Search tickets" className="pl-10" placeholder="Search tickets or customers…" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }}/></div><Select aria-label="Filter by status" value={status} onChange={(event) => { setStatus(event.target.value); setPage(0); }}><option value="">All statuses</option><option value="open">Open</option><option value="pending">Pending</option><option value="resolved">Resolved</option><option value="closed">Closed</option></Select><Select aria-label="Filter by priority" value={priority} onChange={(event) => { setPriority(event.target.value); setPage(0); }}><option value="">All priorities</option><option value="urgent">Urgent</option><option value="high">High</option><option value="normal">Normal</option><option value="low">Low</option></Select></div>
+          <div className="grid gap-3 md:grid-cols-[minmax(220px,1fr)_180px_180px]"><div className="relative"><Search size={17} className="absolute left-3 top-3.5 text-slate-400"/><Input aria-label="Search tickets" className="pl-10" placeholder="Search tickets or customers…" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); setSelectedIds([]); }}/></div><Select aria-label="Filter by status" value={status} onChange={(event) => { setStatus(event.target.value); setPage(0); setSelectedIds([]); }}><option value="">All statuses</option><option value="open">Open</option><option value="pending">Pending</option><option value="resolved">Resolved</option><option value="closed">Closed</option></Select><Select aria-label="Filter by priority" value={priority} onChange={(event) => { setPriority(event.target.value); setPage(0); setSelectedIds([]); }}><option value="">All priorities</option><option value="urgent">Urgent</option><option value="high">High</option><option value="normal">Normal</option><option value="low">Low</option></Select></div>
+          {bulkNotice && <p role="status" className="text-sm font-medium text-emerald-700">{bulkNotice}</p>}
+          {selectedIds.length > 0 && <section aria-label="Bulk ticket actions" className="space-y-3 rounded-xl border border-blue-200 bg-blue-50/60 p-3">
+            <div className="flex flex-wrap items-center gap-2"><p className="mr-auto text-sm font-semibold text-slate-800">{selectedIds.length} selected</p>
+              <Select aria-label="Bulk status change" className="min-w-36 bg-white" value={bulkStatus} onChange={(event) => setBulkStatus(event.target.value)}><option value="">Keep status</option><option value="open">Open</option><option value="pending">Pending</option><option value="resolved">Resolved</option><option value="closed">Closed</option></Select>
+              <Select aria-label="Bulk priority change" className="min-w-36 bg-white" value={bulkPriority} onChange={(event) => setBulkPriority(event.target.value)}><option value="">Keep priority</option><option value="urgent">Urgent</option><option value="high">High</option><option value="normal">Normal</option><option value="low">Low</option></Select>
+              {canAssign && <Select aria-label="Bulk assignee change" className="min-w-44 bg-white" value={bulkAssignee} onChange={(event) => setBulkAssignee(event.target.value)}><option value="__unchanged">Keep assignee</option><option value="">Unassign</option>{members.data?.filter((member) => member.is_active && ["owner", "admin", "agent"].includes(member.role)).map((member) => <option key={member.id} value={member.id}>{member.full_name} · {member.role}</option>)}</Select>}
+              {canAssign && <Select aria-label="Bulk team routing" className="min-w-40 bg-white" value={bulkTeam} onChange={(event) => setBulkTeam(event.target.value)}><option value="__unchanged">Keep team</option><option value="">No team</option>{teams.data?.filter((team) => team.is_active).map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</Select>}
+              <Button size="sm" disabled={!hasBulkChanges || bulkUpdate.isPending} onClick={submitBulkUpdate}>{bulkUpdate.isPending ? "Updating…" : "Apply"}</Button>
+              <Button size="sm" variant="secondary" disabled={bulkUpdate.isPending} onClick={() => setSelectedIds([])}>Clear</Button>
+            </div>
+            {canAssign && bulkTeam !== "__unchanged" && bulkTeam && <p className="mt-2 text-xs text-slate-500">Existing assignees must belong to the selected team. Update assignees separately if needed.</p>}
+            {bulkUpdate.isError && <p role="alert" className="text-sm text-red-700">{bulkUpdate.error instanceof ApiError ? bulkUpdate.error.message : "Selected tickets could not be updated."}</p>}
+          </section>}
           {tickets.isError && <div role="alert" className="rounded-xl bg-red-50 p-4 text-sm text-red-700">Unable to load tickets.</div>}
-          {tickets.isPending ? <div className="space-y-3">{[1,2,3,4].map((item) => <div key={item} className="h-14 animate-pulse rounded-xl bg-slate-100"/>)}</div> : tickets.data?.items.length ? <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-sm"><thead><tr className="border-b border-slate-100 text-xs uppercase tracking-wide text-slate-400"><th className="px-3 py-3 font-semibold">Subject</th><th className="px-3 py-3 font-semibold">Customer</th><th className="px-3 py-3 font-semibold">Status</th><th className="px-3 py-3 font-semibold">Priority</th><th className="px-3 py-3 font-semibold">Assignee</th><th className="px-3 py-3 font-semibold">Created</th></tr></thead><tbody className="divide-y divide-slate-100">{tickets.data.items.map((ticket) => <tr key={ticket.id} className="hover:bg-slate-50"><td className="px-3 py-4"><Link className="font-semibold text-slate-900 hover:text-blue-700" href={`/dashboard/tickets/${ticket.id}`}>{ticket.subject}</Link><p className="mt-1 text-xs text-slate-400">#{ticket.id.slice(0, 8)}</p></td><td className="px-3 py-4 text-slate-600">{ticket.customer_name ?? "Customer"}</td><td className="px-3 py-4"><Badge value={ticket.status}/></td><td className="px-3 py-4"><Badge value={ticket.priority}/></td><td className="px-3 py-4 text-slate-600">{ticket.assignee_name ?? "Unassigned"}</td><td className="px-3 py-4 text-slate-500">{formatDate(ticket.created_at)}</td></tr>)}</tbody></table></div> : <div className="rounded-2xl border border-dashed border-slate-200 py-14 text-center"><TicketIcon className="mx-auto text-slate-300" size={30}/><h3 className="mt-3 font-semibold">No tickets found</h3><p className="mt-1 text-sm text-slate-500">Try another search or create a new ticket.</p></div>}
+          {tickets.isPending ? <div className="space-y-3">{[1,2,3,4].map((item) => <div key={item} className="h-14 animate-pulse rounded-xl bg-slate-100"/>)}</div> : tickets.data?.items.length ? <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead><tr className="border-b border-slate-100 text-xs uppercase tracking-wide text-slate-400"><th className="w-10 px-3 py-3"><input type="checkbox" aria-label="Select all tickets on this page" checked={allPageSelected} onChange={(event) => setSelectedIds(event.target.checked ? Array.from(new Set([...selectedIds, ...pageTicketIds])) : selectedIds.filter((id) => !pageTicketIds.includes(id)))}/></th><th className="px-3 py-3 font-semibold">Subject</th><th className="px-3 py-3 font-semibold">Customer</th><th className="px-3 py-3 font-semibold">Status</th><th className="px-3 py-3 font-semibold">Priority</th><th className="px-3 py-3 font-semibold">Assignment</th><th className="px-3 py-3 font-semibold">Created</th></tr></thead><tbody className="divide-y divide-slate-100">{tickets.data.items.map((ticket) => <tr key={ticket.id} className="hover:bg-slate-50"><td className="px-3 py-4"><input type="checkbox" aria-label={`Select ticket ${ticket.subject}`} checked={selectedIds.includes(ticket.id)} onChange={(event) => setSelectedIds(event.target.checked ? [...selectedIds, ticket.id] : selectedIds.filter((id) => id !== ticket.id))}/></td><td className="px-3 py-4"><Link className="font-semibold text-slate-900 hover:text-blue-700" href={`/dashboard/tickets/${ticket.id}`}>{ticket.subject}</Link><p className="mt-1 text-xs text-slate-400">#{ticket.id.slice(0, 8)}</p></td><td className="px-3 py-4 text-slate-600">{ticket.customer_name ?? "Customer"}</td><td className="px-3 py-4"><Badge value={ticket.status}/></td><td className="px-3 py-4"><Badge value={ticket.priority}/></td><td className="px-3 py-4 text-slate-600"><span className="block">{ticket.assignee_name ?? "Unassigned"}</span>{ticket.team_name && <span className="mt-1 block text-xs text-slate-500">{ticket.team_name}</span>}</td><td className="px-3 py-4 text-slate-500">{formatDate(ticket.created_at)}</td></tr>)}</tbody></table></div> : <div className="rounded-2xl border border-dashed border-slate-200 py-14 text-center"><TicketIcon className="mx-auto text-slate-300" size={30}/><h3 className="mt-3 font-semibold">No tickets found</h3><p className="mt-1 text-sm text-slate-500">Try another search or create a new ticket.</p></div>}
           <div className="flex items-center justify-between border-t border-slate-100 pt-4"><p className="text-xs text-slate-500">Page {page + 1} of {pages}</p><div className="flex gap-2"><Button aria-label="Previous page" variant="secondary" size="sm" disabled={page === 0} onClick={() => setPage((value) => Math.max(0, value - 1))}><ArrowLeft size={15}/> Previous</Button><Button aria-label="Next page" variant="secondary" size="sm" disabled={page + 1 >= pages} onClick={() => setPage((value) => value + 1)}>Next <ArrowRight size={15}/></Button></div></div>
         </PanelBody>
       </Panel>

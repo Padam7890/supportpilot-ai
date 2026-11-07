@@ -4,6 +4,7 @@ from uuid import UUID
 from fastapi import HTTPException
 from sqlalchemy import select
 
+from app.features.ai.application.defaults import get_default_agent
 from app.features.conversations.repository import ConversationRepository
 from app.features.tickets.repository import TicketRepository
 from app.integrations.messaging.service import enqueue_outbound_delivery
@@ -17,26 +18,20 @@ class ConversationService:
         self.tickets = tickets
 
     async def create(self, organization_id: UUID, ticket_id: UUID, data: ConversationCreate):
-        if not await self.tickets.get(organization_id, ticket_id):
+        if not await self.tickets.exists(organization_id, ticket_id):
             raise HTTPException(status_code=404, detail="Ticket not found")
-        return await self.repo.add(
-            Conversation(organization_id=organization_id, ticket_id=ticket_id, channel=data.channel)
-        )
+        agent = await get_default_agent(self.repo.session, organization_id)
+        return await self.repo.add(Conversation(
+            organization_id=organization_id,
+            ticket_id=ticket_id,
+            channel=data.channel,
+            ai_agent_id=agent.id,
+        ))
 
     async def list_for_ticket(self, organization_id: UUID, ticket_id: UUID):
-        if not await self.tickets.get(organization_id, ticket_id):
+        if not await self.tickets.exists(organization_id, ticket_id):
             raise HTTPException(status_code=404, detail="Ticket not found")
-        from sqlalchemy import select
-
-        result = await self.repo.session.execute(
-            select(Conversation)
-            .where(
-                Conversation.organization_id == organization_id,
-                Conversation.ticket_id == ticket_id,
-            )
-            .order_by(Conversation.created_at.desc())
-        )
-        return list(result.scalars().all())
+        return await self.repo.list_for_ticket(organization_id, ticket_id)
 
     async def add_message(
         self, organization_id: UUID, user_id: UUID, conversation_id: UUID, data: MessageCreate

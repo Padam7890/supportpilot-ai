@@ -43,7 +43,7 @@ async def limit_auth_attempts(
         raise HTTPException(
             status_code=503, detail="Authentication service is unavailable"
         ) from None
-    if attempts > 100:
+    if attempts > limit:
         raise HTTPException(
             status_code=429, detail="Too many authentication attempts. Try again later."
         )

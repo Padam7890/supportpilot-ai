@@ -1,7 +1,8 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -29,6 +30,14 @@ class Organization(UUIDPrimaryKey, TimestampMixin, Base):
         )
     )
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    first_response_sla_minutes: Mapped[dict] = mapped_column(
+        JSONB,
+        default=lambda: {"low": 1440, "normal": 480, "high": 120, "urgent": 30},
+        server_default=text(
+            '\'{"low"\\:1440,"normal"\\:480,"high"\\:120,"urgent"\\:30}\'::jsonb'
+        ),
+        nullable=False,
+    )
 
     users = relationship("User", back_populates="organization", cascade="all, delete-orphan")
     customers = relationship(

@@ -12,10 +12,12 @@ from app.core.security import hash_password
 from app.db.session import SessionLocal, set_tenant_context
 from app.integrations.providers.shopify import security as shopify_security
 from app.models import (
+    AIAgent,
     AIExecution,
     Conversation,
     Customer,
     DocumentChunk,
+    KnowledgeBase,
     KnowledgeDocument,
     Message,
     PlatformOwner,
@@ -24,6 +26,7 @@ from app.models import (
 )
 from app.schemas.shopify import ShopifyOrderLookupOut, ShopifyOrderOut
 from app.services.ai_worker import claim_ai_execution, process_ai_execution
+from app.worker import claim_one, process_job
 from tests.auth_helpers import verify_registration, workspace_login
 
 pytestmark = pytest.mark.skipif(
@@ -138,7 +141,9 @@ async def test_ai_reply_draft_is_grounded_safe_and_never_sent(client, monkeypatc
         )
         db.add(ticket)
         await db.flush()
-        conversation = Conversation(organization_id=organization_id, ticket_id=ticket.id)
+        agent = await db.scalar(select(AIAgent).where(AIAgent.organization_id == organization_id, AIAgent.is_default.is_(True)))
+        base = await db.scalar(select(KnowledgeBase).where(KnowledgeBase.organization_id == organization_id, KnowledgeBase.is_default.is_(True)))
+        conversation = Conversation(organization_id=organization_id, ticket_id=ticket.id, ai_agent_id=agent.id)
         db.add(conversation)
         await db.flush()
         db.add_all(
@@ -165,6 +170,7 @@ async def test_ai_reply_draft_is_grounded_safe_and_never_sent(client, monkeypatc
             size_bytes=64,
             status="ready",
             uploaded_by_user_id=user_id,
+            knowledge_base_id=base.id,
         )
         db.add(document)
         await db.flush()
@@ -275,7 +281,9 @@ async def test_ai_reply_draft_is_grounded_safe_and_never_sent(client, monkeypatc
     assert summary.json()["rated"] == 1
     assert summary.json()["helpful"] == 0
     assert summary.json()["not_helpful"] == 1
-    usage = await client.get("/api/v1/analytics/ai-usage", headers=bearer(owner["access_token"]))
+    usage = await client.get(
+        "/api/v1/analytics/ai-usage", headers=bearer(owner["access_token"])
+    )
     assert usage.status_code == 200, usage.text
     assert usage.json()["executions"] == 1
     assert usage.json()["total_tokens"] == 32
@@ -330,6 +338,129 @@ async def test_ai_reply_draft_is_grounded_safe_and_never_sent(client, monkeypatc
         json={"question": "What is the return policy?"},
     )
     assert forbidden.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_uploaded_document_flows_through_assigned_bot_to_scoped_citation(client, monkeypatch):
+    platform = await platform_owner(client)
+    owner = await approved_workspace(client, platform, "ai-kb-flow")
+    headers = bearer(owner["access_token"])
+    organization_id = UUID(owner["user"]["organization_id"])
+
+    returns_base = await client.post(
+        "/api/v1/knowledge/bases", headers=headers, json={"name": "Returns"}
+    )
+    shipping_base = await client.post(
+        "/api/v1/knowledge/bases", headers=headers, json={"name": "Shipping"}
+    )
+    assert returns_base.status_code == shipping_base.status_code == 201
+    returns_bot = await client.post(
+        "/api/v1/ai/agents",
+        headers=headers,
+        json={
+            "name": "Returns assistant",
+            "system_instructions": "Answer using the assigned return policy.",
+            "knowledge_base_ids": [returns_base.json()["id"]],
+        },
+    )
+    assert returns_bot.status_code == 201, returns_bot.text
+
+    uploaded_documents = []
+    for name, knowledge_base, contents in (
+        (
+            "returns-policy.txt",
+            returns_base.json(),
+            b"Unused items may be returned within thirty days with proof of purchase.",
+        ),
+        (
+            "shipping-policy.txt",
+            shipping_base.json(),
+            b"Standard shipping takes five business days.",
+        ),
+    ):
+        uploaded = await client.post(
+            "/api/v1/knowledge/documents",
+            params={"name": name, "knowledge_base_id": knowledge_base["id"]},
+            headers={**headers, "content-type": "text/plain"},
+            content=contents,
+        )
+        assert uploaded.status_code == 202, uploaded.text
+        uploaded_documents.append(uploaded.json())
+        claim = await claim_one(organization_id)
+        assert claim is not None and claim[1] == UUID(uploaded.json()["id"])
+        await process_job(organization_id, *claim)
+
+    for uploaded in uploaded_documents:
+        ready = await client.get(
+            f"/api/v1/knowledge/documents/{uploaded['id']}", headers=headers
+        )
+        assert ready.status_code == 200
+        assert ready.json()["status"] == "ready"
+
+    monkeypatch.setattr(settings, "ai_provider_base_url", "http://127.0.0.1:8012/v1")
+    monkeypatch.setattr(settings, "ai_model", "test-support-model")
+    monkeypatch.setattr(settings, "ai_provider_api_key", None)
+    monkeypatch.setattr(httpx, "AsyncClient", MockProviderClient)
+    queued = await client.post(
+        "/api/v1/ai/playground",
+        headers=headers,
+        json={
+            "question": "Can I return an unused item?",
+            "ai_agent_id": returns_bot.json()["id"],
+        },
+    )
+    assert queued.status_code == 202, queued.text
+    execution_id = UUID(queued.json()["id"])
+    assert await claim_ai_execution(organization_id) == execution_id
+    await process_ai_execution(organization_id, execution_id)
+
+    result = await client.get(f"/api/v1/ai/executions/{execution_id}", headers=headers)
+    assert result.status_code == 200, result.text
+    assert result.json()["status"] == "succeeded"
+    assert [citation["document_name"] for citation in result.json()["citations"]] == [
+        "returns-policy.txt"
+    ]
+    assert "shipping-policy.txt" not in str(result.json()["citations"])
+    assert result.json()["draft"] == "Unused products may be returned within thirty days."
+
+
+@pytest.mark.anyio
+async def test_playground_without_assigned_knowledge_completes_without_calling_model(client, monkeypatch):
+    platform = await platform_owner(client)
+    owner = await approved_workspace(client, platform, "ai-no-assigned-knowledge")
+    headers = bearer(owner["access_token"])
+    organization_id = UUID(owner["user"]["organization_id"])
+    monkeypatch.setattr(settings, "ai_provider_base_url", "http://127.0.0.1:8012/v1")
+    monkeypatch.setattr(settings, "ai_model", "test-support-model")
+    monkeypatch.setattr(httpx, "AsyncClient", MockProviderClient)
+    MockProviderClient.last_request = None
+
+    bot = await client.post(
+        "/api/v1/ai/agents",
+        headers=headers,
+        json={"name": "Unassigned sources bot", "knowledge_base_ids": []},
+    )
+    assert bot.status_code == 201, bot.text
+    queued = await client.post(
+        "/api/v1/ai/playground",
+        headers=headers,
+        json={
+            "question": "What is this store's return policy?",
+            "ai_agent_id": bot.json()["id"],
+        },
+    )
+    assert queued.status_code == 202, queued.text
+    execution_id = UUID(queued.json()["id"])
+    assert await claim_ai_execution(organization_id) == execution_id
+    await process_ai_execution(organization_id, execution_id)
+
+    result = await client.get(f"/api/v1/ai/executions/{execution_id}", headers=headers)
+    assert result.status_code == 200, result.text
+    assert result.json()["status"] == "succeeded"
+    assert result.json()["citations"] == []
+    assert "assigned knowledge sources" in result.json()["draft"]
+    assert result.json()["usage"] == {}
+    assert MockProviderClient.last_request is None
 
 
 @pytest.mark.anyio

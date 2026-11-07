@@ -4,10 +4,15 @@ import asyncio
 import logging
 import signal
 
+from redis.asyncio import Redis
+from redis.exceptions import RedisError
+
 from app.core.config import settings
 from app.workers.application.dispatcher import WorkerDispatcher
+from app.workers.application.heartbeat import WorkerHeartbeat
 
 logger = logging.getLogger(__name__)
+WORKER_HEARTBEAT_INTERVAL_SECONDS = 5
 
 
 async def _worker_loop(
@@ -35,6 +40,26 @@ async def _worker_loop(
     logger.info("worker_loop_stopped worker_number=%d", worker_number)
 
 
+async def _heartbeat_loop(
+    heartbeat: WorkerHeartbeat,
+    stop_event: asyncio.Event,
+) -> None:
+    while not stop_event.is_set():
+        try:
+            await heartbeat.refresh()
+        except RedisError as exc:
+            logger.warning(
+                "worker_heartbeat_failed",
+                extra={"error_type": type(exc).__name__},
+            )
+        try:
+            await asyncio.wait_for(
+                stop_event.wait(), timeout=WORKER_HEARTBEAT_INTERVAL_SECONDS
+            )
+        except TimeoutError:
+            continue
+
+
 async def run_worker(
     poll_seconds: float = 1,
     *,
@@ -59,6 +84,8 @@ async def run_worker(
             except (NotImplementedError, RuntimeError):
                 continue
     dispatcher = WorkerDispatcher(job_timeout_seconds=settings.worker_job_timeout_seconds)
+    redis_client = Redis.from_url(settings.redis_url, decode_responses=True)
+    heartbeat = WorkerHeartbeat(redis_client)
     logger.info(
         "worker_runtime_started",
         extra={
@@ -69,6 +96,7 @@ async def run_worker(
     )
     try:
         async with asyncio.TaskGroup() as task_group:
+            task_group.create_task(_heartbeat_loop(heartbeat, stop))
             for worker_number in range(worker_count):
                 task_group.create_task(
                     _worker_loop(worker_number + 1, dispatcher, stop, poll_seconds)
@@ -77,4 +105,12 @@ async def run_worker(
     finally:
         for signal_number in installed_signals:
             loop.remove_signal_handler(signal_number)
+        try:
+            await heartbeat.stop()
+        except RedisError as exc:
+            logger.warning(
+                "worker_heartbeat_cleanup_failed",
+                extra={"error_type": type(exc).__name__},
+            )
+        await redis_client.aclose()
         logger.info("worker_runtime_stopped in_flight_jobs_drained=true")

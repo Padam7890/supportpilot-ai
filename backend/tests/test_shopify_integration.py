@@ -266,7 +266,7 @@ async def test_shopify_oauth_scope_tenant_isolation_lookup_verification_and_disc
             "page_info": {"hasNextPage": True, "endCursor": "order-cursor"},
         }
 
-    monkeypatch.setattr("app.api.routes.shopify_orders.fetch_order_page", mock_order_page)
+    monkeypatch.setattr("app.integrations.providers.shopify.commerce.fetch_order_page", mock_order_page)
     listed = await client.get(
         "/api/v1/integrations/shopify/orders/list",
         headers=bearer(owner["access_token"]),

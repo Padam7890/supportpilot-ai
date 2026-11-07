@@ -23,7 +23,10 @@ class CustomerUpdate(BaseModel):
 class CustomerOut(TimestampedOut):
     organization_id: uuid.UUID
     name: str
-    email: EmailStr
+    # Stored emails include synthetic addresses from widget/integration flows
+    # (e.g. *@widget.invalid). Pydantic EmailStr rejects those TLDs, which broke
+    # list/get responses with ResponseValidationError → 500.
+    email: str = Field(min_length=1, max_length=320)
     phone: str | None
     external_reference: str | None
 

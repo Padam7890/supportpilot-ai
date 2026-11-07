@@ -22,10 +22,13 @@ from app.integrations.messaging.worker import (
     process_integration_delivery,
 )
 from app.models import (
+    AIAgent,
+    CatalogWebhookEvent,
     Conversation,
     Customer,
     IntegrationConnection,
     IntegrationDeliveryJob,
+    IntegrationWebhookEvent,
     Message,
     PlatformOwner,
     Ticket,
@@ -73,7 +76,7 @@ def bearer(token: str) -> dict[str, str]:
 
 async def approved_owner(client, label: str) -> dict:
     slug = f"{label}-{uuid4().hex[:10]}"
-    email = f"{label}-{uuid4().hex[:10]}@example.test"
+    email = f"{label}-{uuid4().hex[:10]}@example.com"
     password = "messaging-integration-test-password"
     registration = await client.post(
         "/api/v1/auth/register",
@@ -87,7 +90,7 @@ async def approved_owner(client, label: str) -> dict:
     )
     assert registration.status_code == 202, registration.text
     await verify_registration(client, registration, email)
-    platform_email = f"platform-{uuid4().hex[:10]}@example.test"
+    platform_email = f"platform-{uuid4().hex[:10]}@example.com"
     platform_password = "messaging-platform-integration-password"
     async with SessionLocal() as session:
         session.add(
@@ -146,12 +149,14 @@ async def test_inbound_idempotency_tenant_boundaries_and_transactional_outbox(cl
         )
         session.add(ticket)
         await session.flush()
+        agent = await session.scalar(select(AIAgent).where(AIAgent.organization_id == organization_a, AIAgent.is_default.is_(True)))
         conversation = Conversation(
             organization_id=organization_a,
             ticket_id=ticket.id,
             channel="example_chat",
             integration_connection_id=connection.id,
             external_conversation_id="thread-1",
+            ai_agent_id=agent.id,
         )
         session.add(conversation)
         await session.flush()
@@ -225,8 +230,87 @@ async def test_inbound_idempotency_tenant_boundaries_and_transactional_outbox(cl
             )
             == 1
         )
+        session.add_all(
+            [
+                IntegrationWebhookEvent(
+                    organization_id=organization_a,
+                    connection_id=connection.id,
+                    provider_id="example_chat",
+                    external_event_id="webhook-event-1",
+                    event_type="message.created",
+                    occurred_at=datetime.now(UTC),
+                    payload_fingerprint="a" * 64,
+                    normalized_payload={"customer_email": "private@example.test"},
+                ),
+                CatalogWebhookEvent(
+                    organization_id=organization_a,
+                    connection_id=connection.id,
+                    provider_id="example_chat",
+                    external_event_id="webhook-event-1",
+                    event_type="message.created",
+                    external_product_id="not-applicable",
+                    payload={"private": "must not be returned"},
+                    status="failed",
+                    attempt_count=2,
+                    max_attempts=5,
+                    next_attempt_at=datetime.now(UTC),
+                    last_error_code="provider_timeout",
+                ),
+            ]
+        )
         connection_id = connection.id
         await session.commit()
+
+    event_response = await client.get(
+        f"/api/v1/integrations/connections/{connection_id}/events",
+        headers=bearer(owner_a["access_token"]),
+    )
+    assert event_response.status_code == 200, event_response.text
+    event = event_response.json()["items"][0]
+    assert event["processing_status"] == "failed"
+    assert event["attempt_count"] == 2
+    assert event["last_error_code"] == "provider_timeout"
+    assert "private@example.test" not in event_response.text
+    assert "must not be returned" not in event_response.text
+
+    delivery_response = await client.get(
+        f"/api/v1/integrations/connections/{connection_id}/deliveries",
+        headers=bearer(owner_a["access_token"]),
+    )
+    assert delivery_response.status_code == 200, delivery_response.text
+    delivery = delivery_response.json()["items"][0]
+    assert delivery["id"] == str(outbox_job_id)
+    assert delivery["status"] == "queued"
+    assert "We can help with that." not in delivery_response.text
+    assert delivery_response.json()["total"] == 1
+
+    delivery_analytics = await client.get(
+        "/api/v1/analytics/integration-deliveries", headers=bearer(owner_a["access_token"])
+    )
+    assert delivery_analytics.status_code == 200, delivery_analytics.text
+    analytics_body = delivery_analytics.json()
+    assert analytics_body["total"] == 1
+    assert analytics_body["queued"] == 1
+    assert analytics_body["providers"] == [
+        {"provider_id": "example_chat", "total": 1, "succeeded": 0, "failed": 0}
+    ]
+    assert "We can help with that." not in delivery_analytics.text
+
+    isolated_analytics = await client.get(
+        "/api/v1/analytics/integration-deliveries", headers=bearer(owner_b["access_token"])
+    )
+    assert isolated_analytics.status_code == 200, isolated_analytics.text
+    assert isolated_analytics.json()["total"] == 0
+
+    hidden_events = await client.get(
+        f"/api/v1/integrations/connections/{connection_id}/events",
+        headers=bearer(owner_b["access_token"]),
+    )
+    hidden_deliveries = await client.get(
+        f"/api/v1/integrations/connections/{connection_id}/deliveries",
+        headers=bearer(owner_b["access_token"]),
+    )
+    assert hidden_events.status_code == hidden_deliveries.status_code == 404
 
     messaging_provider = FakeMessagingProvider()
     registry = IntegrationRegistry()

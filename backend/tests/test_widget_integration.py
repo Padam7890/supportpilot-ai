@@ -13,9 +13,12 @@ from app.core.security import hash_password
 from app.db.session import SessionLocal, set_tenant_context
 from app.features.widgets.retention import purge_expired_order_verifications
 from app.models import (
+    AIAgent,
     AIExecution,
     Conversation,
     DocumentChunk,
+    IntegrationConnection,
+    KnowledgeBase,
     KnowledgeDocument,
     Message,
     PlatformOwner,
@@ -515,6 +518,7 @@ async def test_widget_draft_only_saves_grounded_result_without_sending(client, m
     user_id = UUID(auth["user"]["id"])
     async with SessionLocal() as db:
         await set_tenant_context(db, organization_id)
+        base = await db.scalar(select(KnowledgeBase).where(KnowledgeBase.organization_id == organization_id, KnowledgeBase.is_default.is_(True)))
         document = KnowledgeDocument(
             organization_id=organization_id,
             name="delivery-policy.txt",
@@ -522,6 +526,7 @@ async def test_widget_draft_only_saves_grounded_result_without_sending(client, m
             size_bytes=40,
             status="ready",
             uploaded_by_user_id=user_id,
+            knowledge_base_id=base.id,
         )
         db.add(document)
         await db.flush()
@@ -564,6 +569,168 @@ async def test_widget_draft_only_saves_grounded_result_without_sending(client, m
 
 
 @pytest.mark.anyio
+async def test_widget_uses_server_configured_bot_for_conversation_and_execution(client):
+    auth, organization_id, public_id = await setup_widget(
+        client,
+        "widget-selected-bot",
+        "https://store-selected-bot.example",
+        ai_enabled=True,
+    )
+    headers = bearer(auth["access_token"])
+    default_bases = await client.get("/api/v1/knowledge/bases", headers=headers)
+    assert default_bases.status_code == 200, default_bases.text
+    default_base_id = default_bases.json()["items"][0]["id"]
+    shipping_base = await client.post(
+        "/api/v1/knowledge/bases", headers=headers, json={"name": "Shipping"}
+    )
+    assert shipping_base.status_code == 201, shipping_base.text
+    selected = await client.post(
+        "/api/v1/ai/agents",
+        headers=headers,
+        json={"name": "Storefront specialist", "knowledge_base_ids": [default_base_id]},
+    )
+    assert selected.status_code == 201, selected.text
+    selected_agent_id = selected.json()["id"]
+    second_selected = await client.post(
+        "/api/v1/ai/agents",
+        headers=headers,
+        json={
+            "name": "Shipping specialist",
+            "knowledge_base_ids": [shipping_base.json()["id"]],
+        },
+    )
+    assert second_selected.status_code == 201, second_selected.text
+    second_agent_id = second_selected.json()["id"]
+
+    config_body = {
+        "allowed_origins": ["https://store-selected-bot.example"],
+        "enabled": True,
+        "collect_contact": True,
+        "ai_enabled": True,
+        "ai_reply_mode": "draft_only",
+        "ai_agent_id": selected_agent_id,
+        "ai_agent_ids": [selected_agent_id, second_agent_id],
+    }
+    configured = await client.put(
+        "/api/v1/integrations/widget", headers=headers, json=config_body
+    )
+    assert configured.status_code == 200, configured.text
+    assert configured.json()["ai_agent_id"] == selected_agent_id
+    assert configured.json()["ai_agent_ids"] == [selected_agent_id, second_agent_id]
+    async with SessionLocal() as db:
+        await set_tenant_context(db, organization_id)
+        document = KnowledgeDocument(
+            organization_id=organization_id,
+            knowledge_base_id=UUID(shipping_base.json()["id"]),
+            name="shipping-faq.txt",
+            content_type="text/plain",
+            size_bytes=58,
+            status="ready",
+            uploaded_by_user_id=UUID(auth["user"]["id"]),
+        )
+        db.add(document)
+        await db.flush()
+        db.add(DocumentChunk(
+            organization_id=organization_id,
+            document_id=document.id,
+            chunk_index=0,
+            content="Delivery tracking and parcel courier shipment information.",
+        ))
+        await db.commit()
+
+    other_auth, _other_organization_id, _other_widget = await setup_widget(
+        client, "widget-other-bot-tenant", "https://other-selected-bot.example"
+    )
+    other_agents = await client.get(
+        "/api/v1/ai/agents", headers=bearer(other_auth["access_token"])
+    )
+    foreign_agent_id = other_agents.json()["items"][0]["id"]
+    cross_tenant_config = await client.put(
+        "/api/v1/integrations/widget",
+        headers=headers,
+        json={**config_body, "ai_agent_ids": [selected_agent_id, foreign_agent_id]},
+    )
+    assert cross_tenant_config.status_code == 404
+
+    origin = "https://store-selected-bot.example"
+    public_config = await client.get(
+        f"/api/v1/widget/{public_id}/config", headers={"Origin": origin}
+    )
+    assert public_config.status_code == 200, public_config.text
+    assert "ai_agent_id" not in public_config.json()
+    assert "system_instructions" not in public_config.json()
+
+    visitor_supplied_bot = await client.post(
+        f"/api/v1/widget/{public_id}/messages",
+        headers={"Origin": origin, "Idempotency-Key": "visitor-selected-bot-0001"},
+        json={"content": "Hello", "ai_agent_id": foreign_agent_id},
+    )
+    assert visitor_supplied_bot.status_code == 422
+
+    started = await client.post(
+        f"/api/v1/widget/{public_id}/messages",
+        headers={"Origin": origin, "Idempotency-Key": "visitor-selected-bot-0002"},
+        json={"content": "Hello, I need some help."},
+    )
+    assert started.status_code == 201, started.text
+    conversation_id = UUID(started.json()["conversation_id"])
+    async with SessionLocal() as db:
+        await set_tenant_context(db, organization_id)
+        conversation = await db.scalar(
+            select(Conversation).where(
+                Conversation.organization_id == organization_id,
+                Conversation.id == conversation_id,
+            )
+        )
+        execution = await db.scalar(
+            select(AIExecution).where(
+                AIExecution.organization_id == organization_id,
+                AIExecution.conversation_id == conversation_id,
+                AIExecution.kind == "widget_reply",
+            )
+        )
+        selected_agent = await db.scalar(
+            select(AIAgent).where(
+                AIAgent.organization_id == organization_id,
+                AIAgent.id == UUID(selected_agent_id),
+            )
+        )
+        assert conversation is not None and str(conversation.ai_agent_id) == selected_agent_id
+        assert execution is not None and str(execution.ai_agent_id) == selected_agent_id
+        assert selected_agent is not None
+        assert execution.ai_agent_config_version == selected_agent.config_version
+
+    continued = await client.post(
+        f"/api/v1/widget/conversations/{conversation_id}/messages",
+        headers={
+            "Origin": origin,
+            "Authorization": f"Bearer {started.json()['visitor_token']}",
+            "Idempotency-Key": "visitor-shipping-question-0001",
+        },
+        json={"content": "Where is my shipment tracking?"},
+    )
+    assert continued.status_code == 200, continued.text
+    async with SessionLocal() as db:
+        await set_tenant_context(db, organization_id)
+        conversation = await db.scalar(
+            select(Conversation).where(
+                Conversation.organization_id == organization_id,
+                Conversation.id == conversation_id,
+            )
+        )
+        routed_execution = await db.scalar(
+            select(AIExecution)
+            .where(
+                AIExecution.organization_id == organization_id,
+                AIExecution.conversation_id == conversation_id,
+                AIExecution.source_message_id == continued.json()["id"],
+            )
+        )
+        assert conversation is not None and str(conversation.ai_agent_id) == second_agent_id
+        assert routed_execution is not None and str(routed_execution.ai_agent_id) == second_agent_id
+
+
+@pytest.mark.anyio
 async def test_widget_human_takeover_during_generation_prevents_late_ai_reply(client, monkeypatch):
     auth, organization_id, public_id = await setup_widget(
         client,
@@ -574,6 +741,7 @@ async def test_widget_human_takeover_during_generation_prevents_late_ai_reply(cl
     )
     async with SessionLocal() as db:
         await set_tenant_context(db, organization_id)
+        base = await db.scalar(select(KnowledgeBase).where(KnowledgeBase.organization_id == organization_id, KnowledgeBase.is_default.is_(True)))
         document = KnowledgeDocument(
             organization_id=organization_id,
             name="returns.txt",
@@ -581,6 +749,7 @@ async def test_widget_human_takeover_during_generation_prevents_late_ai_reply(cl
             size_bytes=32,
             status="ready",
             uploaded_by_user_id=UUID(auth["user"]["id"]),
+            knowledge_base_id=base.id,
         )
         db.add(document)
         await db.flush()
@@ -589,7 +758,7 @@ async def test_widget_human_takeover_during_generation_prevents_late_ai_reply(cl
                 organization_id=organization_id,
                 document_id=document.id,
                 chunk_index=0,
-                content="Unused items can be returned within thirty days.",
+            content="The blue item is made from cotton fabric.",
             )
         )
         await db.commit()
@@ -607,11 +776,12 @@ async def test_widget_human_takeover_during_generation_prevents_late_ai_reply(cl
         }
 
     monkeypatch.setattr(ai_worker, "create_grounded_draft", delayed_generation)
+    monkeypatch.setattr(ai_worker, "is_provider_configured", lambda: True)
     origin = "https://store-concurrent-takeover.example"
     started = await client.post(
         f"/api/v1/widget/{public_id}/messages",
         headers={"Origin": origin, "Idempotency-Key": "widget-takeover-during-ai-01"},
-        json={"content": "Can I return an unused product?"},
+        json={"content": "What material is the blue item made from?"},
     )
     assert started.status_code == 201, started.text
     execution_id = await claim_ai_execution(organization_id)
@@ -855,6 +1025,10 @@ async def test_widget_order_lookup_requires_email_code_and_returns_only_verified
         lambda value: value.removeprefix("encrypted:"),
     )
     monkeypatch.setattr(
+        "app.features.widgets.cancellation.decrypt_credential",
+        lambda value: value.removeprefix("encrypted:"),
+    )
+    monkeypatch.setattr(
         "app.integrations.providers.shopify.security.decrypt_credential",
         lambda value: value.removeprefix("encrypted:"),
     )
@@ -932,12 +1106,46 @@ async def test_widget_order_lookup_requires_email_code_and_returns_only_verified
     assert confirmed.json()["verified"] is True
     assert confirmed.json()["tracking"][0]["number"] == "TRACK-1001"
     assert "https://tracking.example/1001" in confirmed.json()["message"]
-    monkeypatch.setattr("app.services.shopify_access.installation_for", get_installation)
+    async with SessionLocal() as db:
+        await set_tenant_context(db, organization_id)
+        db.add(
+            IntegrationConnection(
+                organization_id=organization_id,
+                provider_id="shopify",
+                external_account_id="verified-store.myshopify.com",
+                display_name="verified-store.myshopify.com",
+                status="connected",
+                connected_by_user_id=UUID(_auth["user"]["id"]),
+            )
+        )
+        await db.commit()
+
+    class MockCommerceCapability:
+        async def lookup_order(self, _connection_ref, *, order_number, verified_customer_email):
+            order = await find_order(
+                shop_domain="verified-store.myshopify.com",
+                access_token="mock-token",
+                order_number=order_number,
+                customer_email=verified_customer_email,
+            )
+            return {
+                "id": order["id"],
+                "order_number": order["name"],
+                "created_at": order["createdAt"],
+                "financial_status": order["displayFinancialStatus"],
+                "fulfillment_status": order["displayFulfillmentStatus"],
+                "total_amount": order["currentTotalPriceSet"]["shopMoney"]["amount"],
+                "currency": order["currentTotalPriceSet"]["shopMoney"]["currencyCode"],
+                "tracking": order["fulfillments"][0]["trackingInfo"],
+            }
+
+    class MockProviderRegistry:
+        def get_capability(self, *_args):
+            return MockCommerceCapability()
+
     monkeypatch.setattr(
-        "app.services.shopify_tokens.valid_access_token", lambda db, installation: _token()
-    )
-    monkeypatch.setattr(
-        "app.integrations.providers.shopify.orders.lookup_authorized_order", find_order
+        "app.features.ai.application.widget_orders.build_integration_registry",
+        MockProviderRegistry,
     )
     followup = await client.post(
         f"/api/v1/widget/conversations/{started.json()['conversation_id']}/messages",

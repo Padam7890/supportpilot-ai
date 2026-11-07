@@ -33,11 +33,17 @@ class ConversationOut(TimestampedOut):
     channel: str
     status: str
     ai_mode: Literal["ai", "human"]
+    ai_agent_id: uuid.UUID
+    ai_agent_override: bool = False
     shopping_context: ShoppingContextOut | None = None
 
 
 class ConversationAIModeUpdate(BaseModel):
     mode: Literal["ai", "human"]
+
+
+class ConversationAIAgentUpdate(BaseModel):
+    ai_agent_id: uuid.UUID | None = None
 
 
 class MessageCreate(BaseModel):
@@ -59,6 +65,10 @@ class MessageOut(TimestampedOut):
     content: str
     content_type: str
     sender_name: str | None = None
+    delivery_status: Literal["received", "accepted", "sent", "delivered", "failed", "unknown"] | None = None
+    delivery_job_status: Literal["queued", "running", "succeeded", "failed", "cancelled"] | None = None
+    delivery_error_code: str | None = Field(default=None, max_length=80)
+    delivery_correlation_id: str | None = Field(default=None, max_length=64)
 
 
 class InboxCustomerOut(BaseModel):
@@ -70,6 +80,19 @@ class InboxCustomerOut(BaseModel):
 class InboxAssigneeOut(BaseModel):
     id: uuid.UUID
     name: str
+
+
+class InboxTeamOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    is_active: bool
+
+
+class FirstResponseSlaOut(BaseModel):
+    status: Literal["on_track", "at_risk", "overdue", "met", "breached"]
+    target_minutes: int
+    due_at: datetime
+    responded_at: datetime | None
 
 
 class InboxLatestMessageOut(BaseModel):
@@ -86,8 +109,10 @@ class InboxItemOut(BaseModel):
     priority: Literal["low", "normal", "high", "urgent"]
     customer: InboxCustomerOut
     assignee: InboxAssigneeOut | None
+    team: InboxTeamOut | None = None
     latest_message: InboxLatestMessageOut | None
     unread_count: int
+    first_response_sla: FirstResponseSlaOut | None = None
     updated_at: datetime
 
 

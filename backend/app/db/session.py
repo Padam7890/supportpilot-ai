@@ -7,7 +7,9 @@ from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
 
-engine_options = {"pool_pre_ping": True, "echo": settings.debug}
+# SQLAlchemy's echo includes bound parameter values, which can contain credentials
+# or customer data. Keep it disabled; use the structured application diagnostics.
+engine_options = {"pool_pre_ping": True, "echo": False}
 if settings.app_env == "test":
     # AnyIO tests can use a new event loop per test; avoid carrying asyncpg
     # connections between loops through SQLAlchemy's default pool.

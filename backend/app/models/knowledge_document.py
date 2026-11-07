@@ -35,6 +35,12 @@ class KnowledgeDocument(UUIDPrimaryKey, TimestampMixin, Base):
             ["users.organization_id", "users.id"],
             name="fk_knowledge_documents_org_uploader",
         ),
+        ForeignKeyConstraint(
+            ["organization_id", "knowledge_base_id"],
+            ["knowledge_bases.organization_id", "knowledge_bases.id"],
+            name="fk_knowledge_documents_org_knowledge_base",
+            ondelete="RESTRICT",
+        ),
         Index("ix_knowledge_documents_org_status", "organization_id", "status"),
         Index("ix_knowledge_documents_org_deleted", "organization_id", "deleted_at"),
     )
@@ -49,6 +55,7 @@ class KnowledgeDocument(UUIDPrimaryKey, TimestampMixin, Base):
     uploaded_by_user_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), nullable=False
     )
+    knowledge_base_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 

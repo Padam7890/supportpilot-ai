@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import set_tenant_context
-from app.integrations.connections.service import sync_shopify_connection
+from app.integrations.connections.service import record_connection_audit, sync_shopify_connection
 from app.integrations.providers.shopify.client import (
     ShopifyAPIError,
     effective_shopify_scopes,
@@ -188,6 +188,11 @@ async def complete_shopify_oauth(
             .where(ShopifyInstallation.organization_id == user.organization_id)
             .with_for_update()
         )
+        was_connected = bool(
+            installation is not None
+            and installation.disconnected_at is None
+            and installation.access_token_encrypted
+        )
         values = {
             "shop_domain": normalized_shop,
             "auth_mode": "oauth",
@@ -207,7 +212,15 @@ async def complete_shopify_oauth(
             for key, value in values.items():
                 setattr(installation, key, value)
         await db.flush()
-        await sync_shopify_connection(db, installation)
+        connection = await sync_shopify_connection(db, installation)
+        record_connection_audit(
+            db,
+            connection,
+            event_type="reauthorized" if was_connected else "connected",
+            actor_user_id=user.id,
+            auth_mode=installation.auth_mode,
+            granted_scopes=list(installation.granted_scopes or []),
+        )
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()

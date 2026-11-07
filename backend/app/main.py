@@ -1,27 +1,63 @@
 import logging
+import re
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from http import HTTPStatus
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
+from starlette.responses import Response
 
 from app.api.router import api_router
 from app.core.config import settings
 from app.core.database import DatabaseSchemaOutOfDate, check_database, close_database
+from app.core.observability import current_correlation_id, reset_correlation_id, set_correlation_id
 from app.integrations.registry import build_integration_registry
 from app.schemas.errors import ProblemDetails
+from app.schemas.health import WorkerHealthOut
 from app.services.email_delivery import smtp_is_configured
+from app.workers.application.heartbeat import active_worker_count
 
 logger = logging.getLogger(__name__)
+CORRELATION_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logging.basicConfig(level=settings.log_level.upper())
+    # Pytest uses a placeholder DATABASE_URL unless integration tests override it.
+    if settings.app_env != "test":
+        try:
+            await check_database()
+        except DatabaseSchemaOutOfDate as exc:
+            applied = sorted(exc.applied_heads) if exc.applied_heads else ["unavailable"]
+            expected = sorted(exc.expected_heads) if exc.expected_heads else ["unknown"]
+            logger.critical(
+                "startup_blocked_database_schema_mismatch applied=%s expected=%s",
+                applied,
+                expected,
+            )
+            raise RuntimeError(
+                "Database schema is not current. Apply migrations: `alembic upgrade head` "
+                "(or run the `migrate` Compose service) before starting the API.",
+            ) from exc
+        except Exception as exc:
+            # In production, refuse to start without a migrated, reachable database.
+            if settings.app_env == "production":
+                logger.exception("startup_database_unavailable")
+                raise RuntimeError(
+                    "Database is unavailable or migrations could not be verified at startup.",
+                ) from exc
+            logger.warning(
+                "startup_database_check_skipped",
+                extra={"error_type": type(exc).__name__},
+            )
     redis_client = Redis.from_url(
         settings.redis_url,
         decode_responses=True,
@@ -57,6 +93,32 @@ def custom_openapi() -> dict[str, object]:
 
 
 app.openapi = custom_openapi  # type: ignore[method-assign]
+
+
+@app.middleware("http")
+async def correlate_request(request: Request, call_next) -> Response:
+    """Propagate a validated correlation ID and log request metadata without payloads."""
+    supplied = request.headers.get("x-correlation-id", "")
+    correlation_id = supplied if CORRELATION_ID_PATTERN.fullmatch(supplied) else str(uuid4())
+    token = set_correlation_id(correlation_id)
+    started = time.monotonic()
+    try:
+        response = await call_next(request)
+        response.headers["X-Correlation-ID"] = correlation_id
+        route = request.scope.get("route")
+        logger.info(
+            "http_request_complete",
+            extra={
+                "correlation_id": correlation_id,
+                "method": request.method,
+                "route": getattr(route, "path", "unmatched"),
+                "status_code": response.status_code,
+                "duration_ms": round((time.monotonic() - started) * 1000),
+            },
+        )
+        return response
+    finally:
+        reset_correlation_id(token)
 
 
 def problem_response(
@@ -125,7 +187,16 @@ async def handle_validation_error(request: Request, exc: RequestValidationError)
 
 @app.exception_handler(Exception)
 async def handle_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
-    logger.exception("Unhandled API error", exc_info=exc)
+    route = request.scope.get("route")
+    logger.exception(
+        "unhandled_api_error",
+        exc_info=exc,
+        extra={
+            "correlation_id": current_correlation_id(),
+            "method": request.method,
+            "route": getattr(route, "path", "unmatched"),
+        },
+    )
     return problem_response(
         request,
         500,
@@ -139,7 +210,8 @@ app.add_middleware(
     allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Correlation-ID"],
+    expose_headers=["X-Correlation-ID"],
 )
 
 
@@ -155,6 +227,18 @@ async def root() -> dict[str, str]:
 @app.get("/health/live")
 async def liveness() -> dict[str, str]:
     return {"status": "alive"}
+
+
+@app.get("/health/worker", response_model=WorkerHealthOut)
+async def worker_health() -> WorkerHealthOut:
+    """Expose whether at least one durable worker has sent a recent heartbeat."""
+    redis_client: Redis = app.state.redis
+    workers = await active_worker_count(redis_client)
+    return WorkerHealthOut(
+        status="active" if workers else "inactive",
+        active_workers=workers,
+        checked_at=datetime.now(UTC),
+    )
 
 
 @app.get("/health/ready")

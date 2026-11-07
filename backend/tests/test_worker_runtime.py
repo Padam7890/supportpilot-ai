@@ -1,4 +1,5 @@
 import asyncio
+from collections import Counter
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -35,6 +36,40 @@ class FakeHandler:
         self.processed.append((self.kind, job.organization_id))
 
 
+class FiniteQueueHandler:
+    def __init__(self, kind, organizations, jobs_per_organization, processed):
+        self.kind = kind
+        self.remaining = {organization: jobs_per_organization for organization in organizations}
+        self.processed = processed
+
+    async def claim(self, organization_id):
+        available = self.remaining.get(organization_id, 0)
+        if available == 0:
+            return None
+        self.remaining[organization_id] = available - 1
+        return ClaimedJob(self.kind, organization_id, uuid4())
+
+    async def process(self, job):
+        self.processed.append((self.kind, job.organization_id))
+
+
+class NoopWorkerRedis:
+    async def aclose(self):
+        return None
+
+
+class NoopWorkerHeartbeat:
+    def __init__(self, _redis):
+        self.refreshes = 0
+        self.stopped = False
+
+    async def refresh(self):
+        self.refreshes += 1
+
+    async def stop(self):
+        self.stopped = True
+
+
 @pytest.mark.anyio
 async def test_dispatcher_fairly_rotates_tenants_and_job_families(monkeypatch):
     import app.workers.application.dispatcher as dispatcher_module
@@ -59,6 +94,45 @@ async def test_dispatcher_fairly_rotates_tenants_and_job_families(monkeypatch):
     assert await dispatcher.dispatch_one()
     assert await dispatcher.dispatch_one()
     assert processed == [("ai", organization_a), ("catalog", organization_b)]
+
+
+@pytest.mark.anyio
+async def test_dispatcher_keeps_tenant_and_queue_families_fair_under_synthetic_backlog(monkeypatch):
+    import app.workers.application.dispatcher as dispatcher_module
+
+    async def no_reconcile(_organizations):
+        return None
+
+    monkeypatch.setattr(dispatcher_module, "enqueue_reconciliation", no_reconcile)
+    organizations = sorted(uuid4() for _ in range(12))
+    queue_families = ("ai", "catalog", "automation", "outbound")
+    jobs_per_pair = 10
+    processed = []
+    handlers = [
+        FiniteQueueHandler(kind, organizations, jobs_per_pair, processed)
+        for kind in queue_families
+    ]
+    dispatcher = WorkerDispatcher(
+        handlers=handlers,
+        repository=FakeRepository(organizations),
+        job_timeout_seconds=1,
+    )
+    dispatcher._last_reconciliation = datetime.now(UTC)
+
+    for _ in range(len(organizations) * len(queue_families) * jobs_per_pair):
+        assert await dispatcher.dispatch_one()
+    assert not await dispatcher.dispatch_one()
+
+    by_pair = Counter(processed)
+    by_tenant = Counter(organization for _kind, organization in processed)
+    by_family = Counter(kind for kind, _organization in processed)
+    assert len(processed) == 480
+    assert set(by_pair.values()) == {jobs_per_pair}
+    assert set(by_tenant.values()) == {len(queue_families) * jobs_per_pair}
+    assert set(by_family.values()) == {len(organizations) * jobs_per_pair}
+    for kind in queue_families:
+        assert dispatcher._metrics[(kind, "started")] == len(organizations) * jobs_per_pair
+        assert dispatcher._metrics[(kind, "handler_returned")] == len(organizations) * jobs_per_pair
 
 
 @pytest.mark.anyio
@@ -143,6 +217,8 @@ async def test_worker_runtime_never_exceeds_configured_concurrency(monkeypatch):
 
     dispatcher = ConcurrentDispatcher(job_timeout_seconds=30)
     monkeypatch.setattr(runtime_module, "WorkerDispatcher", lambda **_kwargs: dispatcher)
+    monkeypatch.setattr(runtime_module.Redis, "from_url", lambda *_args, **_kwargs: NoopWorkerRedis())
+    monkeypatch.setattr(runtime_module, "WorkerHeartbeat", NoopWorkerHeartbeat)
     await runtime_module.run_worker(concurrency=3, stop_event=stop)
     assert dispatcher.completed >= 9
     assert dispatcher.max_active == 3
@@ -168,5 +244,16 @@ async def test_worker_runtime_recovers_from_dispatch_iteration_failure(monkeypat
 
     dispatcher = RecoveringDispatcher(job_timeout_seconds=30)
     monkeypatch.setattr(runtime_module, "WorkerDispatcher", lambda **_kwargs: dispatcher)
+    monkeypatch.setattr(runtime_module.Redis, "from_url", lambda *_args, **_kwargs: NoopWorkerRedis())
+    heartbeat_instances = []
+
+    def create_heartbeat(redis):
+        heartbeat = NoopWorkerHeartbeat(redis)
+        heartbeat_instances.append(heartbeat)
+        return heartbeat
+
+    monkeypatch.setattr(runtime_module, "WorkerHeartbeat", create_heartbeat)
     await runtime_module.run_worker(poll_seconds=0.001, concurrency=1, stop_event=stop)
     assert dispatcher.attempts == 2
+    assert heartbeat_instances[0].refreshes >= 1
+    assert heartbeat_instances[0].stopped

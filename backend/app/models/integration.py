@@ -45,6 +45,12 @@ class IntegrationConnection(UUIDPrimaryKey, TimestampMixin, Base):
             name="fk_integration_connections_org_user",
             ondelete="RESTRICT",
         ),
+        ForeignKeyConstraint(
+            ["organization_id", "ai_agent_id"],
+            ["ai_agents.organization_id", "ai_agents.id"],
+            name="fk_integration_connections_org_ai_agent",
+            ondelete="RESTRICT",
+        ),
         Index(
             "ix_integration_connections_org_provider_status",
             "organization_id",
@@ -57,6 +63,7 @@ class IntegrationConnection(UUIDPrimaryKey, TimestampMixin, Base):
     organization_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
     )
+    ai_agent_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
     provider_id: Mapped[str] = mapped_column(String(48), nullable=False)
     external_account_id: Mapped[str] = mapped_column(String(512), nullable=False)
     display_name: Mapped[str] = mapped_column(String(160), nullable=False)
@@ -69,6 +76,50 @@ class IntegrationConnection(UUIDPrimaryKey, TimestampMixin, Base):
 
     credentials = relationship(
         "IntegrationCredential", back_populates="connection", cascade="all, delete-orphan"
+    )
+
+
+class IntegrationConnectionAudit(UUIDPrimaryKey, Base):
+    """Tenant-scoped, secret-free history of integration connection changes."""
+
+    __tablename__ = "integration_connection_audits"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_integration_connection_audits_org_id"),
+        CheckConstraint(
+            "event_type IN ('connected', 'reauthorized', 'disconnected', 'bot_routing_changed')",
+            name="ck_integration_connection_audits_event_type",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "connection_id"],
+            ["integration_connections.organization_id", "integration_connections.id"],
+            name="fk_integration_connection_audits_org_connection",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "actor_user_id"],
+            ["users.organization_id", "users.id"],
+            name="fk_integration_connection_audits_org_actor",
+            ondelete="RESTRICT",
+        ),
+        Index(
+            "ix_integration_connection_audits_org_connection_time",
+            "organization_id",
+            "connection_id",
+            "created_at",
+            "id",
+        ),
+    )
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
+    )
+    connection_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
+    provider_id: Mapped[str] = mapped_column(String(48), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    details: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )
 
 
@@ -160,6 +211,10 @@ class IntegrationDeliveryJob(UUIDPrimaryKey, TimestampMixin, Base):
             name="ck_integration_delivery_jobs_attempts",
         ),
         CheckConstraint("max_attempts > 0", name="ck_integration_delivery_jobs_max_attempts"),
+        CheckConstraint(
+            "manual_retry_count >= 0 AND manual_retry_count <= 3",
+            name="ck_integration_delivery_jobs_manual_retry_count",
+        ),
         UniqueConstraint(
             "organization_id", "idempotency_key_hash", name="uq_integration_delivery_jobs_idempotency"
         ),
@@ -203,9 +258,11 @@ class IntegrationDeliveryJob(UUIDPrimaryKey, TimestampMixin, Base):
     connection_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     message_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     idempotency_key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    correlation_id: Mapped[str | None] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(16), default="queued", nullable=False)
     attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     max_attempts: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
+    manual_retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     provider_message_id: Mapped[str | None] = mapped_column(String(512))

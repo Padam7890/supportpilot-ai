@@ -255,8 +255,14 @@ async def _credentials(shop: str, token: str) -> tuple[str, str]:
     return shop, token
 
 
-def test_shopify_provider_advertises_only_implemented_catalog_capability():
-    provider = ShopifyCatalogProvider(lambda _connection: _credentials("demo.myshopify.com", "token"))
+def test_shopify_provider_exposes_catalog_and_read_only_commerce_capabilities():
+    async def commerce_credentials(_connection):
+        return "demo.myshopify.com", "token", frozenset({"read_orders", "read_customers"})
+
+    provider = ShopifyCatalogProvider(
+        lambda _connection: _credentials("demo.myshopify.com", "token"),
+        commerce_credentials,
+    )
 
     assert IntegrationCapability.PRODUCT_CATALOG in provider.descriptor.capabilities
     capability = provider.get_capability(IntegrationCapability.PRODUCT_CATALOG)

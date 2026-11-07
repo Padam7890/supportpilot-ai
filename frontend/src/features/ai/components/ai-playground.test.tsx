@@ -3,10 +3,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AIPlayground } from "./ai-playground";
 
-const { createPlaygroundExecution, getAIExecution, getCurrentUser } = vi.hoisted(() => ({
+const { createPlaygroundExecution, getAIExecution, getCurrentUser, listAIAgents } = vi.hoisted(() => ({
   createPlaygroundExecution: vi.fn(),
   getAIExecution: vi.fn(),
   getCurrentUser: vi.fn(),
+  listAIAgents: vi.fn(),
 }));
 
 vi.mock("../api/ai-api", () => ({
@@ -16,9 +17,12 @@ vi.mock("../api/ai-api", () => ({
 }));
 
 vi.mock("@/features/auth/api/auth-api", () => ({ getCurrentUser }));
+vi.mock("../api/ai-agent-api", () => ({ aiAgentsKey: ["ai-agents"], listAIAgents }));
 
 const succeededExecution = {
   id: "a22217a4-f3a9-4a55-8d41-810ad80a32a0",
+  ai_agent_id: "9aa5f49c-c5b4-4e55-b34c-67a9cff31610",
+  ai_agent_config_version: 2,
   kind: "playground" as const,
   status: "succeeded" as const,
   safe_summary: "Playground answer generated using 1 knowledge source(s).",
@@ -45,6 +49,7 @@ describe("AI playground", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getCurrentUser.mockResolvedValue({ role: "agent" });
+    listAIAgents.mockResolvedValue({ items: [], total: 0, limit: 100, offset: 0 });
     createPlaygroundExecution.mockResolvedValue({ ...succeededExecution, status: "queued", draft: null, citations: [], completed_at: null });
     getAIExecution.mockResolvedValue(succeededExecution);
   });
@@ -58,6 +63,7 @@ describe("AI playground", () => {
     fireEvent.click(submit);
 
     expect(await screen.findByText(succeededExecution.draft)).toBeInTheDocument();
+    expect(screen.getByText(/bot configuration v2/)).toBeInTheDocument();
     expect(screen.getByText("returns.txt · section 1")).toBeInTheDocument();
     expect(createPlaygroundExecution.mock.calls[0][0]).toEqual({ question: "What is the return policy?" });
     expect(getAIExecution).toHaveBeenCalledWith(succeededExecution.id);

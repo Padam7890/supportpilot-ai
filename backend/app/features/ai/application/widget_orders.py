@@ -8,7 +8,12 @@ from uuid import UUID
 from sqlalchemy import select
 
 from app.db.session import SessionLocal, set_tenant_context
-from app.models import WidgetOrderVerification
+from app.integrations.core.contracts.provider import IntegrationConnectionRef
+from app.integrations.core.interfaces import CommerceCapability
+from app.integrations.core.types import IntegrationCapability
+from app.integrations.registry import build_integration_registry
+from app.models import IntegrationConnection, WidgetOrderVerification
+from app.schemas.shopify import ShopifyOrderOut
 from app.services.widget_ai import format_verified_order_status
 
 logger = logging.getLogger(__name__)
@@ -63,27 +68,41 @@ async def verified_widget_order_reply(
         order_id = verification.shopify_order_id
 
     try:
-        from app.integrations.providers.shopify.orders import lookup_authorized_order
         from app.integrations.providers.shopify.security import decrypt_credential
-        from app.services.shopify_access import installation_for
-        from app.services.shopify_order_lookup import map_order
-        from app.services.shopify_tokens import valid_access_token
 
         email = decrypt_credential(email_encrypted)
         async with SessionLocal() as db:
             await set_tenant_context(db, organization_id)
-            installation = await installation_for(db, organization_id)
-            access_token = await valid_access_token(db, installation)
-            shop_domain = installation.shop_domain
-        order = await lookup_authorized_order(
-            shop_domain=shop_domain,
-            access_token=access_token,
+            connection = await db.scalar(
+                select(IntegrationConnection).where(
+                    IntegrationConnection.organization_id == organization_id,
+                    IntegrationConnection.provider_id == "shopify",
+                    IntegrationConnection.status == "connected",
+                )
+            )
+            if connection is None:
+                return True, (
+                    "I’ve verified your order, but the store connection is unavailable right now. "
+                    "A support teammate can help."
+                )
+            connection_ref = IntegrationConnectionRef(
+                id=connection.id,
+                organization_id=connection.organization_id,
+                provider_id=connection.provider_id,
+                external_account_id=connection.external_account_id,
+            )
+
+        commerce = build_integration_registry().get_capability(
+            "shopify", IntegrationCapability.COMMERCE, CommerceCapability
+        )
+        order = await commerce.lookup_order(
+            connection_ref,
             order_number=order_number,
-            customer_email=email,
+            verified_customer_email=email,
         )
         if order is None or order.get("id") != order_id:
             return False, None
-        mapped = map_order(order)
+        mapped = ShopifyOrderOut.model_validate(order)
         return True, format_verified_order_status(mapped, opening="I checked your verified order")
     except Exception as exc:  # noqa: BLE001 - fail closed while retaining the verified session.
         logger.warning(

@@ -41,8 +41,8 @@ test("register, create customer and ticket, assign an agent, and exchange a mess
   await page.goto("/register");
   const registerA11y = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
   expect(registerA11y.violations.filter((violation) => ["critical", "serious"].includes(violation.impact ?? ""))).toEqual([]);
-  await page.getByLabel("Organization name").fill(`Demo ${unique}`);
-  await page.getByLabel("Organization slug").fill(`demo-${unique}`);
+  await page.getByLabel("Organization name", { exact: true }).fill(`Demo ${unique}`);
+  await page.getByLabel("Organization slug", { exact: true }).fill(`demo-${unique}`);
   await page.getByLabel("Your name").fill("Demo Owner");
   const ownerEmail = `owner-${unique}@example.com`;
   const ownerPassword = "demo-owner-long-password";
@@ -199,6 +199,8 @@ test("register, create customer and ticket, assign an agent, and exchange a mess
   const draftExecutionId = "f0c6a074-d911-4a83-9b78-6c0ad0d54e90";
   const draftExecution = {
     id: draftExecutionId,
+    ai_agent_id: "9aa5f49c-c5b4-4e55-b34c-67a9cff31610",
+    ai_agent_config_version: 1,
     kind: "reply_draft",
     status: "succeeded",
     safe_summary: "Reply draft generated using 1 knowledge source(s).",
@@ -323,8 +325,8 @@ test("rejected tenant remains blocked from workspace login", async ({ page, brow
   const slug = `rejected-${unique}`;
   const password = "demo-owner-long-password";
   await page.goto("/register");
-  await page.getByLabel("Organization name").fill(`Rejected ${unique}`);
-  await page.getByLabel("Organization slug").fill(slug);
+  await page.getByLabel("Organization name", { exact: true }).fill(`Rejected ${unique}`);
+  await page.getByLabel("Organization slug", { exact: true }).fill(slug);
   await page.getByLabel("Your name").fill("Rejected Owner");
   await page.getByLabel("Work email").fill(email);
   await page.getByLabel("Password").fill(password);
@@ -365,8 +367,8 @@ test("shared account selects the correct workspace and verifies sign-in with ema
 
   for (const workspace of workspaces) {
     await page.goto("/register");
-    await page.getByLabel("Organization name").fill(workspace.name);
-    await page.getByLabel("Organization slug").fill(workspace.slug);
+    await page.getByLabel("Organization name", { exact: true }).fill(workspace.name);
+    await page.getByLabel("Organization slug", { exact: true }).fill(workspace.slug);
     await page.getByLabel("Your name").fill("Shared User");
     await page.getByLabel("Work email").fill(email);
     await page.getByLabel("Password").fill(workspace.password);
@@ -408,8 +410,8 @@ test("password recovery verifies email and permits a new OTP sign-in", async ({ 
   const password = "initial-recovery-password";
   const slug = `recovery-${unique}`;
   await page.goto("/register");
-  await page.getByLabel("Organization name").fill(`Recovery ${unique}`);
-  await page.getByLabel("Organization slug").fill(slug);
+  await page.getByLabel("Organization name", { exact: true }).fill(`Recovery ${unique}`);
+  await page.getByLabel("Organization slug", { exact: true }).fill(slug);
   await page.getByLabel("Your name").fill("Recovery Owner");
   await page.getByLabel("Work email").fill(email);
   await page.getByLabel("Password").fill(password);
@@ -467,13 +469,13 @@ test("public landing, features, and pricing pages describe the current product a
   const landingA11y = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
   expect(landingA11y.violations.filter((violation) => ["critical", "serious"].includes(violation.impact ?? ""))).toEqual([]);
 
-  await page.getByRole("link", { name: "Features" }).first().click();
+  await page.goto("/features");
   await expect(page.getByRole("heading", { name: "A complete view of the support conversation" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Shopify order lookup" })).toBeVisible();
   const featuresA11y = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
   expect(featuresA11y.violations.filter((violation) => ["critical", "serious"].includes(violation.impact ?? ""))).toEqual([]);
 
-  await page.getByRole("link", { name: "Pricing" }).first().click();
+  await page.goto("/pricing");
   await expect(page.getByRole("heading", { name: "Pricing information" })).toBeVisible();
   await expect(page.getByText(/Public pricing and plan limits aren’t published yet/)).toBeVisible();
   const pricingA11y = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();

@@ -33,6 +33,12 @@ class Ticket(UUIDPrimaryKey, TimestampMixin, Base):
             name="fk_tickets_org_assignee",
             ondelete="RESTRICT",
         ),
+        ForeignKeyConstraint(
+            ["organization_id", "team_id"],
+            ["teams.organization_id", "teams.id"],
+            name="fk_tickets_org_team",
+            ondelete="RESTRICT",
+        ),
     )
 
     organization_id: Mapped[uuid.UUID] = mapped_column(
@@ -40,6 +46,7 @@ class Ticket(UUIDPrimaryKey, TimestampMixin, Base):
     )
     customer_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     assignee_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
+    team_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
     subject: Mapped[str] = mapped_column(String(240), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(30), default="open", nullable=False)
@@ -52,3 +59,4 @@ class Ticket(UUIDPrimaryKey, TimestampMixin, Base):
     conversations = relationship(
         "Conversation", back_populates="ticket", cascade="all, delete-orphan"
     )
+    team = relationship("Team")

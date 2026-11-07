@@ -9,9 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_roles
 from app.db.session import get_db
+from app.services.knowledge_base_audit import record_knowledge_base_audit
 from app.models import (
     DocumentChunk,
     DocumentIngestionJob,
+    KnowledgeBase,
     KnowledgeDocument,
     KnowledgeDocumentSource,
     User,
@@ -19,6 +21,7 @@ from app.models import (
 from app.schemas.errors import COMMON_ERROR_RESPONSES
 from app.schemas.knowledge import (
     IngestionJobOut,
+    KnowledgeDocumentMove,
     KnowledgeDocumentOut,
     KnowledgeDocumentPage,
     KnowledgeSearchPage,
@@ -42,6 +45,7 @@ async def document_out(db: AsyncSession, document: KnowledgeDocument) -> Knowled
     )
     return KnowledgeDocumentOut(
         id=document.id,
+        knowledge_base_id=document.knowledge_base_id,
         name=document.name,
         content_type=document.content_type,
         size_bytes=document.size_bytes,
@@ -70,6 +74,7 @@ async def document_out(db: AsyncSession, document: KnowledgeDocument) -> Knowled
 async def upload_document(
     request: Request,
     name: str = Query(min_length=1, max_length=255),
+    knowledge_base_id: UUID | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_roles("owner", "admin")),
 ) -> KnowledgeDocumentOut:
@@ -87,6 +92,9 @@ async def upload_document(
     if not content:
         raise HTTPException(status_code=400, detail="Document is empty")
 
+    selected_base = await _resolve_knowledge_base(
+        db, user.organization_id, knowledge_base_id, require_active=True
+    )
     document = KnowledgeDocument(
         organization_id=user.organization_id,
         name=safe_name,
@@ -94,6 +102,7 @@ async def upload_document(
         size_bytes=len(content),
         status="queued",
         uploaded_by_user_id=user.id,
+        knowledge_base_id=selected_base.id,
     )
     db.add(document)
     await db.flush()
@@ -117,23 +126,25 @@ async def upload_document(
 
 @router.get("", response_model=KnowledgeDocumentPage)
 async def list_documents(
+    knowledge_base_id: UUID | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> KnowledgeDocumentPage:
+    predicate = [
+        KnowledgeDocument.organization_id == user.organization_id,
+        KnowledgeDocument.deleted_at.is_(None),
+    ]
+    if knowledge_base_id:
+        await _resolve_knowledge_base(db, user.organization_id, knowledge_base_id)
+        predicate.append(KnowledgeDocument.knowledge_base_id == knowledge_base_id)
     total = await db.scalar(
-        select(func.count()).select_from(KnowledgeDocument).where(
-            KnowledgeDocument.organization_id == user.organization_id,
-            KnowledgeDocument.deleted_at.is_(None),
-        )
+        select(func.count()).select_from(KnowledgeDocument).where(*predicate)
     ) or 0
     documents = await db.scalars(
         select(KnowledgeDocument)
-        .where(
-            KnowledgeDocument.organization_id == user.organization_id,
-            KnowledgeDocument.deleted_at.is_(None),
-        )
+        .where(*predicate)
         .order_by(KnowledgeDocument.created_at.desc(), KnowledgeDocument.id.desc())
         .limit(limit)
         .offset(offset)
@@ -151,24 +162,38 @@ async def search_documents(
     q: str = Query(min_length=2, max_length=200),
     limit: int = Query(default=20, ge=1, le=50),
     offset: int = Query(default=0, ge=0),
+    knowledge_base_id: UUID | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> KnowledgeSearchPage:
     simple_config = literal_column("'simple'::regconfig")
     ts_query = func.websearch_to_tsquery(simple_config, q.strip())
+    predicates = [
+        DocumentChunk.organization_id == user.organization_id,
+        KnowledgeBase.organization_id == user.organization_id,
+        KnowledgeBase.status == "active",
+        KnowledgeDocument.status == "ready",
+        KnowledgeDocument.deleted_at.is_(None),
+        func.to_tsvector(simple_config, DocumentChunk.content).op("@@")(ts_query),
+    ]
+    if knowledge_base_id:
+        await _resolve_knowledge_base(
+            db, user.organization_id, knowledge_base_id, require_active=True
+        )
+        predicates.append(KnowledgeDocument.knowledge_base_id == knowledge_base_id)
     base = (
-        select(DocumentChunk, KnowledgeDocument.name)
+        select(DocumentChunk, KnowledgeDocument.name, KnowledgeBase.name)
         .join(
             KnowledgeDocument,
             (KnowledgeDocument.organization_id == DocumentChunk.organization_id)
             & (KnowledgeDocument.id == DocumentChunk.document_id),
         )
-        .where(
-            DocumentChunk.organization_id == user.organization_id,
-            KnowledgeDocument.status == "ready",
-            KnowledgeDocument.deleted_at.is_(None),
-            func.to_tsvector(simple_config, DocumentChunk.content).op("@@")(ts_query),
+        .join(
+            KnowledgeBase,
+            (KnowledgeBase.organization_id == KnowledgeDocument.organization_id)
+            & (KnowledgeBase.id == KnowledgeDocument.knowledge_base_id),
         )
+        .where(*predicates)
     )
     total = await db.scalar(select(func.count()).select_from(base.subquery())) or 0
     rank = func.ts_rank(func.to_tsvector(simple_config, DocumentChunk.content), ts_query)
@@ -184,10 +209,11 @@ async def search_documents(
             KnowledgeSearchResult(
                 document_id=chunk.document_id,
                 document_name=name,
+                knowledge_base_name=base_name,
                 chunk_index=chunk.chunk_index,
                 excerpt=re.sub(r"\s+", " ", chunk.content).strip()[:320],
             )
-            for chunk, name in rows
+            for chunk, name, base_name in rows
         ],
         total=total,
         limit=limit,
@@ -209,6 +235,75 @@ async def get_document(
     )
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found")
+    return await document_out(db, document)
+
+
+@router.put("/{document_id}/knowledge-base", response_model=KnowledgeDocumentOut)
+async def move_document_to_knowledge_base(
+    document_id: UUID,
+    data: KnowledgeDocumentMove,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_roles("owner", "admin")),
+) -> KnowledgeDocumentOut:
+    """Move an idle document while preserving its source, chunks, and job history."""
+    document = await db.scalar(
+        select(KnowledgeDocument)
+        .where(
+            KnowledgeDocument.id == document_id,
+            KnowledgeDocument.organization_id == user.organization_id,
+            KnowledgeDocument.deleted_at.is_(None),
+        )
+        .with_for_update()
+    )
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    target = await db.scalar(
+        select(KnowledgeBase)
+        .where(
+            KnowledgeBase.id == data.knowledge_base_id,
+            KnowledgeBase.organization_id == user.organization_id,
+        )
+        .with_for_update()
+    )
+    if target is None:
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    if target.status != "active":
+        raise HTTPException(status_code=409, detail="Documents can only be moved into an active knowledge base")
+    if document.knowledge_base_id == target.id:
+        return await document_out(db, document)
+    if document.status in ("queued", "processing"):
+        raise HTTPException(status_code=409, detail="Wait for document processing to finish before moving it")
+
+    active_job = await db.scalar(
+        select(DocumentIngestionJob.id)
+        .where(
+            DocumentIngestionJob.organization_id == user.organization_id,
+            DocumentIngestionJob.document_id == document.id,
+            DocumentIngestionJob.status.in_(("queued", "running")),
+        )
+        .with_for_update()
+    )
+    if active_job is not None:
+        raise HTTPException(status_code=409, detail="Wait for document processing to finish before moving it")
+
+    source_base_id = document.knowledge_base_id
+    document.knowledge_base_id = target.id
+    await db.flush()
+    move_details = {
+        "document_id": str(document.id),
+        "from_knowledge_base_id": str(source_base_id),
+        "to_knowledge_base_id": str(target.id),
+    }
+    for base_id in (source_base_id, target.id):
+        record_knowledge_base_audit(
+            db,
+            organization_id=user.organization_id,
+            knowledge_base_id=base_id,
+            actor_user_id=user.id,
+            event_type="document_moved",
+            details=move_details,
+        )
     return await document_out(db, document)
 
 
@@ -293,3 +388,23 @@ async def delete_document(
         )
     )
     return Response(status_code=204)
+
+
+async def _resolve_knowledge_base(
+    db: AsyncSession,
+    organization_id: UUID,
+    knowledge_base_id: UUID | None,
+    *,
+    require_active: bool = False,
+) -> KnowledgeBase:
+    predicate = [KnowledgeBase.organization_id == organization_id]
+    if knowledge_base_id is None:
+        predicate.append(KnowledgeBase.is_default.is_(True))
+    else:
+        predicate.append(KnowledgeBase.id == knowledge_base_id)
+    base = await db.scalar(select(KnowledgeBase).where(*predicate))
+    if base is None:
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
+    if require_active and base.status != "active":
+        raise HTTPException(status_code=409, detail="Archived knowledge bases are unavailable for this operation")
+    return base

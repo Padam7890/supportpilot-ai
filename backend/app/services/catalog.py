@@ -12,6 +12,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import SessionLocal, set_tenant_context
+from app.core.observability import current_correlation_id
 from app.integrations.core.contracts.catalog import CatalogProductSnapshot
 from app.integrations.core.contracts.provider import IntegrationConnectionRef
 from app.integrations.providers.shopify.catalog import ShopifyProductCatalogAdapter
@@ -250,6 +251,7 @@ async def run_catalog_sync_page(
 ) -> bool:
     """Process one bounded page and persist its cursor before returning."""
     now = datetime.now(UTC)
+    correlation_id: str | None = None
     async with SessionLocal() as db:
         await set_tenant_context(db, organization_id)
         job = await db.scalar(
@@ -260,6 +262,7 @@ async def run_catalog_sync_page(
         if job is None or job.status != "running":
             await db.rollback()
             return False
+        correlation_id = job.correlation_id
         connection = await db.scalar(
             select(IntegrationConnection).where(
                 IntegrationConnection.organization_id == organization_id,
@@ -282,6 +285,15 @@ async def run_catalog_sync_page(
             job.status = "failed"
             job.last_error_code = "catalog_not_connected"
             job.completed_at = now
+            log_shopify_api_event(
+                "catalog_sync_connection_unavailable",
+                level=logging.ERROR,
+                organization_id=str(organization_id),
+                job_id=str(job.id),
+                correlation_id=correlation_id,
+                job_status=job.status,
+                error_code=job.last_error_code,
+            )
             await db.commit()
             return True
         scopes = set(installation.granted_scopes or [])
@@ -289,6 +301,16 @@ async def run_catalog_sync_page(
             job.status = "failed"
             job.last_error_code = "product_scope_missing"
             job.completed_at = now
+            log_shopify_api_event(
+                "catalog_sync_scope_unavailable",
+                level=logging.ERROR,
+                organization_id=str(organization_id),
+                connection_id=str(connection.id),
+                job_id=str(job.id),
+                correlation_id=correlation_id,
+                job_status=job.status,
+                error_code=job.last_error_code,
+            )
             await db.commit()
             return True
         ref = connection_ref(connection)
@@ -305,6 +327,7 @@ async def run_catalog_sync_page(
             organization_id=str(organization_id),
             connection_id=str(ref.id),
             job_id=str(job_id),
+            correlation_id=correlation_id,
             job_status="running",
             mode=mode,
             cursor_supplied=cursor is not None,
@@ -316,6 +339,7 @@ async def run_catalog_sync_page(
             cursor=cursor,
             updated_after=updated_after if mode == "incremental" else None,
             sync_job_id=job_id,
+            correlation_id=correlation_id,
         )
         async with SessionLocal() as db:
             await set_tenant_context(db, organization_id)
@@ -373,6 +397,7 @@ async def run_catalog_sync_page(
                 organization_id=str(organization_id),
                 connection_id=str(ref.id),
                 job_id=str(job_id),
+                correlation_id=correlation_id,
                 mode=mode,
                 products_received=len(page.items),
                 products_persisted=persisted_product_count,
@@ -423,6 +448,7 @@ async def run_catalog_sync_page(
                 organization_id=str(organization_id),
                 connection_id=str(job.connection_id),
                 job_id=str(job.id),
+                correlation_id=job.correlation_id,
                 error_code=job.last_error_code,
                 provider_reason_code=exc.reason_code if isinstance(exc, ShopifyAPIError) else None,
                 provider_status_code=exc.status_code if isinstance(exc, ShopifyAPIError) else None,
@@ -442,6 +468,7 @@ async def run_catalog_sync_page(
             level=logging.ERROR,
             organization_id=str(organization_id),
             job_id=str(job_id),
+            correlation_id=correlation_id,
             error_type=type(exc).__name__,
         )
         try:
@@ -550,6 +577,7 @@ async def process_catalog_webhook(
     *,
     resolve_credentials,
 ) -> bool:
+    correlation_id: str | None = None
     async with SessionLocal() as db:
         await set_tenant_context(db, organization_id)
         event = await db.scalar(
@@ -564,6 +592,7 @@ async def process_catalog_webhook(
             await db.rollback()
             return False
         event.status = "running"
+        correlation_id = event.correlation_id
         connection = await db.scalar(
             select(IntegrationConnection).where(
                 IntegrationConnection.organization_id == organization_id,
@@ -581,11 +610,36 @@ async def process_catalog_webhook(
             connection is None
             or installation is None
             or connection.external_account_id != installation.shop_domain
-            or "read_products" not in effective_shopify_scopes(installation.granted_scopes or [])
         ):
+            event.status = "failed"
+            event.last_error_code = "catalog_not_connected"
+            event.completed_at = datetime.now(UTC)
+            log_shopify_api_event(
+                "catalog_webhook_connection_unavailable",
+                level=logging.ERROR,
+                organization_id=str(organization_id),
+                connection_id=str(event.connection_id),
+                event_id=str(event.id),
+                correlation_id=correlation_id,
+                event_type=event.event_type,
+                error_code=event.last_error_code,
+            )
+            await db.commit()
+            return True
+        if "read_products" not in effective_shopify_scopes(installation.granted_scopes or []):
             event.status = "failed"
             event.last_error_code = "product_scope_missing"
             event.completed_at = datetime.now(UTC)
+            log_shopify_api_event(
+                "catalog_webhook_scope_unavailable",
+                level=logging.ERROR,
+                organization_id=str(organization_id),
+                connection_id=str(event.connection_id),
+                event_id=str(event.id),
+                correlation_id=correlation_id,
+                event_type=event.event_type,
+                error_code=event.last_error_code,
+            )
             await db.commit()
             return True
         ref = connection_ref(connection)
@@ -628,9 +682,32 @@ async def process_catalog_webhook(
                     event.status = "succeeded"
                     event.completed_at = now
                 await db.commit()
+            log_shopify_api_event(
+                "catalog_webhook_product_deleted",
+                organization_id=str(organization_id),
+                connection_id=str(conn_id),
+                event_id=str(event_id),
+                correlation_id=correlation_id,
+                event_type=topic,
+                job_status="succeeded",
+                transaction_committed=True,
+            )
             return True
+        log_shopify_api_event(
+            "catalog_webhook_product_fetch_started",
+            organization_id=str(organization_id),
+            connection_id=str(conn_id),
+            event_id=str(event_id),
+            correlation_id=correlation_id,
+            event_type=topic,
+            job_status="running",
+            request_attempted=True,
+        )
         snapshot = await ShopifyProductCatalogAdapter(resolve_credentials).get_product(
-            ref, external_product_id=product_gid
+            ref,
+            external_product_id=product_gid,
+            event_id=event_id,
+            correlation_id=correlation_id,
         )
         async with SessionLocal() as db:
             await set_tenant_context(db, organization_id)
@@ -662,6 +739,18 @@ async def process_catalog_webhook(
                 event.status = "succeeded"
                 event.completed_at = datetime.now(UTC)
             await db.commit()
+        log_shopify_api_event(
+            "catalog_webhook_product_succeeded",
+            organization_id=str(organization_id),
+            connection_id=str(conn_id),
+            event_id=str(event_id),
+            correlation_id=correlation_id,
+            event_type=topic,
+            product_returned=snapshot is not None,
+            product_persisted=snapshot is not None,
+            job_status="succeeded",
+            transaction_committed=True,
+        )
         return True
     except (ShopifyAPIError, TimeoutError, OSError) as exc:
         async with SessionLocal() as db:
@@ -695,6 +784,25 @@ async def process_catalog_webhook(
                             event.attempt_count, base_seconds=30, cap_seconds=1800
                         )
                     )
+                log_shopify_api_event(
+                    "catalog_webhook_provider_failed",
+                    level=logging.ERROR,
+                    organization_id=str(organization_id),
+                    connection_id=str(event.connection_id),
+                    event_id=str(event.id),
+                    correlation_id=event.correlation_id,
+                    event_type=event.event_type,
+                    error_code=event.last_error_code,
+                    provider_reason_code=exc.reason_code if isinstance(exc, ShopifyAPIError) else None,
+                    provider_status_code=exc.status_code if isinstance(exc, ShopifyAPIError) else None,
+                    provider_diagnostics=list(exc.diagnostics)
+                    if isinstance(exc, ShopifyAPIError)
+                    else [],
+                    retryable=retryable,
+                    attempt_count=event.attempt_count,
+                    max_attempts=event.max_attempts,
+                    job_status=event.status,
+                )
                 await db.commit()
         return True
 
@@ -746,6 +854,7 @@ async def enqueue_reconciliation(organization_id: uuid.UUID) -> bool:
                 connection_id=connection.id,
                 mode="reconcile",
                 status="queued",
+                correlation_id=current_correlation_id(),
                 attempt_count=0,
                 max_attempts=MAX_SYNC_ATTEMPTS,
                 next_attempt_at=now,

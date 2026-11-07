@@ -4,6 +4,7 @@ import type { Invitation } from "../types/invitation.types";
 import type { InviteValues, OrganizationValues } from "../schemas/organization.schema";
 
 export type Organization = { id: string; name: string; slug: string };
+export type FirstResponseSlaPolicy = { low: number; normal: number; high: number; urgent: number };
 
 export const organizationQueryKeys = {
   organization: ["organization"] as const,
@@ -14,6 +15,9 @@ export const organizationQueryKeys = {
 export const getOrganization = () => api<Organization>("/organization");
 export const updateOrganization = (values: OrganizationValues) =>
   api<Organization>("/organization", { method: "PATCH", body: JSON.stringify(values) });
+export const getFirstResponseSla = () => api<FirstResponseSlaPolicy>("/organization/sla");
+export const updateFirstResponseSla = (values: FirstResponseSlaPolicy) =>
+  api<FirstResponseSlaPolicy>("/organization/sla", { method: "PUT", body: JSON.stringify(values) });
 export const listMembers = () => api<User[]>("/users");
 export const updateMember = (id: string, changes: { role?: string; is_active?: boolean }) =>
   api<User>(`/users/${id}`, { method: "PATCH", body: JSON.stringify(changes) });

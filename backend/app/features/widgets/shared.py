@@ -109,14 +109,22 @@ def normalized_origins(values: list[str]) -> list[str]:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-def widget_out(widget: SupportWidget) -> WidgetConfigOut:
+def widget_out(
+    widget: SupportWidget,
+    ai_agent_ids: list[UUID] | None = None,
+    last_customer_message_at: datetime | None = None,
+) -> WidgetConfigOut:
     return WidgetConfigOut(
         public_id=widget.public_id,
+        ai_agent_id=widget.ai_agent_id,
+        ai_agent_ids=ai_agent_ids or [widget.ai_agent_id],
         allowed_origins=widget.allowed_origins,
         enabled=widget.enabled,
         collect_contact=widget.collect_contact,
         ai_enabled=widget.ai_enabled,
         ai_reply_mode=widget.ai_reply_mode,
+        last_widget_load_at=widget.last_widget_load_at,
+        last_customer_message_at=last_customer_message_at,
         created_at=widget.created_at,
     )
 

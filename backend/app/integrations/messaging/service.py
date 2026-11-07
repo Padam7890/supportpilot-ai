@@ -9,8 +9,12 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.features.ai.application.defaults import get_default_agent
+from app.core.observability import current_correlation_id
+from app.features.automations.service import enqueue_customer_message_workflows
 from app.integrations.core.contracts.messaging import IncomingMessage
 from app.models import (
+    AIAgent,
     Conversation,
     Customer,
     IntegrationConnection,
@@ -84,6 +88,7 @@ async def enqueue_outbound_delivery(
             connection_id=connection_id,
             message_id=message.id,
             idempotency_key_hash=key_hash,
+            correlation_id=current_correlation_id(),
             status="queued",
             attempt_count=0,
             max_attempts=MAX_DELIVERY_ATTEMPTS,
@@ -168,12 +173,24 @@ async def persist_incoming_message(
         )
         db.add(ticket)
         await db.flush()
+        ai_agent = None
+        if connection.ai_agent_id is not None:
+            ai_agent = await db.scalar(
+                select(AIAgent).where(
+                    AIAgent.organization_id == incoming.organization_id,
+                    AIAgent.id == connection.ai_agent_id,
+                    AIAgent.status == "active",
+                )
+            )
+        if ai_agent is None:
+            ai_agent = await get_default_agent(db, incoming.organization_id)
         conversation = Conversation(
             organization_id=incoming.organization_id,
             ticket_id=ticket.id,
             channel="integration",
             status="active",
             integration_connection_id=connection.id,
+            ai_agent_id=ai_agent.id,
             external_conversation_id=incoming.external_conversation_id,
         )
         db.add(conversation)
@@ -228,5 +245,12 @@ async def persist_incoming_message(
         conversation.id,
         message_id,
         incoming.provider_id,
+    )
+    await enqueue_customer_message_workflows(
+        db,
+        organization_id=incoming.organization_id,
+        ticket_id=conversation.ticket_id,
+        conversation_id=conversation.id,
+        message_id=message.id,
     )
     return message, True

@@ -88,7 +88,8 @@ services:
       APP_NAME: "SupportPilot AI"
       APP_ENV: development
       DEBUG: "true"
-      ACCESS_TOKEN_EXPIRE_MINUTES: "15"
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-120}
+      REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-30}
 
       DATABASE_URL: postgresql+asyncpg://${APP_DB_USER:-supportpilot_app}:${APP_DB_PASSWORD:-change_this_app_password}@postgres:5432/${POSTGRES_DB}
 
@@ -129,6 +130,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      worker:
+        condition: service_healthy
 
     healthcheck:
       test:
@@ -175,8 +178,19 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - scripts/worker_healthcheck.py
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 35s
     networks:
       - supportpilot_network
 
@@ -192,9 +206,13 @@ services:
       DATABASE_URL: postgresql+asyncpg://${MIGRATION_DB_USER:-supportpilot_migrator}:${MIGRATION_DB_PASSWORD:-change_this_migration_password}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
       JWT_SECRET: ${JWT_SECRET:-local-development-only-change-me}
-      ACCESS_TOKEN_EXPIRE_MINUTES: "15"
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-120}
       CORS_ORIGINS: '["http://localhost:3000"]'
     command: ["alembic", "upgrade", "head"]
+    # Keep migration code in sync with the bind-mounted API and worker during
+    # local development, so a stale image cannot miss a newly added revision.
+    volumes:
+      - ./backend:/app:ro
     depends_on:
       postgres:
         condition: service_healthy

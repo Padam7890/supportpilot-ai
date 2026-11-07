@@ -7,18 +7,19 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { ArrowLeft, MessageSquare, Send, Sparkles, UserRound } from "lucide-react";
+import { ArrowLeft, Link2, MessageSquare, Send, Sparkles, Unlink2, UserRound } from "lucide-react";
 import { ApiError } from "@/lib/api/errors";
 import { formatDateTime } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Select, Textarea } from "@/components/ui/input";
+import { Input, Select, Textarea } from "@/components/ui/input";
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
-import { getTicket, getTicketActivity, updateTicket } from "../api/ticket-api";
+import { createTicketLink, getTicket, getTicketActivity, listTicketLinks, removeTicketLink, searchTicketLinkCandidates, updateTicket } from "../api/ticket-api";
 import { updateTicketSchema } from "../schemas/ticket.schema";
 import { listConversations, listMessages, sendMessage as sendMessageRequest, startConversation as startConversationRequest } from "@/features/conversations/api/conversation-api";
 import { sendMessageSchema } from "@/features/conversations/schemas/conversation.schema";
 import { getCurrentUser } from "@/features/auth/api/auth-api";
 import { listMembers } from "@/features/organization/api/organization-api";
+import { listTeams, teamQueryKey } from "@/features/organization/api/team-api";
 import type { Ticket, TicketActivity } from "../types/ticket.types";
 
 export default function TicketDetailPage() {
@@ -26,6 +27,7 @@ export default function TicketDetailPage() {
   const queryClient = useQueryClient();
   const [feedback, setFeedback] = useState("");
   const [selectedConversationId, setSelectedConversationId] = useState("");
+  const [linkSearch, setLinkSearch] = useState("");
   const me = useQuery({ queryKey: ["me"], queryFn: getCurrentUser });
   const ticketQuery = useQuery({ queryKey: ["ticket", id], queryFn: () => getTicket(id) });
   const conversations = useQuery({ queryKey: ["conversations", id], queryFn: () => listConversations(id) });
@@ -38,10 +40,23 @@ export default function TicketDetailPage() {
     enabled: Boolean(activeConversation),
   });
   const activity = useQuery({ queryKey: ["ticket-activity", id], queryFn: () => getTicketActivity(id) });
+  const ticketLinks = useQuery({ queryKey: ["ticket-links", id], queryFn: () => listTicketLinks(id) });
   const members = useQuery({ queryKey: ["users"], queryFn: listMembers });
+  const teams = useQuery({ queryKey: teamQueryKey, queryFn: listTeams });
   const form = useForm<z.infer<typeof sendMessageSchema>>({ resolver: zodResolver(sendMessageSchema) });
   const canWrite = ["owner", "admin", "agent"].includes(me.data?.role ?? "");
   const canAssign = ["owner", "admin"].includes(me.data?.role ?? "");
+  const linkSearchTerm = linkSearch.trim();
+  const linkSearchParams = new URLSearchParams({ search: linkSearchTerm, limit: "10", offset: "0" }).toString();
+  const linkCandidates = useQuery({
+    queryKey: ["ticket-link-candidates", id, linkSearchTerm],
+    queryFn: () => searchTicketLinkCandidates(id, linkSearchParams),
+    enabled: canWrite && linkSearchTerm.length >= 2,
+  });
+  const linkedTicketIds = new Set(ticketLinks.data?.items.map((link) => link.related_ticket_id) ?? []);
+  const linkCandidateItems = linkCandidates.data?.items.filter(
+    (candidate) => candidate.id !== id && !linkedTicketIds.has(candidate.id),
+  ) ?? [];
 
   const update = useMutation({
     mutationFn: (changes: z.infer<typeof updateTicketSchema>) => updateTicket(id, changes),
@@ -58,6 +73,33 @@ export default function TicketDetailPage() {
     mutationFn: (values: z.infer<typeof sendMessageSchema>) => sendMessageRequest(activeConversation!.id, values),
     onSuccess: async () => { form.reset(); await queryClient.invalidateQueries({ queryKey: ["messages", activeConversation?.id] }); },
     onError: (error) => setFeedback(error instanceof ApiError ? error.message : "Message could not be sent."),
+  });
+
+  const createLink = useMutation({
+    mutationFn: (relatedTicketId: string) => createTicketLink(id, relatedTicketId),
+    onSuccess: async () => {
+      setLinkSearch("");
+      setFeedback("Related ticket linked.");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["ticket-links", id] }),
+        queryClient.invalidateQueries({ queryKey: ["ticket-link-candidates", id] }),
+        queryClient.invalidateQueries({ queryKey: ["ticket-activity"] }),
+      ]);
+    },
+    onError: (error) => setFeedback(error instanceof ApiError ? error.message : "Could not link the tickets."),
+  });
+
+  const removeLink = useMutation({
+    mutationFn: (linkId: string) => removeTicketLink(id, linkId),
+    onSuccess: async () => {
+      setFeedback("Ticket link removed.");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["ticket-links", id] }),
+        queryClient.invalidateQueries({ queryKey: ["ticket-link-candidates", id] }),
+        queryClient.invalidateQueries({ queryKey: ["ticket-activity"] }),
+      ]);
+    },
+    onError: (error) => setFeedback(error instanceof ApiError ? error.message : "Could not remove the ticket link."),
   });
 
   if (ticketQuery.isPending) return <div className="h-64 animate-pulse rounded-2xl bg-white"/>;
@@ -87,7 +129,14 @@ export default function TicketDetailPage() {
           <Panel><PanelHeader title="Description" description="The customer’s original request"/><PanelBody><p className="whitespace-pre-wrap text-sm leading-7 text-slate-700">{ticket.description || "No description provided."}</p></PanelBody></Panel>
         </div>
         <div className="space-y-5">
-          <Panel><PanelHeader title="Ticket details"/><PanelBody className="space-y-4"><Info label="Customer" value={ticket.customer_name ?? "Customer"}/><Info label="Created" value={formatDateTime(ticket.created_at)}/><Info label="Last updated" value={formatDateTime(ticket.updated_at)}/><div><label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-400" htmlFor="assignee">Assignee</label><Select id="assignee" value={ticket.assignee_id ?? ""} disabled={!canAssign || update.isPending} onChange={(event) => update.mutate({ assignee_id: event.target.value || null })}><option value="">Unassigned</option>{members.data?.filter((member) => member.is_active && ["owner", "admin", "agent"].includes(member.role)).map((member) => <option key={member.id} value={member.id}>{member.full_name} · {member.role}</option>)}</Select>{!canAssign && <p className="mt-1 text-xs text-slate-400">Only owners and admins can assign tickets.</p>}</div></PanelBody></Panel>
+          <Panel><PanelHeader title="Ticket details"/><PanelBody className="space-y-4"><Info label="Customer" value={ticket.customer_name ?? "Customer"}/><Info label="Created" value={formatDateTime(ticket.created_at)}/><Info label="Last updated" value={formatDateTime(ticket.updated_at)}/>
+            <div><label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="team">Team</label><Select id="team" value={ticket.team_id ?? ""} disabled={!canAssign || update.isPending || teams.isPending} onChange={(event) => update.mutate({ team_id: event.target.value || null, assignee_id: null })}><option value="">No team</option>{teams.data?.filter((team) => team.is_active || team.id === ticket.team_id).map((team) => <option key={team.id} value={team.id} disabled={!team.is_active}>{team.name}{team.is_active ? "" : " · inactive"}</option>)}</Select>{canAssign && ticket.assignee_id && <p className="mt-1 text-xs text-slate-500">Changing the team clears the current assignee.</p>}{!canAssign && <p className="mt-1 text-xs text-slate-400">Only Owners and Admins can route tickets to teams.</p>}</div>
+            <div><label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="assignee">Assignee</label><Select id="assignee" value={ticket.assignee_id ?? ""} disabled={!canAssign || update.isPending} onChange={(event) => update.mutate({ assignee_id: event.target.value || null })}><option value="">Unassigned</option>{members.data?.filter((member) => member.is_active && ["owner", "admin", "agent"].includes(member.role) && (!ticket.team_id || teams.data?.find((team) => team.id === ticket.team_id)?.members.some((teamMember) => teamMember.id === member.id))).map((member) => <option key={member.id} value={member.id}>{member.full_name} · {member.role}</option>)}</Select></div>
+          </PanelBody></Panel>
+          <Panel><PanelHeader title="Related tickets" description="Link similar or follow-up requests without merging their histories" action={<Link2 size={16} className="text-blue-700"/>}/><PanelBody className="space-y-4">
+            {ticketLinks.isPending ? <div role="status" className="h-14 animate-pulse rounded-xl bg-slate-100"/> : ticketLinks.isError ? <p role="alert" className="text-sm text-red-700">Related tickets could not be loaded.</p> : ticketLinks.data?.items.length ? <div className="space-y-2">{ticketLinks.data.items.map((related) => <div key={related.id} className="flex items-center gap-3 rounded-xl border border-slate-200 p-3"><Link href={`/dashboard/tickets/${related.related_ticket_id}`} className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold text-blue-700 hover:underline">{related.related_ticket_subject}</span><span className="mt-1 block text-xs capitalize text-slate-500">{related.related_ticket_status} · {related.related_ticket_priority}</span></Link>{canWrite && <button type="button" aria-label={`Unlink ${related.related_ticket_subject}`} title="Remove link" disabled={removeLink.isPending} onClick={() => removeLink.mutate(related.id)} className="grid size-8 shrink-0 place-items-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-red-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600"><Unlink2 size={15}/></button>}</div>)}</div> : <p className="text-sm text-slate-500">No related tickets yet.</p>}
+            {canWrite && <div className="space-y-2 border-t border-slate-100 pt-4"><label htmlFor="related-ticket-search" className="block text-xs font-semibold text-slate-600">Find a ticket to link</label><Input id="related-ticket-search" value={linkSearch} onChange={(event) => setLinkSearch(event.target.value)} placeholder="Search ticket subject or customer"/><p className="text-xs text-slate-500">Search at least two characters. Ticket conversations remain separate.</p>{linkSearchTerm.length >= 2 && linkCandidates.isPending && <p role="status" className="text-xs text-slate-500">Searching tickets…</p>}{linkSearchTerm.length >= 2 && linkCandidates.isError && <p role="alert" className="text-xs text-red-700">Ticket search failed.</p>}{linkSearchTerm.length >= 2 && linkCandidates.data && (linkCandidateItems.length ? <div className="space-y-1">{linkCandidateItems.map((candidate) => <button type="button" key={candidate.id} onClick={() => createLink.mutate(candidate.id)} disabled={createLink.isPending} className="flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left hover:bg-blue-50 disabled:opacity-60"><span className="min-w-0 flex-1"><span className="block truncate text-xs font-semibold text-slate-800">{candidate.subject}</span><span className="mt-0.5 block truncate text-[11px] text-slate-500">{candidate.customer_name ?? "Customer"} · {candidate.status}</span></span><Link2 size={14} className="shrink-0 text-blue-700"/></button>)}</div> : <p className="text-xs text-slate-500">No other matching tickets found.</p>)}{createLink.isPending && <p role="status" className="text-xs text-blue-700">Linking tickets…</p>}</div>}
+          </PanelBody></Panel>
           <Panel><PanelHeader title="Activity" description="Ticket changes and ownership"/><PanelBody className="space-y-4">{activity.isPending ? <div className="h-28 animate-pulse rounded-xl bg-slate-100"/> : activity.isError ? <p className="text-sm text-red-700">Unable to load activity.</p> : activity.data?.length ? activity.data.map((entry) => <div key={entry.id} className="flex gap-3"><span className="mt-1 grid size-8 shrink-0 place-items-center rounded-full bg-blue-50 text-blue-700"><Sparkles size={14}/></span><div><p className="text-sm font-medium text-slate-800">{activityLabel(entry.activity_type, entry.details)}</p><p className="mt-1 text-xs text-slate-500">{entry.actor_name ?? "System"} · {formatDateTime(entry.created_at)}</p></div></div>) : <p className="text-sm text-slate-500">No activity recorded.</p>}</PanelBody></Panel>
           <Panel><PanelHeader title="Customer"/><PanelBody><Link href={`/dashboard/customers/${ticket.customer_id}`} className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-full bg-slate-100 text-slate-500"><UserRound size={18}/></span><span className="font-semibold text-blue-700 hover:underline">{ticket.customer_name ?? "View customer"}</span></Link></PanelBody></Panel>
         </div>
@@ -102,6 +151,13 @@ function Info({ label, value }: { label: string; value: string }) {
 
 function activityLabel(type: string, details: TicketActivity["details"]) {
   if (type === "created") return "Ticket created";
+  if (type === "automation_retry_requested") return `Automation retry queued · attempt ${String(details.attempt_count ?? "")}`;
+  if (details.ticket_link === "linked" && typeof details.related_ticket_id === "string") {
+    return `Linked related ticket #${details.related_ticket_id.slice(0, 8)}`;
+  }
+  if (details.ticket_link === "unlinked" && typeof details.related_ticket_id === "string") {
+    return `Removed link to ticket #${details.related_ticket_id.slice(0, 8)}`;
+  }
   const changes = Object.keys(details).map((key) => key.replaceAll("_", " ")).join(", ");
   return changes ? `Updated ${changes}` : "Ticket updated";
 }

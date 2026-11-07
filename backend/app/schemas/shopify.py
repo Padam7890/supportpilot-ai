@@ -7,6 +7,7 @@ from pydantic import BaseModel, EmailStr, Field
 class ShopifyStatusOut(BaseModel):
     configured: bool
     connected: bool
+    auth_mode: Literal["oauth", "client_credentials"] | None = None
     client_credentials_available: bool = False
     configured_store_domain: str | None = None
     shop_domain: str | None = None

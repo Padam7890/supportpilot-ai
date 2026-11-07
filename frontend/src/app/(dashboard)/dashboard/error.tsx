@@ -1,6 +1,14 @@
 "use client";
 
-export default function DashboardError({ reset }: { error: Error & { digest?: string }; reset: () => void }) {
+import { useEffect } from "react";
+
+export default function DashboardError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "production") {
+      console.error("Dashboard route failed to render.", error);
+    }
+  }, [error]);
+
   return (
     <div role="alert" className="rounded-2xl border border-red-200 bg-red-50 p-6">
       <h2 className="font-semibold text-red-900">This page could not load</h2>

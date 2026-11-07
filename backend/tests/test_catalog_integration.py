@@ -184,15 +184,47 @@ async def test_catalog_reads_are_tenant_scoped_and_composite_fk_rejects_cross_te
     owner_a = await create_approved_tenant(client, "catalog-a")
     owner_b = await create_approved_tenant(client, "catalog-b")
     async with SessionLocal() as session:
-        _connection_a, product_a = await create_catalog_product(session, owner_a, "shop-a")
+        connection_a, product_a = await create_catalog_product(session, owner_a, "shop-a")
         connection_b, _ = await create_catalog_product(session, owner_b, "shop-b")
+        job_a = CatalogSyncJob(
+            organization_id=UUID(owner_a["user"]["organization_id"]),
+            connection_id=connection_a.id,
+            mode="full",
+            status="failed",
+            attempt_count=2,
+            max_attempts=5,
+            next_attempt_at=datetime.now(UTC),
+            records_seen=4,
+            last_error_code="provider_timeout",
+        )
+        job_b = CatalogSyncJob(
+            organization_id=UUID(owner_b["user"]["organization_id"]),
+            connection_id=connection_b.id,
+            mode="full",
+            status="succeeded",
+            attempt_count=1,
+            max_attempts=5,
+            next_attempt_at=datetime.now(UTC),
+            records_seen=99,
+        )
+        organization_a = UUID(owner_a["user"]["organization_id"])
+        organization_b = UUID(owner_b["user"]["organization_id"])
+        await set_tenant_context(session, organization_a)
+        session.add(job_a)
+        await session.flush()
         await session.commit()
         product_id = product_a.id
+        job_a_id = job_a.id
 
-        await set_tenant_context(session, UUID(owner_b["user"]["organization_id"]))
+        await set_tenant_context(session, organization_b)
+        session.add(job_b)
+        await session.flush()
+        await session.commit()
+
+        await set_tenant_context(session, organization_b)
         session.add(
             CatalogVariant(
-                organization_id=UUID(owner_b["user"]["organization_id"]),
+                organization_id=organization_b,
                 product_id=product_id,
                 connection_id=connection_b.id,
                 external_variant_id="gid://shopify/ProductVariant/cross-tenant",
@@ -212,10 +244,23 @@ async def test_catalog_reads_are_tenant_scoped_and_composite_fk_rejects_cross_te
     assert read_a.status_code == 200, read_a.text
     assert read_a.json()["total"] == 1
     assert read_a.json()["items"][0]["id"] == str(product_id)
+    sync_history_a = await client.get(
+        "/api/v1/catalog/sync-jobs?limit=5", headers=bearer(owner_a["access_token"])
+    )
+    assert sync_history_a.status_code == 200, sync_history_a.text
+    assert sync_history_a.json()["total"] == 1
+    assert sync_history_a.json()["items"][0]["id"] == str(job_a_id)
+    assert sync_history_a.json()["items"][0]["last_error_code"] == "provider_timeout"
     private_to_a = await client.get(
         f"/api/v1/catalog/products/{product_id}", headers=bearer(owner_b["access_token"])
     )
     assert private_to_a.status_code == 404
+    private_sync_history = await client.get(
+        "/api/v1/catalog/sync-jobs", headers=bearer(owner_b["access_token"])
+    )
+    assert private_sync_history.status_code == 200
+    assert private_sync_history.json()["total"] == 1
+    assert private_sync_history.json()["items"][0]["records_seen"] == 99
 
 
 @pytest.mark.anyio

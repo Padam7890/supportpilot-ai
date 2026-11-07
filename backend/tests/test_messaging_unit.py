@@ -39,7 +39,7 @@ class FakeSession:
     def __init__(self, scalar_results):
         self.scalar_results = list(scalar_results)
         self.inserted_statement = None
-        self.loaded_message = object()
+        self.loaded_message = SimpleNamespace(id=uuid4())
 
     async def scalar(self, statement):
         if getattr(statement, "is_insert", False):
@@ -65,12 +65,22 @@ def incoming_message(organization_id, connection_id):
 
 
 @pytest.mark.anyio
-async def test_normalized_inbound_message_is_tenant_scoped_and_saves_no_provider_pii():
+async def test_normalized_inbound_message_is_tenant_scoped_and_saves_no_provider_pii(monkeypatch):
+    async def no_workflow_matches(*_args, **_kwargs):
+        return 0
+
+    monkeypatch.setattr(
+        "app.integrations.messaging.service.enqueue_customer_message_workflows",
+        no_workflow_matches,
+    )
     organization_id = uuid4()
     connection_id = uuid4()
     connection = SimpleNamespace(id=connection_id)
     conversation = SimpleNamespace(
-        id=uuid4(), updated_at=datetime.now(UTC), external_conversation_id="thread-7"
+        id=uuid4(),
+        ticket_id=uuid4(),
+        updated_at=datetime.now(UTC),
+        external_conversation_id="thread-7",
     )
     session = FakeSession([connection, conversation, uuid4()])
 

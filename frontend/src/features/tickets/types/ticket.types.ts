@@ -3,12 +3,14 @@ export type Ticket = {
   organization_id: string;
   customer_id: string;
   assignee_id: string | null;
+  team_id: string | null;
   subject: string;
   description: string | null;
   status: "open" | "pending" | "resolved" | "closed";
   priority: "low" | "normal" | "high" | "urgent";
   customer_name: string | null;
   assignee_name: string | null;
+  team_name: string | null;
   created_at: string;
   updated_at: string;
 };

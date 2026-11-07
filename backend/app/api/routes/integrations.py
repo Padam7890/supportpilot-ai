@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, require_roles
 from app.core.config import settings
 from app.db.session import get_db
-from app.integrations.connections.service import sync_shopify_connection
+from app.integrations.connections.service import record_connection_audit, sync_shopify_connection
 from app.integrations.providers.shopify.client import (
     effective_shopify_scopes,
     log_shopify_event,
@@ -66,10 +66,14 @@ async def shopify_status(
         return ShopifyStatusOut(
             configured=oauth_is_configured(),
             connected=False,
+            auth_mode=installation.auth_mode if installation else None,
             client_credentials_available=client_credentials_is_available(),
             configured_store_domain=settings.shopify_store_domain
             if client_credentials_is_available()
             else None,
+            shop_domain=installation.shop_domain if installation else None,
+            granted_scopes=list(installation.granted_scopes or []) if installation else [],
+            connected_at=installation.connected_at if installation else None,
         )
     missing_scopes = set(REQUIRED_SCOPES) - effective_shopify_scopes(installation.granted_scopes)
     effective_scopes = effective_shopify_scopes(installation.granted_scopes)
@@ -89,6 +93,7 @@ async def shopify_status(
     return ShopifyStatusOut(
         configured=oauth_is_configured(),
         connected=True,
+        auth_mode=installation.auth_mode,
         client_credentials_available=client_credentials_is_available(),
         configured_store_domain=settings.shopify_store_domain
         if client_credentials_is_available()
@@ -97,7 +102,7 @@ async def shopify_status(
         granted_scopes=installation.granted_scopes,
         connected_at=installation.connected_at,
         access_token_expires_at=installation.access_token_expires_at,
-        reconnect_required=bool(missing_scopes)
+        reconnect_required=bool(missing_scopes or catalog_missing_scopes)
         or (installation.auth_mode == "oauth" and not oauth_is_configured()),
     )
 
@@ -185,13 +190,23 @@ async def disconnect_shopify(
             status="disconnected", message="No Shopify store is connected"
         )
     shop_domain = installation.shop_domain
+    auth_mode = installation.auth_mode
+    granted_scopes = list(installation.granted_scopes or [])
     installation.disconnected_at = datetime.now(UTC)
     installation.access_token_encrypted = None
     installation.refresh_token_encrypted = None
     installation.access_token_expires_at = None
     installation.refresh_token_expires_at = None
     installation.granted_scopes = []
-    await sync_shopify_connection(db, installation)
+    connection = await sync_shopify_connection(db, installation)
+    record_connection_audit(
+        db,
+        connection,
+        event_type="disconnected",
+        actor_user_id=user.id,
+        auth_mode=auth_mode,
+        granted_scopes=granted_scopes,
+    )
     return ShopifyIntegrationEventOut(
         status="disconnected",
         message="Shopify access credentials were removed",

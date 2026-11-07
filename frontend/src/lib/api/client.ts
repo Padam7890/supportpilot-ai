@@ -19,10 +19,11 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
       type?: string;
       instance?: string;
     } | null;
+    const correlationId = response.headers.get("x-correlation-id") ?? undefined;
     throw new ApiError(
-      payload?.detail ?? payload?.title ?? "The request could not be completed.",
+      payload?.detail ?? payload?.title ?? `Request failed (HTTP ${response.status}).`,
       response.status,
-      payload ?? {},
+      { ...(payload ?? {}), correlationId },
     );
   }
   if (response.status === 204) return undefined as T;

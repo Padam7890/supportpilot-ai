@@ -8,22 +8,32 @@ export type ShopifyOrderPage = components["schemas"]["ShopifyOrderPageOut"];
 export type ShopifyOrderSummary = components["schemas"]["ShopifyOrderSummaryOut"];
 export type CatalogStatus = components["schemas"]["CatalogStatusOut"];
 export type CatalogSyncJob = components["schemas"]["CatalogSyncJobOut"];
+export type CatalogSyncJobPage = components["schemas"]["CatalogSyncJobPageOut"];
 
 export const shopifyQueryKeys = {
   status: ["shopify", "status"] as const,
   catalogStatus: ["shopify", "catalog-status"] as const,
   catalogJob: (jobId: string) => ["shopify", "catalog-sync-job", jobId] as const,
+  catalogJobs: ["shopify", "catalog-sync-jobs"] as const,
   orders: (email: string, number: string, cursor?: string) => ["shopify", "orders", email, number, cursor] as const,
   orderPages: () => ["shopify", "order-pages"] as const,
 };
 
 export const getShopifyStatus = () => api<ShopifyStatus>("/integrations/shopify/status");
 export const getCatalogStatus = () => api<CatalogStatus>("/catalog/status");
-export const startCatalogSync = () => api<CatalogSyncJob>("/catalog/sync", {
+export type CatalogSyncMode = "full" | "incremental";
+
+export const startCatalogSync = (mode: CatalogSyncMode = "full") => api<CatalogSyncJob>("/catalog/sync", {
   method: "POST",
-  body: JSON.stringify({ mode: "full" }),
+  body: JSON.stringify({ mode }),
 });
 export const getCatalogSyncJob = (jobId: string) => api<CatalogSyncJob>(`/catalog/sync-jobs/${encodeURIComponent(jobId)}`);
+export const retryCatalogSyncJob = (jobId: string) => api<CatalogSyncJob>(`/catalog/sync-jobs/${encodeURIComponent(jobId)}/retry`, { method: "POST" });
+export const getCatalogSyncJobs = (limit = 5, connectionId?: string) => {
+  const query = new URLSearchParams({ limit: String(limit), offset: "0" });
+  if (connectionId) query.set("connection_id", connectionId);
+  return api<CatalogSyncJobPage>(`/catalog/sync-jobs?${query.toString()}`);
+};
 
 export function getShopifyOrders(values: { limit?: number; cursor?: string } = {}) {
   const query = new URLSearchParams({ limit: String(values.limit ?? 25) });

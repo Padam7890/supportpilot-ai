@@ -196,6 +196,9 @@ async def accept_invitation(
     db.add(user)
     invitation.accepted_at = now
     await db.flush()
+    # RLS requires both contexts on INSERT. Set the identity context before
+    # issuing any statement that could autoflush the pending membership.
+    await set_auth_identity_context(db, identity.id)
     db.add(
         AuthIdentityMembership(
             identity_id=identity.id,
@@ -203,7 +206,6 @@ async def accept_invitation(
             user_id=user.id,
         )
     )
-    await set_auth_identity_context(db, identity.id)
     await limit_auth_attempts(
         request,
         normalized_email,

@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from app.db.session import SessionLocal, set_tenant_context
 from app.models import (
     AIExecution,
+    AutomationExecution,
     CatalogSyncJob,
     CatalogWebhookEvent,
     CommerceAction,
@@ -44,6 +45,12 @@ class DurableJobRepository:
                 .where(
                     AIExecution.organization_id == organization_id,
                     AIExecution.status == "failed",
+                ),
+                "automation": select(func.count())
+                .select_from(AutomationExecution)
+                .where(
+                    AutomationExecution.organization_id == organization_id,
+                    AutomationExecution.status == "failed",
                 ),
                 "catalog": select(func.count())
                 .select_from(CatalogSyncJob)

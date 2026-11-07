@@ -136,6 +136,7 @@ async def process_integration_delivery(
         outbound = OutboundMessage(content=message.content, content_type=message.content_type)
         attempt = job.attempt_count
         stable_key = str(job.id)
+        correlation_id = job.correlation_id
         await db.commit()
 
     try:
@@ -174,9 +175,10 @@ async def process_integration_delivery(
         return True
     except Exception as exc:  # noqa: BLE001 - isolate provider bugs and retry with a safe code.
         logger.warning(
-            "integration_delivery_provider_failure organization_id=%s job_id=%s error_type=%s",
+            "integration_delivery_provider_failure organization_id=%s job_id=%s correlation_id=%s error_type=%s",
             organization_id,
             job_id,
+            correlation_id,
             type(exc).__name__,
         )
         await _finish_error(
@@ -274,4 +276,15 @@ async def _finish_error(
             job.next_attempt_at = now + timedelta(seconds=delay)
         elif message is not None:
             message.delivery_status = "failed"
+        logger.warning(
+            "integration_delivery_attempt_failed organization_id=%s job_id=%s correlation_id=%s error_code=%s retryable=%s attempt_count=%s max_attempts=%s job_status=%s",
+            organization_id,
+            job.id,
+            job.correlation_id,
+            error_code,
+            retryable,
+            attempt,
+            job.max_attempts,
+            job.status,
+        )
         await db.commit()

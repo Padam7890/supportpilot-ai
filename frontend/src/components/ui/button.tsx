@@ -11,8 +11,8 @@ export function Button({ className, variant = "primary", size = "default", ...pr
     <button
       className={cn(
         "inline-flex items-center justify-center gap-2 rounded-xl font-semibold transition-[box-shadow] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-200 disabled:pointer-events-none disabled:opacity-50",
-        size === "default" ? "min-h-11 px-4 text-sm" : "min-h-9 px-3 text-xs",
-        variant === "primary" && "bg-[#1d4ed8] text-white shadow-sm hover:bg-[#1e40af]",
+        size === "default" ? "min-h-10 px-4 typo-button font-semibold" : "min-h-9 px-3 typo-button",
+        variant === "primary" && "bg-[var(--text-accent)] text-white shadow-sm hover:bg-[#1d4ed8]",
         variant === "secondary" && "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
         variant === "ghost" && "text-slate-600 hover:bg-slate-100",
         variant === "danger" && "bg-red-600 text-white hover:bg-red-700",

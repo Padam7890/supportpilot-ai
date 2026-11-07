@@ -1,4 +1,7 @@
+import logging
+
 import pytest
+from starlette.requests import Request
 
 
 @pytest.mark.anyio
@@ -6,6 +9,67 @@ async def test_liveness(client):
     response = await client.get("/health/live")
     assert response.status_code == 200
     assert response.json() == {"status": "alive"}
+    assert response.headers.get("x-correlation-id")
+
+
+@pytest.mark.anyio
+async def test_worker_health_reports_only_heartbeat_count(client, monkeypatch):
+    from app.main import app
+
+    monkeypatch.setattr("app.main.active_worker_count", lambda _redis: _resolved(2))
+    app.state.redis = object()
+    active = await client.get("/health/worker")
+    assert active.status_code == 200
+    assert active.json()["status"] == "active"
+    assert active.json()["active_workers"] == 2
+
+    monkeypatch.setattr("app.main.active_worker_count", lambda _redis: _resolved(0))
+    inactive = await client.get("/health/worker")
+    assert inactive.status_code == 200
+    assert inactive.json()["status"] == "inactive"
+    assert inactive.json()["active_workers"] == 0
+
+
+async def _resolved(value):
+    return value
+
+
+@pytest.mark.anyio
+async def test_correlation_id_is_validated_and_returned(client):
+    accepted = await client.get("/health/live", headers={"X-Correlation-ID": "trace_safe-001"})
+    assert accepted.headers["x-correlation-id"] == "trace_safe-001"
+
+    rejected = await client.get("/health/live", headers={"X-Correlation-ID": "unsafe trace"})
+    assert rejected.headers["x-correlation-id"] != "unsafe trace"
+    assert len(rejected.headers["x-correlation-id"]) == 36
+
+
+@pytest.mark.anyio
+async def test_unexpected_api_errors_log_correlation_id_without_returning_exception(caplog, monkeypatch):
+    from app.main import app, handle_unexpected_error
+
+    monkeypatch.setattr("app.main.current_correlation_id", lambda: "inbox-trace-123")
+    request = Request({
+        "type": "http",
+        "method": "GET",
+        "path": "/api/v1/conversations/conversation-id/messages",
+        "headers": [],
+        "query_string": b"",
+        "server": ("test", 80),
+        "client": ("test", 1234),
+        "scheme": "http",
+        "http_version": "1.1",
+        "app": app,
+    })
+
+    with caplog.at_level(logging.ERROR, logger="app.main"):
+        response = await handle_unexpected_error(request, RuntimeError("private provider details"))
+
+    assert response.status_code == 500
+    assert "private provider details" not in response.body.decode()
+    error_record = next(record for record in caplog.records if record.message == "unhandled_api_error")
+    assert error_record.correlation_id == "inbox-trace-123"
+    assert error_record.method == "GET"
 
 
 @pytest.mark.anyio
@@ -89,6 +153,7 @@ async def test_feature_migration_preserves_public_route_paths(client):
         "/api/v1/conversations/{conversation_id}/messages",
         "/api/v1/inbox",
         "/api/v1/analytics/ai-usage",
+        "/api/v1/analytics/integration-deliveries",
         "/api/v1/analytics/recommendations",
         "/api/v1/integrations/widget",
         "/api/v1/widget/{public_id}/config",
@@ -97,6 +162,7 @@ async def test_feature_migration_preserves_public_route_paths(client):
     }
 
     assert expected <= paths.keys()
+    assert "/health/worker" in paths
 
 
 @pytest.mark.anyio
@@ -127,10 +193,31 @@ async def test_openapi_documents_tenant_integration_management_contract(client):
     assert "/api/v1/integrations/providers" in paths
     assert "/api/v1/integrations/connections" in paths
     assert "/api/v1/integrations/connections/{connection_id}" in paths
+    assert "/api/v1/integrations/connections/{connection_id}/events" in paths
+    assert "/api/v1/integrations/connections/{connection_id}/deliveries" in paths
     assert "/api/v1/integrations/connections/{connection_id}/disconnect" in paths
+    assert "/api/v1/catalog/sync-jobs" in paths
+    assert "/api/v1/catalog/sync-jobs/{job_id}" in paths
     schema = spec["components"]["schemas"]["IntegrationConnectionOut"]["properties"]
     assert "safe_configuration" in schema
     assert not any("token" in field or "credential" in field for field in schema)
+    event_schema = spec["components"]["schemas"]["IntegrationWebhookEventOut"]["properties"]
+    delivery_schema = spec["components"]["schemas"]["IntegrationDeliveryOut"]["properties"]
+    assert "normalized_payload" not in event_schema
+    assert "payload" not in event_schema
+    assert "content" not in delivery_schema
+
+
+@pytest.mark.anyio
+async def test_openapi_documents_safe_automation_preview_contract(client):
+    response = await client.get("/openapi.json")
+    spec = response.json()
+    path = "/api/v1/automations/preview"
+    assert path in spec["paths"]
+    request_ref = spec["paths"][path]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+    response_ref = spec["paths"][path]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+    assert request_ref.endswith("/AutomationPreviewRequest")
+    assert response_ref.endswith("/AutomationPreviewOut")
 
 
 @pytest.mark.anyio
@@ -142,6 +229,6 @@ async def test_provider_catalog_advertises_only_implemented_shopify_capabilities
             "provider_id": "shopify",
             "display_name": "Shopify",
             "version": "1",
-            "capabilities": ["product_catalog", "webhooks"],
+            "capabilities": ["commerce", "product_catalog", "webhooks"],
         }
     ]

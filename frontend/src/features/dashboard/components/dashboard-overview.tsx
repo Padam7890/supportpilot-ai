@@ -15,7 +15,7 @@ export default function DashboardPage() {
   return (
     <div className="space-y-7">
       <div className="flex flex-wrap items-end justify-between gap-4">
-        <div><p className="text-sm font-semibold text-blue-700">Workspace overview</p><h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-950">Good work starts here.</h1><p className="mt-2 text-sm text-slate-500">A live view of your customer support operation.</p></div>
+        <div><p className="text-[13px] font-semibold text-[var(--text-accent)]">Workspace overview</p><h1 className="page-title mt-1">Good work starts here.</h1><p className="page-subtitle mt-2">A live view of your customer support operation.</p></div>
         <div className="flex gap-2"><Link href="/dashboard/customers"><Button variant="secondary"><Users size={16}/> Add customer</Button></Link><Link href="/dashboard/tickets"><Button><Plus size={17}/> New ticket</Button></Link></div>
       </div>
       {stats.isError && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">Could not load workspace statistics. Try refreshing the page.</div>}
@@ -64,7 +64,7 @@ export default function DashboardPage() {
 
 function StatCard({ title, value, icon, subtitle, tone, loading }: { title: string; value?: number; icon: React.ReactNode; subtitle: string; tone: string; loading: boolean }) {
   const tones: Record<string, string> = { blue: "bg-blue-50 text-blue-700", orange: "bg-orange-50 text-orange-700", purple: "bg-violet-50 text-violet-700", green: "bg-emerald-50 text-emerald-700" };
-  return <Panel className="p-5"><div className="flex items-start justify-between"><div><p className="text-sm font-medium text-slate-500">{title}</p>{loading ? <div className="mt-3 h-8 w-16 animate-pulse rounded bg-slate-100"/> : <p className="mt-2 text-3xl font-bold tracking-tight text-slate-950">{value ?? 0}</p>}</div><span className={`grid size-10 place-items-center rounded-xl ${tones[tone]}`}>{icon}</span></div><p className="mt-4 flex items-center gap-1 text-xs text-slate-500">{tone === "green" ? <ArrowUpRight size={14} className="text-emerald-600"/> : <ArrowDownRight size={14} className="text-slate-400"/>}{subtitle}</p></Panel>;
+  return <Panel className="p-5"><div className="flex items-start justify-between"><div><p className="helper-text font-medium">{title}</p>{loading ? <div className="mt-3 h-8 w-16 animate-pulse rounded bg-slate-100"/> : <p className="kpi-value mt-2">{value ?? 0}</p>}</div><span className={`grid size-10 place-items-center rounded-xl ${tones[tone]}`}>{icon}</span></div><p className="mt-4 flex items-center gap-1 text-xs text-slate-500">{tone === "green" ? <ArrowUpRight size={14} className="text-emerald-600"/> : <ArrowDownRight size={14} className="text-slate-400"/>}{subtitle}</p></Panel>;
 }
 
 function EmptyState() {

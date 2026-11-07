@@ -24,6 +24,7 @@ from app.db.session import (
     set_auth_identity_context,
     set_tenant_context,
 )
+from app.features.ai.application.defaults import create_workspace_ai_defaults
 from app.features.auth.challenges import (
     CHALLENGE_TTL,
     OTP_MAX_ATTEMPTS,
@@ -125,6 +126,7 @@ async def register(
     try:
         await db.flush()
         await set_tenant_context(db, organization.id)
+        await create_workspace_ai_defaults(db, organization.id)
         user = User(
             organization_id=organization.id,
             email=normalized_email,

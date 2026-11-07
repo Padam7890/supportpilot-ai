@@ -205,5 +205,12 @@ class MemberUpdate(BaseModel):
     is_active: bool | None = None
 
 
+class FirstResponseSlaPolicy(BaseModel):
+    low: int = Field(ge=5, le=10080)
+    normal: int = Field(ge=5, le=10080)
+    high: int = Field(ge=5, le=10080)
+    urgent: int = Field(ge=5, le=10080)
+
+
 class OrganizationUpdate(BaseModel):
     name: str = Field(min_length=2, max_length=160)

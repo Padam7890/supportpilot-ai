@@ -5,10 +5,12 @@ export const createTicketSchema = z.object({
   subject: z.string().min(3).max(240),
   description: z.string().optional(),
   priority: z.enum(["low", "normal", "high", "urgent"]),
+  team_id: z.string().uuid().nullable().optional(),
 });
 
 export const updateTicketSchema = z.object({
   status: z.enum(["open", "pending", "resolved", "closed"]).optional(),
   priority: z.enum(["low", "normal", "high", "urgent"]).optional(),
   assignee_id: z.string().uuid().nullable().optional(),
+  team_id: z.string().uuid().nullable().optional(),
 });

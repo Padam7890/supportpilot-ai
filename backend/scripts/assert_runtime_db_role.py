@@ -14,6 +14,54 @@ _TENANT_POLICY_PREDICATE = re.compile(
     re.IGNORECASE,
 )
 
+EXPECTED_TENANT_TABLES = frozenset(
+    {
+        "users",
+        "customers",
+        "tickets",
+        "conversations",
+        "messages",
+        "refresh_sessions",
+        "team_invitations",
+        "ticket_activities",
+        "ticket_links",
+        "conversation_read_states",
+        "knowledge_documents",
+        "knowledge_document_sources",
+        "document_chunks",
+        "document_ingestion_jobs",
+        "ai_executions",
+        "ai_evaluations",
+        "shopify_installations",
+        "shopify_oauth_states",
+        "shopify_access_audit",
+        "commerce_actions",
+        "commerce_action_audits",
+        "support_widgets",
+        "widget_order_verifications",
+        "widget_submissions",
+        "integration_connections",
+        "integration_credentials",
+        "integration_webhook_events",
+        "integration_delivery_jobs",
+        "catalog_products",
+        "catalog_variants",
+        "catalog_sync_jobs",
+        "catalog_webhook_events",
+        "recommendation_settings",
+        "recommendation_events",
+        "auth_identity_memberships",
+        "auth_challenges",
+        "knowledge_bases",
+        "ai_agents",
+        "ai_agent_audits",
+        "ai_agent_knowledge_bases",
+        "automation_workflows",
+        "automation_workflow_versions",
+        "automation_executions",
+    }
+)
+
 
 def is_tenant_scoped_policy(expression: str | None) -> bool:
     """Accept only the organization-to-transaction-tenant equality used by our RLS policies."""
@@ -59,25 +107,45 @@ def has_safe_widget_policies(policies: list[dict[str, str | None]]) -> bool:
 def has_safe_auth_policies(table: str, policies: list[dict[str, str | None]]) -> bool:
     """Validate pre-auth data is scoped to an identity or opaque challenge token."""
     by_name = {policy["policyname"]: policy for policy in policies}
+
+    def normalized(expression: str | None) -> str:
+        # PostgreSQL adds harmless casts and redundant parentheses when storing
+        # policy expressions in pg_policies. Compare predicates, not formatting.
+        return (
+            re.sub(r"\s+", "", expression or "")
+            .lower()
+            .replace("::text", "")
+            .replace("(", "")
+            .replace(")", "")
+        )
+
     if table == "auth_identity_memberships":
         policy = by_name.get("auth_identity_membership_scope", {})
-        using = re.sub(r"\s+", " ", policy.get("qual") or "").lower().replace("::text", "")
-        check = re.sub(r"\s+", " ", policy.get("with_check") or "").lower().replace("::text", "")
-        identity = "identity_id = nullif(current_setting('app.current_identity', true), '')::uuid"
-        tenant = "organization_id = nullif(current_setting('app.current_tenant', true), '')::uuid"
+        using = normalized(policy.get("qual"))
+        check = normalized(policy.get("with_check"))
+        identity = normalized(
+            "identity_id = nullif(current_setting('app.current_identity', true), '')::uuid"
+        )
+        tenant = normalized(
+            "organization_id = nullif(current_setting('app.current_tenant', true), '')::uuid"
+        )
         return identity in using and tenant in using and identity in check and tenant in check
     if table == "auth_challenges":
         policy = by_name.get("auth_challenge_token_scope", {})
-        expected = "token_hash = nullif(current_setting('app.auth_challenge', true), '')"
-        using = re.sub(r"\s+", " ", policy.get("qual") or "").lower().replace("::text", "")
-        check = re.sub(r"\s+", " ", policy.get("with_check") or "").lower().replace("::text", "")
+        expected = normalized(
+            "token_hash = nullif(current_setting('app.auth_challenge', true), '')"
+        )
+        using = normalized(policy.get("qual"))
+        check = normalized(policy.get("with_check"))
         return expected in using and expected in check
     if table == "auth_identities":
         policy = by_name.get("auth_identity_scope", {})
-        using = re.sub(r"\s+", " ", policy.get("qual") or "").lower().replace("::text", "")
-        check = re.sub(r"\s+", " ", policy.get("with_check") or "").lower().replace("::text", "")
-        email = "email_normalized = nullif(current_setting('app.auth_email', true), '')"
-        identity = "id = nullif(current_setting('app.current_identity', true), '')::uuid"
+        using = normalized(policy.get("qual"))
+        check = normalized(policy.get("with_check"))
+        email = normalized("email_normalized = nullif(current_setting('app.auth_email', true), '')")
+        identity = normalized(
+            "id = nullif(current_setting('app.current_identity', true), '')::uuid"
+        )
         return email in using and identity in using and email in check and identity in check
     return False
 
@@ -161,47 +229,11 @@ async def main() -> None:
                     )
                 )
             ).all()
-            expected_tables = {
-                "users",
-                "customers",
-                "tickets",
-                "conversations",
-                "messages",
-                "refresh_sessions",
-                "team_invitations",
-                "ticket_activities",
-                "conversation_read_states",
-                "knowledge_documents",
-                "knowledge_document_sources",
-                "document_chunks",
-                "document_ingestion_jobs",
-                "ai_executions",
-                "ai_evaluations",
-                "shopify_installations",
-                "shopify_oauth_states",
-                "shopify_access_audit",
-                "commerce_actions",
-                "commerce_action_audits",
-                "support_widgets",
-                "widget_order_verifications",
-                "widget_submissions",
-                "integration_connections",
-                "integration_credentials",
-                "integration_webhook_events",
-                "integration_delivery_jobs",
-                "catalog_products",
-                "catalog_variants",
-                "catalog_sync_jobs",
-                "catalog_webhook_events",
-                "recommendation_settings",
-                "recommendation_events",
-                "auth_identity_memberships",
-                "auth_challenges",
-            }
             actual_tables = {row.relname for row in rls_tables}
-            if actual_tables != expected_tables:
+            if actual_tables != EXPECTED_TENANT_TABLES:
                 raise RuntimeError(
-                    f"Expected tenant tables {sorted(expected_tables)}, found {sorted(actual_tables)}"
+                    f"Expected tenant tables {sorted(EXPECTED_TENANT_TABLES)}, "
+                    f"found {sorted(actual_tables)}"
                 )
             widget_policies = (
                 (

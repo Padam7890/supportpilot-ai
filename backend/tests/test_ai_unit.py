@@ -1,10 +1,12 @@
 from types import SimpleNamespace
 from typing import ClassVar
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 
 from app.core.config import settings
+from app.features.ai.application.retrieval import build_retrieval_terms
 from app.features.ai.domain.policies import widget_reply_is_superseded
 from app.schemas.ai import AIExecutionOut
 from app.services.ai_execution import (
@@ -13,12 +15,14 @@ from app.services.ai_execution import (
     build_grounded_draft_graph,
     is_provider_configured,
 )
-from app.services.ai_worker import _safe_ai_failure_code
+from app.services.ai_worker import _safe_ai_failure_code, process_ai_execution
 
 
 def test_execution_response_excludes_private_inputs_and_sensitive_provider_data():
     row = SimpleNamespace(
         id=uuid4(),
+        ai_agent_id=uuid4(),
+        ai_agent_config_version=3,
         kind="reply_draft",
         status="succeeded",
         safe_summary="Reply draft generated using 1 knowledge source(s).",
@@ -42,6 +46,7 @@ def test_execution_response_excludes_private_inputs_and_sensitive_provider_data(
 
     payload = AIExecutionOut.model_validate(row).model_dump()
     assert payload["draft"] == "Thanks for reaching out. I can help with that."
+    assert payload["ai_agent_config_version"] == 3
     assert "question" not in payload
     assert "instructions" not in payload
     assert "integration_context_encrypted" not in payload
@@ -66,6 +71,99 @@ def test_ai_failures_have_safe_actionable_codes_without_exposing_exception_text(
     assert (
         _safe_ai_failure_code(RuntimeError("checkpoint connection failed")) == "ai_execution_failed"
     )
+
+
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        ("What is your refund policy?", {"refund", "return", "exchange", "eligible"}),
+        ("How long does delivery take?", {"delivery", "shipping", "tracking", "courier"}),
+        ("Please cancel my order", {"cancel", "cancellation", "request"}),
+        ("फिर्ता नीति के हो?", {"फिर्ता", "refund", "return", "policy"}),
+        ("डेलिभरी कहिले हुन्छ?", {"डेलिभरी", "delivery", "shipping", "tracking"}),
+        ("भुक्तानी कसरी गर्ने?", {"भुक्तानी", "payment", "billing", "charge"}),
+    ],
+)
+def test_rag_query_expands_common_support_intents(question, expected):
+    assert expected.issubset(set(build_retrieval_terms(question)))
+
+
+def test_rag_query_drops_filler_words_and_bounds_search_terms():
+    terms = build_retrieval_terms("What kind of documents do you have for our returns policy?")
+
+    assert "what" not in terms
+    assert "documents" not in terms
+    assert {"returns", "return", "refund", "policy"}.issubset(set(terms))
+    assert len(build_retrieval_terms("word " * 100)) <= 64
+
+
+@pytest.mark.anyio
+async def test_source_less_playground_skips_model_and_uses_safe_completion(monkeypatch):
+    import app.services.ai_worker as worker
+
+    organization_id = uuid4()
+    execution_id = uuid4()
+    execution = SimpleNamespace(kind="playground", question="What is the return policy?")
+    load_context = AsyncMock(return_value=(execution, execution.question, [], [], [], [], {}))
+    finish_no_knowledge = AsyncMock()
+    generate = AsyncMock()
+    monkeypatch.setattr(worker, "load_execution_context", load_context)
+    monkeypatch.setattr(worker, "finish_no_knowledge_execution", finish_no_knowledge)
+    monkeypatch.setattr(worker, "create_grounded_draft", generate)
+
+    await process_ai_execution(organization_id, execution_id)
+
+    finish_no_knowledge.assert_awaited_once_with(organization_id, execution_id)
+    generate.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_no_knowledge_completion_clears_model_usage_and_citations(monkeypatch):
+    import app.services.ai_worker as worker
+
+    execution = SimpleNamespace(
+        status="running",
+        integration_context_encrypted="encrypted-order-context",
+        draft=None,
+        safe_summary=None,
+        citations=None,
+        tool_outcomes=None,
+        usage=None,
+        model_name="previous-model",
+        error_code="previous-error",
+        completed_at=None,
+    )
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def scalar(self, _statement):
+            return execution
+
+        async def commit(self):
+            return None
+
+    async def set_tenant(_session, _organization_id):
+        return None
+
+    monkeypatch.setattr(worker, "SessionLocal", FakeSession)
+    monkeypatch.setattr(worker, "set_tenant_context", set_tenant)
+
+    await worker.finish_no_knowledge_execution(uuid4(), uuid4())
+
+    assert execution.status == "succeeded"
+    assert execution.integration_context_encrypted is None
+    assert "assigned knowledge sources" in execution.draft
+    assert execution.citations == []
+    assert execution.usage == {}
+    assert execution.model_name is None
+    assert execution.error_code is None
+    assert execution.tool_outcomes[0]["result_count"] == 0
+    assert execution.completed_at is not None
 
 
 @pytest.mark.parametrize(

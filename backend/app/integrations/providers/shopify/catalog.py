@@ -244,6 +244,7 @@ class ShopifyProductCatalogAdapter:
         cursor: str | None,
         updated_after: datetime | None = None,
         sync_job_id: UUID | None = None,
+        correlation_id: str | None = None,
     ) -> CatalogProductPage:
         if not 1 <= limit <= MAX_PRODUCTS_PER_PAGE:
             raise ValueError(f"Product page limit must be between 1 and {MAX_PRODUCTS_PER_PAGE}")
@@ -256,6 +257,8 @@ class ShopifyProductCatalogAdapter:
         if sync_job_id is not None:
             diagnostic_context["job_id"] = str(sync_job_id)
             diagnostic_context["job_status"] = "running"
+        if correlation_id is not None:
+            diagnostic_context["correlation_id"] = correlation_id
         data = await graphql(
             shop,
             token,
@@ -348,9 +351,30 @@ class ShopifyProductCatalogAdapter:
                 raise ShopifyAPIError("shopify_invalid_product_response")
         return mapped.model_copy(update={"variants": variants})
 
-    async def get_product(self, connection: IntegrationConnectionRef, *, external_product_id: str) -> CatalogProductSnapshot | None:
+    async def get_product(
+        self,
+        connection: IntegrationConnectionRef,
+        *,
+        external_product_id: str,
+        event_id: UUID | None = None,
+        correlation_id: str | None = None,
+    ) -> CatalogProductSnapshot | None:
         shop, token = await self._auth(connection)
-        data = await graphql(shop, token, PRODUCT_BY_ID_QUERY, {"id": _gid(external_product_id, "Product")})
+        diagnostic_context = {
+            "organization_id": str(connection.organization_id),
+            "connection_id": str(connection.id),
+        }
+        if event_id is not None:
+            diagnostic_context["event_id"] = str(event_id)
+        if correlation_id is not None:
+            diagnostic_context["correlation_id"] = correlation_id
+        data = await graphql(
+            shop,
+            token,
+            PRODUCT_BY_ID_QUERY,
+            {"id": _gid(external_product_id, "Product")},
+            diagnostic_context=diagnostic_context,
+        )
         node = data.get("product")
         if node is None:
             return None

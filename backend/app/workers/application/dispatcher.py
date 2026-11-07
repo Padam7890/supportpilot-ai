@@ -5,7 +5,7 @@ import logging
 import time
 from collections import Counter
 from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from uuid import UUID
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -14,6 +14,7 @@ from app.services.catalog import enqueue_reconciliation
 from app.workers.application.contracts import ClaimedJob, JobHandler
 from app.workers.application.scheduler import FairScheduler
 from app.workers.handlers.ai import AIExecutionHandler
+from app.workers.handlers.automation import AutomationExecutionHandler
 from app.workers.handlers.catalog import CatalogSyncHandler, CatalogWebhookHandler
 from app.workers.handlers.commerce import CommerceActionHandler
 from app.workers.handlers.ingestion_jobs import IngestionHandler
@@ -23,6 +24,7 @@ from app.workers.infrastructure.job_repository import DurableJobRepository
 
 logger = logging.getLogger(__name__)
 RECONCILIATION_INTERVAL = timedelta(hours=1)
+RECONCILIATION_FAILURE_RETRY = timedelta(minutes=1)
 DEAD_LETTER_REPORT_INTERVAL = timedelta(minutes=15)
 
 
@@ -33,6 +35,7 @@ def default_handlers() -> tuple[JobHandler, ...]:
         CatalogSyncHandler(),
         OutboundDeliveryHandler(),
         CommerceActionHandler(),
+        AutomationExecutionHandler(),
         IngestionHandler(),
         AIExecutionHandler(),
         MaintenanceHandler(),
@@ -58,7 +61,7 @@ class WorkerDispatcher:
         self.job_timeout_seconds = job_timeout_seconds
         self._dispatch_lock = asyncio.Lock()
         self.scheduler = FairScheduler()
-        self._last_reconciliation: datetime | None = None
+        self._next_reconciliation_due: dict[UUID, float] = {}
         self._next_dead_letter_report: dict[UUID, float] = {}
         self._metrics: Counter[tuple[str, str]] = Counter()
 
@@ -68,13 +71,7 @@ class WorkerDispatcher:
             organizations = await self._organization_page()
             if not organizations:
                 return False
-            try:
-                await self._reconcile_if_due(organizations)
-            except Exception as exc:
-                logger.exception(
-                    "worker_catalog_reconciliation_schedule_failed",
-                    extra={"error_type": type(exc).__name__},
-                )
+            await self._reconcile_if_due(organizations)
             for organization_id in organizations:
                 await self._report_dead_letters_if_due(organization_id)
             claimed = await self._claim_fairly(organizations)
@@ -132,6 +129,7 @@ class WorkerDispatcher:
                         "job_event": job.event_name,
                         "organization_id": str(job.organization_id),
                         "job_id": str(job.job_id) if job.job_id else None,
+                        "correlation_id": job.correlation_id,
                     },
                 )
                 return job
@@ -157,6 +155,7 @@ class WorkerDispatcher:
                     "job_event": job.event_name,
                     "organization_id": str(job.organization_id),
                     "job_id": str(job.job_id) if job.job_id else None,
+                    "correlation_id": job.correlation_id,
                     "timeout_seconds": self.job_timeout_seconds,
                 },
             )
@@ -170,6 +169,7 @@ class WorkerDispatcher:
                     "organization_id": str(job.organization_id),
                     "job_id": str(job.job_id) if job.job_id else None,
                     "error_type": type(exc).__name__,
+                    "correlation_id": job.correlation_id,
                 },
             )
         else:
@@ -182,16 +182,42 @@ class WorkerDispatcher:
                     "organization_id": str(job.organization_id),
                     "job_id": str(job.job_id) if job.job_id else None,
                     "duration_ms": round((time.monotonic() - started) * 1000),
+                    "correlation_id": job.correlation_id,
                 },
             )
 
     async def _reconcile_if_due(self, organizations: list[UUID]) -> None:
-        now = datetime.now(UTC)
-        if self._last_reconciliation and now - self._last_reconciliation < RECONCILIATION_INTERVAL:
-            return
-        self._last_reconciliation = now
+        now = time.monotonic()
         for organization_id in organizations:
-            await enqueue_reconciliation(organization_id)
+            if now < self._next_reconciliation_due.get(organization_id, 0):
+                continue
+            try:
+                job_enqueued = await enqueue_reconciliation(organization_id)
+            except Exception as exc:
+                self._next_reconciliation_due[organization_id] = (
+                    now + RECONCILIATION_FAILURE_RETRY.total_seconds()
+                )
+                logger.exception(
+                    "worker_catalog_reconciliation_schedule_failed",
+                    extra={
+                        "organization_id": str(organization_id),
+                        "error_type": type(exc).__name__,
+                        "retry_in_seconds": RECONCILIATION_FAILURE_RETRY.total_seconds(),
+                    },
+                )
+                continue
+            self._next_reconciliation_due[organization_id] = (
+                now + RECONCILIATION_INTERVAL.total_seconds()
+            )
+            logger.log(
+                logging.INFO if job_enqueued else logging.DEBUG,
+                "worker_catalog_reconciliation_schedule_checked",
+                extra={
+                    "organization_id": str(organization_id),
+                    "job_enqueued": job_enqueued,
+                    "next_check_in_seconds": RECONCILIATION_INTERVAL.total_seconds(),
+                },
+            )
 
     async def _report_dead_letters_if_due(self, organization_id: UUID) -> None:
         now = time.monotonic()

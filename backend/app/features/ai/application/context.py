@@ -1,65 +1,20 @@
 """Tenant-scoped conversation and knowledge context assembly for AI runs."""
 
 import json
-import re
 from uuid import UUID
 
-from sqlalchemy import func, literal_column, select
+from sqlalchemy import select
 
 from app.db.session import SessionLocal, set_tenant_context
+from app.features.ai.application.retrieval import is_contextual_follow_up
+from app.features.ai.application.retrieval_search import search_agent_knowledge
 from app.models import (
+    AIAgent,
     AIExecution,
     Conversation,
     Customer,
-    DocumentChunk,
-    KnowledgeDocument,
     Message,
     Ticket,
-)
-
-RETRIEVAL_STOPWORDS = frozenset(
-    {
-        "a",
-        "an",
-        "and",
-        "are",
-        "as",
-        "at",
-        "be",
-        "can",
-        "could",
-        "do",
-        "does",
-        "for",
-        "from",
-        "have",
-        "how",
-        "i",
-        "in",
-        "is",
-        "it",
-        "me",
-        "my",
-        "of",
-        "on",
-        "or",
-        "our",
-        "please",
-        "the",
-        "this",
-        "to",
-        "we",
-        "what",
-        "when",
-        "where",
-        "which",
-        "who",
-        "why",
-        "with",
-        "would",
-        "you",
-        "your",
-    }
 )
 
 
@@ -99,6 +54,12 @@ async def load_execution_context(
                 integration_context = decoded
         conversation_context: list[dict[str, str]] = []
         retrieval_text = question
+        if execution.kind == "playground" and execution.playground_history:
+            conversation_context = [
+                {"sender": turn["role"], "content": turn["content"][:600]}
+                for turn in execution.playground_history[-6:]
+                if turn.get("role") in {"user", "assistant"} and isinstance(turn.get("content"), str)
+            ]
         if execution.conversation_id:
             conversation = await db.scalar(
                 select(Conversation).where(
@@ -154,66 +115,94 @@ async def load_execution_context(
                 # The typed name/email collected by the widget is not identity proof,
                 # so it is deliberately excluded from the prompt.
                 question = f"Customer message: {execution.question[:2000]}"
-                retrieval_text = execution.question
+                # Short follow-ups often omit the topic (for example, "how long
+                # does it take?"). Carry only a few earlier customer turns into
+                # retrieval so the search remains bounded and never treats an AI
+                # answer as evidence about what the shopper asked.
+                prior_customer_questions = (
+                    [
+                        message.content[:240]
+                        for message in messages
+                        if message.sender_type == "customer"
+                        and message.id != execution.source_message_id
+                    ][-2:]
+                    if is_contextual_follow_up(execution.question)
+                    else []
+                )
+                retrieval_text = " ".join(
+                    [*prior_customer_questions, execution.question[:1200]]
+                )
             else:
                 question = (
                     f"Draft a reply to the latest customer message. Ticket: {ticket.subject if ticket else 'Support request'}. "
                     f"Customer: {customer.name if customer else 'Customer'}. Latest message: {newest_customer_message[:2000]}"
                 )
+        if execution.kind == "playground" and execution.playground_history:
+            previous_questions = (
+                [
+                    turn.get("content", "")[:240]
+                    for turn in execution.playground_history[-6:]
+                    if turn.get("role") == "user" and isinstance(turn.get("content"), str)
+                ][-2:]
+                if is_contextual_follow_up(question)
+                else []
+            )
+            retrieval_text = " ".join([*previous_questions, question])
         search_text = retrieval_text[:2000]
-        terms = list(
-            dict.fromkeys(
-                term
-                for term in re.findall(r"[a-z0-9]+", search_text.casefold())
-                if len(term) > 2 and term not in RETRIEVAL_STOPWORDS
+        agent = await db.scalar(select(AIAgent).where(
+            AIAgent.organization_id == organization_id,
+            AIAgent.id == execution.ai_agent_id,
+            AIAgent.status == "active",
+        ))
+        if agent is None:
+            execution.instructions = None
+        else:
+            # New jobs use the configuration captured alongside their version.
+            # Legacy queued jobs have no snapshot and retain the prior behavior.
+            agent_instructions = (
+                execution.ai_agent_instructions_snapshot
+                if execution.ai_agent_instructions_snapshot is not None
+                else agent.system_instructions
+            ).strip()[:8000]
+            request_instructions = (execution.instructions or "").strip()[:1000]
+            execution.instructions = "\n\n".join(
+                item for item in (agent_instructions, request_instructions) if item
+            )[:9000]
+        search_result = (
+            await search_agent_knowledge(
+                db,
+                organization_id=organization_id,
+                ai_agent_id=agent.id,
+                search_text=search_text,
             )
-        )[:32]
-        if not terms:
+            if agent is not None
+            else None
+        )
+        if search_result is None or not search_result.terms_available:
             return execution, question, conversation_context, [], [], [], integration_context
-        simple_config = literal_column("'simple'::regconfig")
-        # Customer questions rarely repeat every word used in a policy. ORed,
-        # sanitized terms keep retrieval tolerant while ranking still favors
-        # documents that match several terms.
-        ts_query = func.to_tsquery(simple_config, " | ".join(terms))
-        rank = func.ts_rank(func.to_tsvector(simple_config, DocumentChunk.content), ts_query)
-        rows = (
-            await db.execute(
-                select(DocumentChunk, KnowledgeDocument.name)
-                .join(
-                    KnowledgeDocument,
-                    (KnowledgeDocument.organization_id == DocumentChunk.organization_id)
-                    & (KnowledgeDocument.id == DocumentChunk.document_id),
-                )
-                .where(
-                    DocumentChunk.organization_id == organization_id,
-                    KnowledgeDocument.status == "ready",
-                    KnowledgeDocument.deleted_at.is_(None),
-                    func.to_tsvector(simple_config, DocumentChunk.content).op("@@")(ts_query),
-                )
-                .order_by(rank.desc(), DocumentChunk.document_id, DocumentChunk.chunk_index)
-                .limit(6)
-            )
-        ).all()
         context = [
             {
-                "document_id": str(chunk.document_id),
-                "document_name": name,
-                "chunk_index": chunk.chunk_index,
-                "excerpt": " ".join(chunk.content.split())[:800],
+                "document_id": str(match.document_id),
+                "document_name": match.document_name,
+                "knowledge_base_name": match.knowledge_base_name,
+                "chunk_index": match.chunk_index,
+                "excerpt": match.excerpt[:800],
             }
-            for chunk, name in rows
+            for match in search_result.matches
         ]
         citations = [
             {
-                "document_id": str(chunk.document_id),
-                "document_name": name,
-                "chunk_index": chunk.chunk_index,
-                "excerpt": " ".join(chunk.content.split())[:320],
+                "document_id": str(match.document_id),
+                "document_name": match.document_name,
+                "knowledge_base_name": match.knowledge_base_name,
+                "chunk_index": match.chunk_index,
+                "excerpt": match.excerpt[:320],
+                "match_basis": match.match_basis,
             }
-            for chunk, name in rows
+            for match in search_result.matches
         ]
         outcomes: list[dict[str, str | int]] = [
-            {"tool": "tenant_knowledge_search", "status": "completed", "result_count": len(rows)}
+            {"tool": "tenant_knowledge_search", "status": "completed", "result_count": len(search_result.matches)}
         ]
         if integration_context:
             outcomes.append(

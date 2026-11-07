@@ -11,6 +11,8 @@ class ClaimedJob:
     job_id: UUID | None = None
     related_id: UUID | None = None
     event_name: str | None = None
+    correlation_id: str | None = None
+    claim_token: UUID | None = None
 
 
 class JobHandler:

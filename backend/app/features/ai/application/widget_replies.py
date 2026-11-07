@@ -10,9 +10,11 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.db.session import SessionLocal, set_tenant_context
 from app.features.ai.domain.policies import widget_reply_is_superseded
+from app.features.ai.application.retrieval_search import citations_remain_authorized
 from app.features.ai.tools.recommendations import ToolReference
 from app.models import (
     AIExecution,
+    AIAgent,
     Conversation,
     Message,
     RecommendationEvent,
@@ -38,6 +40,21 @@ async def widget_reply_is_stale(organization_id: UUID, execution_id: UUID) -> bo
         )
         if execution is None or execution.source_message_id is None:
             return True
+        active_agent = await db.scalar(
+            select(AIAgent.id).where(
+                AIAgent.id == execution.ai_agent_id,
+                AIAgent.organization_id == organization_id,
+                AIAgent.status == "active",
+            )
+        )
+        if active_agent is None:
+            execution.status = "succeeded"
+            execution.reply_status = "escalated"
+            execution.safe_summary = "The selected AI bot is inactive. No automated response was generated."
+            execution.draft = None
+            execution.completed_at = datetime.now(UTC)
+            await db.commit()
+            return True
         conversation = await db.scalar(
             select(Conversation).where(
                 Conversation.id == execution.conversation_id,
@@ -45,6 +62,16 @@ async def widget_reply_is_stale(organization_id: UUID, execution_id: UUID) -> bo
             )
         )
         if conversation is None:
+            return True
+        if conversation.ai_agent_id != execution.ai_agent_id:
+            execution.status = "succeeded"
+            execution.reply_status = "escalated"
+            execution.safe_summary = (
+                "A teammate changed the bot for this conversation. The older bot reply was suppressed."
+            )
+            execution.draft = None
+            execution.completed_at = datetime.now(UTC)
+            await db.commit()
             return True
         suppression = widget_reply_is_superseded(
             ai_mode=conversation.ai_mode,
@@ -149,6 +176,27 @@ async def process_widget_shopping_execution(
         if conversation is None:
             await db.rollback()
             return True
+        agent = await db.scalar(
+            select(AIAgent).where(
+                AIAgent.id == execution.ai_agent_id,
+                AIAgent.organization_id == organization_id,
+                AIAgent.status == "active",
+            )
+        )
+        if agent is None:
+            execution.status = "succeeded"
+            execution.reply_status = "escalated"
+            execution.safe_summary = "The selected AI bot is inactive. No automated response was generated."
+            execution.draft = None
+            execution.completed_at = datetime.now(UTC)
+            await db.commit()
+            return True
+        if execution.ai_agent_tools_snapshot is None:
+            # Older queued executions predate tool snapshots. Use the tenant's
+            # currently configured bot allowlist, and fail closed if unavailable.
+            allowed_tools = list(agent.allowed_tools or [])
+        else:
+            allowed_tools = list(execution.ai_agent_tools_snapshot)
         source_message = await db.scalar(
             select(Message).where(
                 Message.organization_id == organization_id,
@@ -171,6 +219,7 @@ async def process_widget_shopping_execution(
             conversation.shopping_state,
             conversation.shopping_state_expires_at,
             selected_references=selected_references,
+            allowed_tools=allowed_tools,
         )
         if not outcome.handled:
             await db.rollback()
@@ -229,6 +278,23 @@ async def finish_widget_reply(
         if row is None or row.conversation_id is None or row.source_message_id is None:
             await db.rollback()
             return
+        active_agent = await db.scalar(
+            select(AIAgent)
+            .where(
+                AIAgent.id == row.ai_agent_id,
+                AIAgent.organization_id == organization_id,
+                AIAgent.status == "active",
+            )
+            .with_for_update()
+        )
+        if active_agent is None:
+            row.status = "succeeded"
+            row.reply_status = "escalated"
+            row.safe_summary = "The selected AI bot was deactivated before reply delivery. No automated response was generated."
+            row.draft = None
+            row.completed_at = now
+            await db.commit()
+            return
         conversation = await db.scalar(
             select(Conversation)
             .where(
@@ -246,6 +312,33 @@ async def finish_widget_reply(
         )
         if conversation is None or source is None:
             await db.rollback()
+            return
+        if conversation.ai_agent_id != row.ai_agent_id:
+            row.status = "succeeded"
+            row.reply_status = "escalated"
+            row.safe_summary = (
+                "A teammate changed the bot for this conversation. The older bot reply was suppressed."
+            )
+            row.draft = None
+            row.completed_at = now
+            await db.commit()
+            return
+        if not await citations_remain_authorized(
+            db,
+            organization_id=organization_id,
+            ai_agent_id=row.ai_agent_id,
+            citations=citations,
+        ):
+            row.status = "succeeded"
+            row.reply_status = "escalated"
+            row.safe_summary = (
+                "A cited knowledge source was removed or changed before this reply completed. "
+                "The response was suppressed for review."
+            )
+            row.draft = None
+            row.citations = []
+            row.completed_at = now
+            await db.commit()
             return
         widget = await db.scalar(
             select(SupportWidget)
@@ -375,8 +468,6 @@ async def finish_widget_reply(
                 else None
             )
             if event_type:
-                from sqlalchemy.dialects.postgresql import insert as pg_insert
-
                 criteria = recommendation_payload.get("applied_criteria")
                 category = criteria.get("category") if isinstance(criteria, dict) else None
                 category_text = str(category).strip() if category is not None else ""
@@ -406,8 +497,6 @@ async def finish_widget_reply(
             for item in outcomes
         )
         if shopping_handoff and row.source_message_id is not None:
-            from sqlalchemy.dialects.postgresql import insert as pg_insert
-
             await db.execute(
                 pg_insert(RecommendationEvent)
                 .values(

@@ -41,7 +41,8 @@ export function ShopifyCancellationPanel({ ticketId, compact = false }: { ticket
     refetchInterval: () => typeof document !== "undefined" && document.visibilityState === "visible" ? 10_000 : false,
     refetchIntervalInBackground: false,
   });
-  const rows = actions.data?.items.filter((action) => action.provider === "shopify") ?? [];
+  const actionItems = actions.data && Array.isArray(actions.data.items) ? actions.data.items : [];
+  const rows = actionItems.filter((action) => action.provider === "shopify");
   const pendingRows = rows.filter((action) => action.approval_status === "pending");
   const historyRows = rows.filter((action) => action.approval_status !== "pending");
   const selected = historyRows.find((action) => action.id === selectedId) ?? historyRows[0];

@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 
+from app.core.config import settings
 from app.core.security import hash_password
 from app.db.session import SessionLocal, set_tenant_context
 from app.models import Message, PlatformOwner, Ticket
@@ -108,7 +109,7 @@ def auth(token: str):
 async def test_registration_refresh_rotation_and_logout(client):
     tokens = await register(client, "auth")
     assert tokens["user"]["role"] == "owner"
-    assert tokens["expires_in"] == 900
+    assert tokens["expires_in"] == settings.access_token_expire_minutes * 60
     current = await client.get("/api/v1/auth/me", headers=auth(tokens["access_token"]))
     assert current.status_code == 200
     assert current.json()["organization"]["slug"]
@@ -758,6 +759,12 @@ async def test_internal_notes_are_private_and_teammates_can_claim_unassigned_tic
         json={"channel": "web"},
     )
     conversation_id = conversation.json()["id"]
+    ticket_conversations = await client.get(
+        f"/api/v1/tickets/{ticket.json()['id']}/conversations",
+        headers=auth(owner["access_token"]),
+    )
+    assert ticket_conversations.status_code == 200, ticket_conversations.text
+    assert [item["id"] for item in ticket_conversations.json()] == [conversation_id]
     note = await client.post(
         f"/api/v1/conversations/{conversation_id}/notes",
         headers=auth(owner["access_token"]),
@@ -772,6 +779,26 @@ async def test_internal_notes_are_private_and_teammates_can_claim_unassigned_tic
         json={"content": "I am checking this for you."},
     )
     assert reply.status_code == 201
+    second_reply = await client.post(
+        f"/api/v1/conversations/{conversation_id}/messages",
+        headers=auth(owner["access_token"]),
+        json={"content": "I will keep you updated."},
+    )
+    assert second_reply.status_code == 201
+    organization_id = UUID(owner["user"]["organization_id"])
+    message_ids = [UUID(reply.json()["id"]), UUID(second_reply.json()["id"])]
+    tied_timestamp = datetime.now(UTC)
+    async with SessionLocal() as db:
+        await set_tenant_context(db, organization_id)
+        await db.execute(
+            update(Message)
+            .where(
+                Message.organization_id == organization_id,
+                Message.id.in_(message_ids),
+            )
+            .values(created_at=tied_timestamp)
+        )
+        await db.commit()
 
     private_notes = await client.get(
         f"/api/v1/conversations/{conversation_id}/notes",
@@ -783,15 +810,18 @@ async def test_internal_notes_are_private_and_teammates_can_claim_unassigned_tic
     )
     assert len(private_notes.json()) == 1
     assert private_notes.json()[0]["content"] == "Verify the order before replying."
-    assert [message["content"] for message in public_messages.json()] == [
-        "I am checking this for you."
-    ]
+    returned_message_ids = [UUID(message["id"]) for message in public_messages.json()]
+    assert returned_message_ids == sorted(message_ids)
+    assert {message["content"] for message in public_messages.json()} == {
+        "I am checking this for you.",
+        "I will keep you updated.",
+    }
     customer_history = await client.get(
         f"/api/v1/customers/{customer.json()['id']}/history",
         headers=auth(owner["access_token"]),
     )
     assert customer_history.status_code == 200, customer_history.text
-    assert customer_history.json()["total"] == 1
+    assert customer_history.json()["total"] == 2
     assert customer_history.json()["items"][0]["ticket_subject"] == "Internal note privacy"
     assert "Verify the order" not in customer_history.text
 
@@ -800,11 +830,21 @@ async def test_internal_notes_are_private_and_teammates_can_claim_unassigned_tic
         f"/api/v1/conversations/{conversation_id}/notes",
         headers=auth(other_tenant["access_token"]),
     )
+    cross_tenant_messages = await client.get(
+        f"/api/v1/conversations/{conversation_id}/messages",
+        headers=auth(other_tenant["access_token"]),
+    )
+    cross_tenant_conversations = await client.get(
+        f"/api/v1/tickets/{ticket.json()['id']}/conversations",
+        headers=auth(other_tenant["access_token"]),
+    )
     cross_tenant_history = await client.get(
         f"/api/v1/customers/{customer.json()['id']}/history",
         headers=auth(other_tenant["access_token"]),
     )
     assert cross_tenant_notes.status_code == 404
+    assert cross_tenant_messages.status_code == 404
+    assert cross_tenant_conversations.status_code == 404
     assert cross_tenant_history.status_code == 404
 
     invitation = await client.post(
@@ -853,6 +893,6 @@ async def test_internal_notes_are_private_and_teammates_can_claim_unassigned_tic
         headers=auth(owner["access_token"]),
     )
     assert any(
-        entry["details"].get("assignee_id", {}).get("to") == agent.json()["user"]["id"]
+        entry["details"].get("assignee_id", {}).get("to") == agent_tokens["user"]["id"]
         for entry in activity.json()
     )

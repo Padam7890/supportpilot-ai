@@ -2,6 +2,7 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import (
+    Boolean,
     JSON,
     CheckConstraint,
     DateTime,
@@ -54,6 +55,12 @@ class Conversation(UUIDPrimaryKey, TimestampMixin, Base):
             name="fk_conversations_org_integration_connection",
             ondelete="RESTRICT",
         ),
+        ForeignKeyConstraint(
+            ["organization_id", "ai_agent_id"],
+            ["ai_agents.organization_id", "ai_agents.id"],
+            name="fk_conversations_org_agent",
+            ondelete="RESTRICT",
+        ),
     )
 
     organization_id: Mapped[uuid.UUID] = mapped_column(
@@ -65,7 +72,11 @@ class Conversation(UUIDPrimaryKey, TimestampMixin, Base):
     ai_mode: Mapped[str] = mapped_column(
         String(12), default="human", server_default="human", nullable=False
     )
+    ai_agent_override: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
     integration_connection_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
+    ai_agent_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     external_conversation_id: Mapped[str | None] = mapped_column(String(512))
     # Compact, non-PII shopping preferences for this conversation only.
     shopping_state: Mapped[dict | None] = mapped_column(JSON)

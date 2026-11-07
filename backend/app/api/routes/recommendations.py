@@ -8,7 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_roles
 from app.core.config import settings
+from app.core.observability import current_correlation_id
 from app.db.session import get_db
+from app.features.ai.application.defaults import get_default_agent
 from app.models import AIExecution, Organization, User
 from app.schemas.errors import COMMON_ERROR_RESPONSES
 from app.schemas.recommendations import RecommendationExecutionOut, RecommendationRequest
@@ -31,11 +33,22 @@ async def create_recommendation(
     )) or 0
     if active >= MAX_ACTIVE_RECOMMENDATIONS:
         raise HTTPException(status_code=429, detail="Too many recommendation requests are already in progress")
+    agent = await get_default_agent(db, user.organization_id)
+    if "recommend_products" not in (agent.allowed_tools or []):
+        raise HTTPException(
+            status_code=409,
+            detail="Product recommendations are disabled for the workspace’s default AI bot",
+        )
     execution = AIExecution(
         organization_id=user.organization_id,
         requested_by_user_id=user.id,
         kind="recommendation",
+        ai_agent_id=agent.id,
+        ai_agent_config_version=agent.config_version,
+        ai_agent_instructions_snapshot=agent.system_instructions.strip()[:8000],
+        ai_agent_tools_snapshot=list(agent.allowed_tools or []),
         status="queued",
+        correlation_id=current_correlation_id(),
         question=data.question,
         max_attempts=settings.ai_provider_max_attempts,
     )

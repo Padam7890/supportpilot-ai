@@ -2,9 +2,13 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MotionConfig } from "motion/react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { ensureTypographyScaleFromStorage } from "@/lib/typography-scale";
 
 export function Providers({ children }: { children: ReactNode }) {
+  useEffect(() => {
+    ensureTypographyScaleFromStorage();
+  }, []);
   const [client] = useState(
     () =>
       new QueryClient({

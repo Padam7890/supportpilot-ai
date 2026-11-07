@@ -59,12 +59,22 @@ class CatalogSyncJobOut(BaseModel):
     id: UUID
     mode: Literal["full", "incremental", "reconcile"]
     status: Literal["queued", "running", "succeeded", "failed", "cancelled"]
+    correlation_id: str | None = None
     attempt_count: int
     max_attempts: int
+    manual_retry_count: int = 0
+    manual_retry_available: bool = False
     records_seen: int
     last_error_code: str | None
     created_at: datetime
     completed_at: datetime | None
+
+
+class CatalogSyncJobPageOut(BaseModel):
+    items: list[CatalogSyncJobOut]
+    total: int
+    limit: int
+    offset: int
 
 
 class CatalogSyncRequest(BaseModel):

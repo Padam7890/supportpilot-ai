@@ -18,9 +18,10 @@ router = APIRouter(tags=["inbox"], responses=COMMON_ERROR_RESPONSES)
 
 @router.get("/inbox", response_model=InboxPage)
 async def list_inbox(
-    scope: str = Query(default="all", pattern="^(all|mine|unassigned)$"),
+    scope: str = Query(default="all", pattern="^(all|mine|unassigned|my_teams)$"),
     status: str | None = Query(default=None, pattern="^(open|pending|resolved|closed)$"),
     priority: str | None = Query(default=None, pattern="^(low|normal|high|urgent)$"),
+    team_id: UUID | None = Query(default=None),
     needs_approval: bool = False,
     unread_only: bool = False,
     search: str | None = Query(default=None, max_length=200),
@@ -35,6 +36,7 @@ async def list_inbox(
         scope=scope,
         status=status,
         priority=priority,
+        team_id=team_id,
         needs_approval=needs_approval,
         unread_only=unread_only,
         search=search,

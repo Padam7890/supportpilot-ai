@@ -285,7 +285,14 @@ async def process_widget_shopping_turn(
     raw_state: dict | None,
     state_expires_at: datetime | None,
     selected_references: list[ToolReference] | None = None,
+    allowed_tools: list[str] | None = None,
 ) -> WidgetShoppingOutcome:
+    configured_tools = (
+        allowed_tools
+        if allowed_tools is not None
+        else ["recommend_products", "compare_products"]
+    )
+    enabled_tools = set(configured_tools) & {"recommend_products", "compare_products"}
     state, _expired = load_shopping_state(raw_state, state_expires_at)
     if not should_consider_shopping_turn(question, state):
         return WidgetShoppingOutcome(handled=False)
@@ -319,7 +326,7 @@ async def process_widget_shopping_turn(
         return WidgetShoppingOutcome(handled=False)
     _candidates, categories, brands = await load_candidates(db, organization_id, question)
     analysis, usage, model_name = await analyze_shopping_turn(
-        question, state, categories=categories, brands=brands
+        question, state, categories=categories, brands=brands, allowed_tools=sorted(enabled_tools)
     )
     if analysis.action == "none":
         return WidgetShoppingOutcome(handled=False)
@@ -358,6 +365,15 @@ async def process_widget_shopping_turn(
             tool_outcomes=[{"tool": "shopping_state", "status": action, "result_count": 0}],
         )
     if action == "compare":
+        if "compare_products" not in enabled_tools:
+            return WidgetShoppingOutcome(
+                handled=True,
+                draft="Product comparisons are not enabled for this assistant. I can still help you explore products or ask the store team for help.",
+                state=state.model_dump(mode="json"),
+                usage=usage,
+                model_name=model_name,
+                tool_outcomes=[{"tool": "compare_products", "status": "disabled", "result_count": 0}],
+            )
         if policy is not None and not policy.comparison_enabled:
             return WidgetShoppingOutcome(
                 handled=True,
@@ -420,6 +436,15 @@ async def process_widget_shopping_turn(
                     "result_count": len(comparison.products),
                 }
             ],
+        )
+    if "recommend_products" not in enabled_tools:
+        return WidgetShoppingOutcome(
+            handled=True,
+            draft="Product recommendations are not enabled for this assistant. I can answer using its assigned knowledge sources or ask the store team to help.",
+            state=state.model_dump(mode="json"),
+            usage=usage,
+            model_name=model_name,
+            tool_outcomes=[{"tool": "recommend_products", "status": "disabled", "result_count": 0}],
         )
     recommendation, displayed = await invoke_recommend_products(
         db, organization_id, question, state

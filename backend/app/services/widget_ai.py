@@ -2,11 +2,27 @@
 
 import re
 from typing import Any
+from uuid import UUID
 
+from sqlalchemy import func, literal_column, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models import AIExecution, Conversation, Message, SupportWidget
+from app.core.observability import current_correlation_id
+from app.features.ai.application.retrieval import build_retrieval_terms
+from app.features.ai.domain.shopping_state import SHOPPING_CUES
+from app.models import (
+    AIAgent,
+    AIAgentKnowledgeBase,
+    AIExecution,
+    Conversation,
+    DocumentChunk,
+    KnowledgeBase,
+    KnowledgeDocument,
+    Message,
+    SupportWidget,
+    SupportWidgetAIAgent,
+)
 
 HANDOFF_MESSAGE = "I’ll pass this to a support teammate so they can help you."
 AI_TEMPORARY_FAILURE_REPLY = (
@@ -241,13 +257,22 @@ async def enqueue_widget_reply(
 ) -> AIExecution | None:
     if not widget.ai_enabled or conversation.ai_mode != "ai":
         return None
+    agent = await resolve_widget_agent(db, widget, message.content, conversation=conversation)
+    if agent is None:
+        return None
+    conversation.ai_agent_id = agent.id
     execution = AIExecution(
         organization_id=widget.organization_id,
         requested_by_user_id=None,
         conversation_id=conversation.id,
         source_message_id=message.id,
+        ai_agent_id=conversation.ai_agent_id,
+        ai_agent_config_version=agent.config_version if agent else 1,
+        ai_agent_instructions_snapshot=(agent.system_instructions.strip()[:8000] if agent else ""),
+        ai_agent_tools_snapshot=list(agent.allowed_tools or []) if agent else [],
         kind="widget_reply",
         status="queued",
+        correlation_id=current_correlation_id(),
         delivery_mode=widget.ai_reply_mode,
         reply_status="processing",
         question=message.content,
@@ -256,3 +281,151 @@ async def enqueue_widget_reply(
     db.add(execution)
     await db.flush()
     return execution
+
+
+async def resolve_widget_agent(
+    db: AsyncSession,
+    widget: SupportWidget,
+    message: str,
+    *,
+    conversation: Conversation | None = None,
+    configured_agent_ids: list[UUID] | None = None,
+    primary_agent_id: UUID | None = None,
+) -> AIAgent | None:
+    """Route to the configured active bot whose assigned sources best match the message."""
+    if conversation is not None and conversation.ai_agent_override:
+        return await db.scalar(
+            select(AIAgent).where(
+                AIAgent.organization_id == widget.organization_id,
+                AIAgent.id == conversation.ai_agent_id,
+                AIAgent.status == "active",
+            )
+        )
+    configured_ids = configured_agent_ids
+    if configured_ids is None:
+        configured_ids = list(
+            await db.scalars(
+                select(SupportWidgetAIAgent.ai_agent_id)
+                .where(
+                    SupportWidgetAIAgent.organization_id == widget.organization_id,
+                    SupportWidgetAIAgent.widget_id == widget.id,
+                )
+                .order_by(SupportWidgetAIAgent.ai_agent_id)
+            )
+        )
+    if not configured_ids:
+        configured_ids = [widget.ai_agent_id]
+    agents = list(
+        await db.scalars(
+            select(AIAgent).where(
+                AIAgent.organization_id == widget.organization_id,
+                AIAgent.id.in_(configured_ids),
+                AIAgent.status == "active",
+            )
+        )
+    )
+    configured_order = {agent_id: index for index, agent_id in enumerate(configured_ids)}
+    agents.sort(key=lambda agent: configured_order.get(agent.id, len(configured_order)))
+    by_id = {agent.id: agent for agent in agents}
+    primary = primary_agent_id or widget.ai_agent_id
+    preferred_agent_id = (
+        conversation.ai_agent_id
+        if conversation is not None
+        else primary
+    )
+    fallback = (
+        by_id.get(preferred_agent_id)
+        or by_id.get(primary)
+        or (agents[0] if agents else None)
+    )
+    if fallback is None:
+        return None
+
+    if SHOPPING_CUES.search(message):
+        required_tool = (
+            "compare_products"
+            if re.search(r"\bcompare\b|तुलना", message, re.IGNORECASE)
+            else "recommend_products"
+        )
+        capable_agents = [
+            agent for agent in agents if required_tool in (agent.allowed_tools or [])
+        ]
+        if capable_agents:
+            agents = capable_agents
+            by_id = {agent.id: agent for agent in agents}
+            fallback = (
+                by_id.get(preferred_agent_id)
+                or by_id.get(primary)
+                or agents[0]
+            )
+
+    terms = build_retrieval_terms(message)
+    if not terms:
+        return fallback
+
+    simple_config = literal_column("'simple'::regconfig")
+    ts_query = func.to_tsquery(simple_config, " | ".join(terms))
+    content_vector = func.to_tsvector(simple_config, DocumentChunk.content)
+    metadata_vector = (
+        func.setweight(
+            func.to_tsvector(simple_config, KnowledgeDocument.name),
+            literal_column("'A'::\"char\""),
+        )
+        .op("||")(
+            func.setweight(
+                func.to_tsvector(simple_config, KnowledgeBase.name),
+                literal_column("'B'::\"char\""),
+            )
+        )
+    )
+
+    def score_sources(match_vector: Any, rank_vector: Any, *, include_chunks: bool) -> Any:
+        query = (
+            select(
+                AIAgentKnowledgeBase.ai_agent_id,
+                func.max(func.ts_rank(rank_vector, ts_query, 32)).label("score"),
+            )
+            .join(
+                KnowledgeBase,
+                (KnowledgeBase.organization_id == AIAgentKnowledgeBase.organization_id)
+                & (KnowledgeBase.id == AIAgentKnowledgeBase.knowledge_base_id),
+            )
+            .join(
+                KnowledgeDocument,
+                (KnowledgeDocument.organization_id == KnowledgeBase.organization_id)
+                & (KnowledgeDocument.knowledge_base_id == KnowledgeBase.id),
+            )
+        )
+        if include_chunks:
+            query = query.join(
+                DocumentChunk,
+                (DocumentChunk.organization_id == KnowledgeDocument.organization_id)
+                & (DocumentChunk.document_id == KnowledgeDocument.id),
+            )
+        return (
+            query.where(
+                AIAgentKnowledgeBase.organization_id == widget.organization_id,
+                AIAgentKnowledgeBase.ai_agent_id.in_(by_id),
+                KnowledgeBase.status == "active",
+                KnowledgeDocument.status == "ready",
+                KnowledgeDocument.deleted_at.is_(None),
+                match_vector.op("@@")(ts_query),
+            )
+            .group_by(AIAgentKnowledgeBase.ai_agent_id)
+        )
+
+    # UNION keeps chunk matching as an independently indexable branch while
+    # allowing verified source labels to contribute when another bot has a
+    # weaker or unrelated body-text match.
+    source_scores = union_all(
+        score_sources(content_vector, content_vector, include_chunks=True),
+        score_sources(metadata_vector, metadata_vector, include_chunks=False),
+    ).subquery()
+    matches = await db.execute(
+        select(source_scores.c.ai_agent_id, func.max(source_scores.c.score).label("score"))
+        .group_by(source_scores.c.ai_agent_id)
+        .order_by(func.max(source_scores.c.score).desc(), source_scores.c.ai_agent_id)
+        .limit(len(by_id))
+    )
+    ranked = matches.first()
+    return by_id.get(ranked.ai_agent_id, fallback) if ranked else fallback

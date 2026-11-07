@@ -6,7 +6,8 @@ const TENANT_REFRESH_COOKIE = "supportpilot_refresh";
 const PLATFORM_ACCESS_COOKIE = "supportpilot_platform_access";
 const PLATFORM_REFRESH_COOKIE = "supportpilot_platform_refresh";
 const TENANT_CHALLENGE_COOKIE = "supportpilot_auth_challenge";
-const REFRESH_MAX_AGE = 60 * 60 * 24 * 7;
+/** Must cover backend refresh JWT lifetime (`refresh_token_expire_days`); default 30d matches backend Settings. */
+const REFRESH_MAX_AGE = Number(process.env.AUTH_REFRESH_COOKIE_MAX_AGE_SECONDS ?? 60 * 60 * 24 * 30);
 const AUTH_CHALLENGE_MAX_AGE = 60 * 10;
 const backendUrl = (process.env.BACKEND_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
 
@@ -17,6 +18,54 @@ type TokenResponse = {
   user?: unknown;
   platform_owner?: unknown;
 };
+
+/**
+ * When many tabs or parallel queries hit 401 together, each would call `/auth/refresh` with the same
+ * refresh cookie. The backend rotates refresh tokens and treats a second concurrent refresh as
+ * reuse — revoking sessions and forcing sign-in. Coalesce in-flight refresh by refresh token + realm.
+ */
+const refreshInflight = new Map<string, Promise<TokenResponse>>();
+
+function refreshCoalesceKey(platform: boolean, refreshToken: string) {
+  const realm = platform ? "platform" : "tenant";
+  const tail = refreshToken.slice(-24);
+  return `${realm}:${tail.length}:${tail}`;
+}
+
+function runSingleFlightRefresh(
+  request: NextRequest,
+  correlationId: string,
+  platform: boolean,
+  refreshToken: string,
+): Promise<TokenResponse> {
+  const key = refreshCoalesceKey(platform, refreshToken);
+  const existing = refreshInflight.get(key);
+  if (existing) return existing;
+
+  const refreshPath = platform ? "platform/auth/refresh" : "auth/refresh";
+  const promise = (async () => {
+    const refreshResponse = await requestBackend(
+      request,
+      refreshPath,
+      correlationId,
+      undefined,
+      JSON.stringify({ refresh_token: refreshToken }),
+      "POST",
+    );
+    const raw = await refreshResponse.text();
+    if (!refreshResponse.ok) {
+      throw new Error(raw || `refresh_failed_${refreshResponse.status}`);
+    }
+    return JSON.parse(raw) as TokenResponse;
+  })();
+
+  refreshInflight.set(key, promise);
+  const clearRefresh = () => {
+    refreshInflight.delete(key);
+  };
+  void promise.then(clearRefresh, clearRefresh);
+  return promise;
+}
 
 function setSessionCookies(response: NextResponse, tokens: TokenResponse, platform: boolean) {
   const secure = process.env.NODE_ENV === "production";
@@ -119,10 +168,11 @@ function hasSameOrigin(request: NextRequest) {
   }
 }
 
-function responseFromUpstream(response: Response, body: string) {
+function responseFromUpstream(response: Response, body: string, correlationId: string) {
   const headers = new Headers({
     "content-type": response.headers.get("content-type") ?? "application/json",
     "cache-control": "no-store",
+    "x-correlation-id": response.headers.get("x-correlation-id") ?? correlationId,
   });
   const location = response.headers.get("location");
   if (location) headers.set("location", location);
@@ -132,7 +182,13 @@ function responseFromUpstream(response: Response, body: string) {
   });
 }
 
-function localProblem(request: NextRequest, status: number, detail: string, code: string) {
+function localProblem(
+  request: NextRequest,
+  status: number,
+  detail: string,
+  code: string,
+  correlationId: string,
+) {
   const title = status === 403 ? "Forbidden" : status === 413 ? "Content Too Large" : "Bad Gateway";
   const problem = {
     type: `urn:supportpilot:problem:${code}`,
@@ -141,21 +197,27 @@ function localProblem(request: NextRequest, status: number, detail: string, code
     detail,
     instance: new URL(request.url).pathname,
     code,
+    correlation_id: correlationId,
   };
   return new NextResponse(JSON.stringify(problem), {
     status,
-    headers: { "content-type": "application/problem+json", "cache-control": "no-store" },
+    headers: {
+      "content-type": "application/problem+json",
+      "cache-control": "no-store",
+      "x-correlation-id": correlationId,
+    },
   });
 }
 
 async function requestBackend(
   request: NextRequest,
   path: string,
+  correlationId: string,
   accessToken?: string,
   body?: BodyInit,
   method = request.method,
 ) {
-  const isHealthCheck = path === "health/ready" || path === "health/live";
+  const isHealthCheck = path === "health/ready" || path === "health/live" || path === "health/worker";
   const upstreamPath = isHealthCheck ? `/${path}` : `/api/v1/${path}`;
   const upstreamUrl = `${backendUrl}${upstreamPath}${new URL(request.url).search}`;
   const headers = new Headers();
@@ -163,6 +225,7 @@ async function requestBackend(
   if (contentType) headers.set("content-type", contentType);
   else if (body && !["GET", "HEAD"].includes(method)) headers.set("content-type", "application/json");
   headers.set("accept", "application/json");
+  headers.set("x-correlation-id", correlationId);
   const idempotencyKey = request.headers.get("idempotency-key");
   if (idempotencyKey) headers.set("idempotency-key", idempotencyKey);
   if (accessToken) headers.set("authorization", `Bearer ${accessToken}`);
@@ -179,8 +242,15 @@ async function forward(
   request: NextRequest,
   context: { params: Promise<{ path: string[] }> },
 ) {
+  const correlationId = crypto.randomUUID();
   if (isMutation(request.method) && !hasSameOrigin(request)) {
-    return localProblem(request, 403, "Cross-origin request rejected", "cross_origin_rejected");
+    return localProblem(
+      request,
+      403,
+      "Cross-origin request rejected",
+      "cross_origin_rejected",
+      correlationId,
+    );
   }
   const { path: segments } = await context.params;
   const path = segments.map(encodeURIComponent).join("/");
@@ -220,11 +290,11 @@ async function forward(
     } else {
       const declaredLength = Number(request.headers.get("content-length") ?? 0);
       if (declaredLength > 20 * 1024 * 1024) {
-        return localProblem(request, 413, "Document exceeds the 20 MB upload limit", "upload_too_large");
+        return localProblem(request, 413, "Document exceeds the 20 MB upload limit", "upload_too_large", correlationId);
       }
       const binaryBody = await request.arrayBuffer();
       if (binaryBody.byteLength > 20 * 1024 * 1024) {
-        return localProblem(request, 413, "Document exceeds the 20 MB upload limit", "upload_too_large");
+        return localProblem(request, 413, "Document exceeds the 20 MB upload limit", "upload_too_large", correlationId);
       }
       requestBody = binaryBody;
     }
@@ -234,22 +304,22 @@ async function forward(
   }
   if (needsAuthChallenge) {
     if (!authChallenge) {
-      return localProblem(request, 401, "Sign-in verification expired. Start again.", "auth_challenge_expired");
+      return localProblem(request, 401, "Sign-in verification expired. Start again.", "auth_challenge_expired", correlationId);
     }
     if (typeof requestBody !== "string") {
-      return localProblem(request, 400, "A JSON request body is required", "invalid_request");
+      return localProblem(request, 400, "A JSON request body is required", "invalid_request", correlationId);
     }
     try {
       const challengeBody = JSON.parse(requestBody) as Record<string, unknown>;
       requestBody = JSON.stringify({ ...challengeBody, challenge_token: authChallenge });
     } catch {
-      return localProblem(request, 400, "Invalid JSON request body", "invalid_request");
+      return localProblem(request, 400, "Invalid JSON request body", "invalid_request", correlationId);
     }
   }
 
   try {
     if (isLogout) {
-      if (refreshToken) await requestBackend(request, path, undefined, requestBody);
+      if (refreshToken) await requestBackend(request, path, correlationId, undefined, requestBody);
       const response = NextResponse.json({ status: "signed_out" });
       clearSessionCookies(response, platform);
       return response;
@@ -258,13 +328,14 @@ async function forward(
     let upstream = await requestBackend(
       request,
       path,
+      correlationId,
       isLogin || isRefresh || isAuthStart || needsAuthChallenge ? undefined : accessToken,
       requestBody,
     );
     if (isAuthStart) {
       const raw = await upstream.text();
       if (!upstream.ok) {
-        const response = responseFromUpstream(upstream, raw);
+        const response = responseFromUpstream(upstream, raw, correlationId);
         clearAuthChallengeCookie(response);
         return response;
       }
@@ -279,7 +350,7 @@ async function forward(
     }
     if (isLoginVerify) {
       const raw = await upstream.text();
-      if (!upstream.ok) return responseFromUpstream(upstream, raw);
+      if (!upstream.ok) return responseFromUpstream(upstream, raw, correlationId);
       const tokens = JSON.parse(raw) as TokenResponse;
       const response = NextResponse.json({ user: tokens.user }, { status: upstream.status });
       setSessionCookies(response, tokens, false);
@@ -288,13 +359,13 @@ async function forward(
     }
     if (isRegistrationVerify || isPasswordResetComplete) {
       const raw = await upstream.text();
-      const response = responseFromUpstream(upstream, raw);
+      const response = responseFromUpstream(upstream, raw, correlationId);
       if (upstream.ok) clearAuthChallengeCookie(response);
       return response;
     }
     if (isLogin || isRefresh) {
       const raw = await upstream.text();
-      if (!upstream.ok) return responseFromUpstream(upstream, raw);
+      if (!upstream.ok) return responseFromUpstream(upstream, raw, correlationId);
       const tokens = JSON.parse(raw) as TokenResponse;
       const response = NextResponse.json(
         platform ? { platform_owner: tokens.platform_owner } : { user: tokens.user },
@@ -305,30 +376,36 @@ async function forward(
     }
 
     if (upstream.status === 401 && refreshToken) {
-      const refreshPath = platform ? "platform/auth/refresh" : "auth/refresh";
-      const refreshResponse = await requestBackend(
-        request,
-        refreshPath,
-        undefined,
-        JSON.stringify({ refresh_token: refreshToken }),
-        "POST",
-      );
-      if (refreshResponse.ok) {
-        const tokenBody = (await refreshResponse.json()) as TokenResponse;
-        upstream = await requestBackend(request, path, tokenBody.access_token, requestBody);
+      try {
+        const tokenBody = await runSingleFlightRefresh(request, correlationId, platform, refreshToken);
+        upstream = await requestBackend(request, path, correlationId, tokenBody.access_token, requestBody);
         const raw = await upstream.text();
-        const response = responseFromUpstream(upstream, raw);
+        const response = responseFromUpstream(upstream, raw, correlationId);
         setSessionCookies(response, tokenBody, platform);
         return response;
+      } catch {
+        /* refresh failed — fall through to 401 handling */
       }
     }
 
     const raw = await upstream.text();
-    const response = responseFromUpstream(upstream, raw);
+    const response = responseFromUpstream(upstream, raw, correlationId);
     if (upstream.status === 401) clearSessionCookies(response, platform);
     return response;
-  } catch {
-    return localProblem(request, 502, "Backend service is unavailable", "backend_unavailable");
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: "backend_proxy_request_failed",
+      correlation_id: correlationId,
+      method: request.method,
+      error_type: error instanceof Error ? error.name : "UnknownError",
+    }));
+    return localProblem(
+      request,
+      502,
+      "Backend service is unavailable",
+      "backend_unavailable",
+      correlationId,
+    );
   }
 }
 
