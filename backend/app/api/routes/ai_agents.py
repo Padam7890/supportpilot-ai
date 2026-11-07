@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_roles
 from app.db.session import get_db
+from app.features.ai.application.agent_audit import record_agent_audit
 from app.models import (
     AIAgent,
     AIAgentAudit,
@@ -26,27 +27,6 @@ from app.schemas.ai_agents import (
 from app.schemas.errors import COMMON_ERROR_RESPONSES
 
 router = APIRouter(prefix="/ai/agents", tags=["AI agents"], responses=COMMON_ERROR_RESPONSES)
-
-
-def add_agent_audit(
-    db: AsyncSession,
-    *,
-    agent: AIAgent,
-    actor_id: UUID,
-    event_type: str,
-    details: dict[str, object],
-) -> None:
-    """Record configuration metadata only; prompt text is intentionally omitted."""
-    db.add(
-        AIAgentAudit(
-            organization_id=agent.organization_id,
-            ai_agent_id=agent.id,
-            actor_user_id=actor_id,
-            event_type=event_type,
-            config_version=agent.config_version,
-            details=details,
-        )
-    )
 
 
 def serialize_agent(
@@ -161,7 +141,7 @@ async def create_agent(
     db.add_all(AIAgentKnowledgeBase(
         organization_id=user.organization_id, ai_agent_id=agent.id, knowledge_base_id=base.id
     ) for base in bases)
-    add_agent_audit(
+    record_agent_audit(
         db,
         agent=agent,
         actor_id=user.id,
@@ -300,7 +280,7 @@ async def update_agent(
                 knowledge_base_id=base.id,
             ) for base in requested_bases)
         agent.config_version += 1
-        add_agent_audit(
+        record_agent_audit(
             db,
             agent=agent,
             actor_id=user.id,
@@ -362,7 +342,7 @@ async def replace_agent_knowledge_bases(
         organization_id=user.organization_id, ai_agent_id=agent.id, knowledge_base_id=base.id
     ) for base in bases)
     agent.config_version += 1
-    add_agent_audit(
+    record_agent_audit(
         db,
         agent=agent,
         actor_id=user.id,
@@ -386,7 +366,7 @@ async def activate_agent(
     if agent.status != "active":
         agent.status = "active"
         agent.config_version += 1
-        add_agent_audit(
+        record_agent_audit(
             db,
             agent=agent,
             actor_id=user.id,
@@ -423,7 +403,7 @@ async def make_agent_default(
     if previous is not None:
         previous.is_default = False
         previous.config_version += 1
-        add_agent_audit(
+        record_agent_audit(
             db,
             agent=previous,
             actor_id=user.id,
@@ -438,7 +418,7 @@ async def make_agent_default(
 
     selected.is_default = True
     selected.config_version += 1
-    add_agent_audit(
+    record_agent_audit(
         db,
         agent=selected,
         actor_id=user.id,
@@ -476,7 +456,7 @@ async def deactivate_agent(
     if agent.status != "inactive":
         agent.status = "inactive"
         agent.config_version += 1
-        add_agent_audit(
+        record_agent_audit(
             db,
             agent=agent,
             actor_id=user.id,

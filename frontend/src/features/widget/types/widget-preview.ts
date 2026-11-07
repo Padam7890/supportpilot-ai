@@ -3,4 +3,6 @@ export type WidgetPreviewDraft = {
   aiEnabled: boolean;
   replyMode: "draft_only" | "auto_reply";
   botNames: string[];
+  assistantName: string;
+  welcomeMessage: string;
 };

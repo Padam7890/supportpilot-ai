@@ -187,7 +187,8 @@ async def public_widget_config(
         store_name=organization.name,
         collect_contact=widget.collect_contact,
         ai_enabled=widget.ai_enabled,
-        assistant_name="SupportPilot AI",
+        assistant_name=widget.assistant_name,
+        welcome_message=widget.welcome_message,
     )
 
 

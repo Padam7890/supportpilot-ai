@@ -163,7 +163,7 @@ export function AutomationHub() {
         </section>
 
         <p className="flex items-center gap-2 text-[11px] text-slate-500">
-          <Activity size={14} className="shrink-0 text-slate-400" aria-hidden /> Published workflows run on incoming messages from connected channels.
+          <Activity size={14} className="shrink-0 text-slate-400" aria-hidden /> Published workflows run on their configured customer-message events.
         </p>
       </div>
     </div>
@@ -172,7 +172,11 @@ export function AutomationHub() {
 
 function summarizeWorkflow(workflow: AutomationWorkflow) {
   const defs = workflow.definition;
-  const trig = defs.trigger.kind === "customer_message_received" ? "Customer message" : defs.trigger.kind;
+  const trig = defs.trigger.kind === "customer_message_received"
+    ? "Customer message"
+    : defs.trigger.kind === "conversation_started"
+      ? "Conversation started"
+      : "Ticket created";
   const conds = defs.conditions?.length ?? 0;
   const actLabel = (a: AutomationWorkflow["definition"]["actions"][number]): string => {
     switch (a.kind) {

@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/input";
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
 import { getCurrentUser } from "@/features/auth/api/auth-api";
-import { aiQueryKeys, createPlaygroundExecution, getAIExecution, previewPlaygroundRetrieval } from "../api/ai-api";
+import { aiQueryKeys, createPlaygroundExecution, getAIExecution, previewPlaygroundRetrieval, type AIPlaygroundRequest } from "../api/ai-api";
 import { aiAgentsKey, listAIAgents } from "../api/ai-agent-api";
 import { knowledgeBaseKey, listKnowledgeBases } from "@/features/knowledge/api/knowledge-base-api";
 import { playgroundSchema } from "../schemas/ai.schema";
@@ -43,6 +43,7 @@ export function AIPlayground() {
   const [pendingQuestion, setPendingQuestion] = useState<string>();
   const [copied, setCopied] = useState(false);
   const appendedExecutionId = useRef<string | undefined>(undefined);
+  const lastRequest = useRef<AIPlaygroundRequest | undefined>(undefined);
   const user = useQuery({ queryKey: ["me"], queryFn: getCurrentUser });
   const agents = useQuery({ queryKey: aiAgentsKey, queryFn: listAIAgents });
   const bases = useQuery({ queryKey: knowledgeBaseKey, queryFn: listKnowledgeBases });
@@ -64,11 +65,11 @@ export function AIPlayground() {
     if (defaultAgent && !form.getValues("ai_agent_id")) form.setValue("ai_agent_id", defaultAgent.id);
   }, [agents.data, form]);
   const run = useMutation({
-    mutationFn: createPlaygroundExecution,
-    onSuccess: (execution, variables) => {
+    mutationFn: ({ request }: { request: AIPlaygroundRequest; retry: boolean }) => createPlaygroundExecution(request),
+    onSuccess: (execution, { request, retry }) => {
       setExecutionId(execution.id);
-      setPendingQuestion(variables.question);
-      setConversation((current) => [...current, { role: "user", content: variables.question }]);
+      setPendingQuestion(request.question);
+      if (!retry) setConversation((current) => [...current, { role: "user", content: request.question }]);
       setCopied(false);
     },
   });
@@ -91,6 +92,7 @@ export function AIPlayground() {
     setPendingQuestion(undefined);
   }, [execution.data]);
   const canRun = ["owner", "admin", "agent"].includes(user.data?.role ?? "");
+  const canManageBots = ["owner", "admin"].includes(user.data?.role ?? "");
   const busy = run.isPending || execution.data?.status === "queued" || execution.data?.status === "running";
   const selectedAgentId = form.watch("ai_agent_id");
   const selectedAgent = agents.data?.items.find((agent) => agent.id === selectedAgentId)
@@ -102,6 +104,7 @@ export function AIPlayground() {
   useEffect(() => {
     if (previousAgentId.current === selectedAgentId) return;
     previousAgentId.current = selectedAgentId;
+    lastRequest.current = undefined;
     setConversation([]);
     setExecutionId(undefined);
     setPendingQuestion(undefined);
@@ -128,8 +131,17 @@ export function AIPlayground() {
       <Panel>
         <PanelHeader title="Test conversation" description="Try follow-ups to see how this bot uses its assigned sources." action={<BookOpen size={17} className="text-slate-400"/>}/>
         <PanelBody>
-          <form className="space-y-4" onSubmit={form.handleSubmit((values) => { setExecutionId(undefined); run.mutate({ question: values.question, conversation_history: conversation.slice(-6), ...(values.ai_agent_id ? { ai_agent_id: values.ai_agent_id } : {}) }, { onSuccess: () => form.setValue("question", "") }); })}>
-            <div><label htmlFor="ai-playground-agent" className="mb-1.5 block text-sm font-medium text-slate-700">AI bot</label><select id="ai-playground-agent" aria-label="AI bot" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm" disabled={agents.isPending || agents.isError || !canRun || busy} {...form.register("ai_agent_id", { onChange: () => retrievalPreview.reset() })}><option value="">Default workspace bot</option>{agents.data?.items.filter((agent) => agent.status === "active").map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select>{agents.isError && <p role="alert" className="mt-1 text-xs text-amber-800">Bot list unavailable; the default bot will be used.</p>}{selectedAgent && <div className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs leading-5">{bases.isPending ? <p role="status" className="text-slate-500">Checking assigned knowledge sources…</p> : bases.isError ? <p role="alert" className="text-amber-800">Source readiness could not be loaded; the answer may not have supporting knowledge.</p> : selectedBases.length > 0 ? <><p className={selectedReadyDocuments > 0 ? "font-medium text-emerald-800" : "font-medium text-amber-800"}>{selectedReadyDocuments} ready documents across {selectedBases.length} assigned active {selectedBases.length === 1 ? "base" : "bases"}</p><p className="mt-0.5 text-slate-600">{selectedBases.map((base) => `${base.name} (${base.ready_document_count} ready)`).join(" · ")}</p></> : <p className="text-amber-800">This bot has no assigned active knowledge bases, so it cannot ground answers in documents.</p>}</div>}</div>
+          <form className="space-y-4" onSubmit={form.handleSubmit((values) => {
+            const request: AIPlaygroundRequest = {
+              question: values.question,
+              conversation_history: conversation.slice(-6),
+              ...(values.ai_agent_id ? { ai_agent_id: values.ai_agent_id } : {}),
+            };
+            lastRequest.current = request;
+            setExecutionId(undefined);
+            run.mutate({ request, retry: false }, { onSuccess: () => form.setValue("question", "") });
+          })}>
+            <div><label htmlFor="ai-playground-agent" className="mb-1.5 block text-sm font-medium text-slate-700">AI bot</label><select id="ai-playground-agent" aria-label="AI bot" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm" disabled={agents.isPending || agents.isError || !canRun || busy} {...form.register("ai_agent_id", { onChange: () => retrievalPreview.reset() })}><option value="">Default workspace bot</option>{agents.data?.items.filter((agent) => agent.status === "active").map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select>{agents.isError && <p role="alert" className="mt-1 text-xs text-amber-800">Bot list unavailable; the default bot will be used.</p>}{selectedAgent && <div className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs leading-5">{bases.isPending ? <p role="status" className="text-slate-500">Checking assigned knowledge sources…</p> : bases.isError ? <p role="alert" className="text-amber-800">Source readiness could not be loaded; the answer may not have supporting knowledge.</p> : selectedBases.length > 0 ? <><p className={selectedReadyDocuments > 0 ? "font-medium text-emerald-800" : "font-medium text-amber-800"}>{selectedReadyDocuments} ready documents across {selectedBases.length} assigned active {selectedBases.length === 1 ? "base" : "bases"}</p><p className="mt-0.5 text-slate-600">{selectedBases.map((base) => `${base.name} (${base.ready_document_count} ready)`).join(" · ")}</p>{selectedReadyDocuments === 0 && <p className="mt-1 text-amber-800">Process a document in the <Link className="font-semibold underline" href="/dashboard/knowledge">Knowledge Library</Link> before testing grounded answers.</p>}</> : <div className="text-amber-800"><p>This bot has no assigned active knowledge bases, so it cannot ground answers in documents.</p>{canManageBots ? <Link className="mt-1 inline-block font-semibold underline" href="/dashboard/ai/agents">Assign a knowledge base to this bot</Link> : <p className="mt-1">Ask a workspace Owner or Admin to assign a knowledge base.</p>}</div>}</div>}</div>
             <div>
               <label htmlFor="ai-playground-question" className="mb-1.5 block text-sm font-medium text-slate-700">Conversation</label>
               <div className="mb-3 max-h-80 space-y-3 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3" aria-live="polite" aria-label="Bot test conversation">
@@ -140,7 +152,7 @@ export function AIPlayground() {
               <Textarea id="ai-playground-question" placeholder="Ask a follow-up question…" className="min-h-24" disabled={!canRun || busy} aria-invalid={Boolean(form.formState.errors.question)} {...form.register("question", { onChange: () => retrievalPreview.reset() })}/>
               {form.formState.errors.question && <p role="alert" className="mt-1 text-sm text-red-700">{form.formState.errors.question.message}</p>}
             </div>
-            <Button type="button" size="sm" variant="secondary" disabled={conversation.length === 0 || busy} onClick={() => { setConversation([]); setExecutionId(undefined); setPendingQuestion(undefined); appendedExecutionId.current = undefined; run.reset(); retrievalPreview.reset(); form.reset({ question: "", ai_agent_id: selectedAgentId || undefined }); }}><RotateCcw size={14}/>New chat</Button>
+            <Button type="button" size="sm" variant="secondary" disabled={conversation.length === 0 || busy} onClick={() => { setConversation([]); setExecutionId(undefined); setPendingQuestion(undefined); lastRequest.current = undefined; appendedExecutionId.current = undefined; run.reset(); retrievalPreview.reset(); form.reset({ question: "", ai_agent_id: selectedAgentId || undefined }); }}><RotateCcw size={14}/>New chat</Button>
             <Button type="button" size="sm" variant="secondary" disabled={!canRun || busy || currentQuestion.trim().length < 4 || retrievalPreview.isPending} onClick={() => retrievalPreview.mutate({ question: currentQuestion.trim(), conversation_history: conversation.slice(-6), ...(selectedAgentId ? { ai_agent_id: selectedAgentId } : {}) })}>
               {retrievalPreview.isPending ? <><LoaderCircle size={15} className="animate-spin"/>Checking sources…</> : <><BookOpen size={15}/>Check source matches</>}
             </Button>
@@ -174,7 +186,7 @@ export function AIPlayground() {
           {!executionId && <p className="text-sm text-slate-500">{retrievalPreview.data ? "Run the AI after reviewing this preview to see its final answer grounding details." : "Send a message or check source matches to inspect this bot’s grounding."}</p>}
           {executionId && execution.isPending && <div className="space-y-3"><div className="h-4 w-2/3 animate-pulse rounded bg-slate-100"/><div className="h-24 animate-pulse rounded-xl bg-slate-100"/></div>}
           {execution.data && ["queued", "running"].includes(execution.data.status) && <p role="status" className="flex items-center gap-2 text-sm text-slate-600"><LoaderCircle size={16} className="animate-spin"/>The assistant is checking relevant documents…</p>}
-          {execution.data?.status === "failed" && <div role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800"><p>{failureMessage(execution.data.error_code)}</p>{execution.data.correlation_id && <p className="mt-1 text-xs">Support reference: <SupportTraceLink correlationId={execution.data.correlation_id} /></p>}</div>}
+          {execution.data?.status === "failed" && <div role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800"><p>{failureMessage(execution.data.error_code)}</p>{execution.data.correlation_id && <p className="mt-1 text-xs">Support reference: <SupportTraceLink correlationId={execution.data.correlation_id} /></p>}<Button type="button" size="sm" variant="secondary" className="mt-3" disabled={run.isPending || !lastRequest.current} onClick={() => { const request = lastRequest.current; if (!request) return; setExecutionId(undefined); run.reset(); run.mutate({ request, retry: true }); }}><RotateCcw size={14}/>{run.isPending ? "Retrying…" : "Retry this question"}</Button></div>}
           {execution.data?.status === "succeeded" && <>
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500"><span>Draft only · bot configuration v{execution.data.ai_agent_config_version} · {execution.data.usage.total_tokens ?? 0} tokens</span><Button size="sm" variant="secondary" onClick={copyDraft}><Clipboard size={14}/>{copied ? "Copied" : "Copy latest answer"}</Button></div>
             {execution.data.citations.length > 0 ? <section className="mt-5" aria-label="Sources"><h2 className="text-sm font-semibold text-slate-800">Sources</h2><ul className="mt-2 space-y-2">{execution.data.citations.map((citation) => <li key={`${citation.document_id}-${citation.chunk_index}`} className="rounded-xl border border-slate-200 p-3"><div className="flex flex-wrap items-start justify-between gap-2"><Link href={`/dashboard/knowledge/${encodeURIComponent(citation.document_id)}`} className="text-xs font-semibold text-blue-700 hover:underline">{citation.knowledge_base_name ? `${citation.knowledge_base_name} · ` : ""}{citation.document_name} · section {citation.chunk_index + 1}</Link>{citation.match_basis && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">{citation.match_basis === "chunk_content" ? "Matched passage text" : "Matched source title"}</span>}</div><p className="mt-1 text-sm leading-5 text-slate-600">{citation.excerpt}</p></li>)}</ul></section> : <p className="mt-4 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">No matching knowledge sources were found. Verify the answer before using it.</p>}

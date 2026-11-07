@@ -1,6 +1,7 @@
 """Pure, deterministic automation matching and preview policy."""
 
 from dataclasses import dataclass
+from collections.abc import Sequence
 from uuid import UUID
 
 from app.features.automations.contracts import (
@@ -71,6 +72,8 @@ def evaluate_conditions(definition: WorkflowDefinition, ctx: EvaluationContext) 
 
 
 def _trigger_matches(definition: WorkflowDefinition, ctx: EvaluationContext) -> bool:
+    if definition.trigger.kind == "conversation_started":
+        return ctx.is_first_customer_message
     if definition.trigger.kind != "customer_message_received":
         return False
     trig = definition.trigger
@@ -91,11 +94,14 @@ def _trigger_matches(definition: WorkflowDefinition, ctx: EvaluationContext) -> 
 
 
 def _condition_group_matches(definition: WorkflowDefinition, ctx: EvaluationContext) -> bool:
-    conds = definition.conditions
+    return _conditions_match(definition.conditions, definition.condition_mode, ctx)
+
+
+def _conditions_match(conds: list[Condition], mode: str, ctx: EvaluationContext) -> bool:
     if not conds:
         return True
     results = [evaluate_one_condition(c, ctx) for c in conds]
-    if definition.condition_mode == "any":
+    if mode == "any":
         return any(results)
     return all(results)
 
@@ -126,6 +132,10 @@ def _condition_preview_match(condition: Condition, ctx: EvaluationContext) -> bo
 
 
 def _trigger_blocked(definition: WorkflowDefinition, ctx: EvaluationContext) -> tuple[bool, str | None]:
+    if definition.trigger.kind == "conversation_started":
+        if not ctx.is_first_customer_message:
+            return True, "This trigger runs only on the first customer message in a conversation."
+        return False, None
     if definition.trigger.kind != "customer_message_received":
         return True, "This trigger is not available for message preview yet."
     trig = definition.trigger
@@ -159,6 +169,59 @@ def preview_definition(
     conversation_ai_agent_id: UUID | None = None,
     conversation_integration_connection_id: UUID | None = None,
 ) -> AutomationPreviewOut:
+    preview_conditions = [
+        *definition.conditions,
+        *(condition for branch in definition.branches for condition in branch.conditions),
+    ]
+    preview_actions = [
+        *definition.actions,
+        *(action for branch in definition.branches for action in branch.actions),
+        *definition.else_actions,
+    ]
+    assumptions: list[str] = []
+    if current_ticket_priority is None and (
+        any(condition.kind == "ticket_priority_is" for condition in preview_conditions)
+        or any(action.kind == "set_priority" and action.only_raise for action in preview_actions)
+    ):
+        assumptions.append("Ticket priority defaults to Normal because no sample priority was provided.")
+    if current_ticket_status is None and any(
+        condition.kind == "ticket_status_is" for condition in preview_conditions
+    ):
+        assumptions.append("Ticket status defaults to Open because no sample status was provided.")
+    if channel is None and (
+        any(condition.kind == "channel_is" for condition in preview_conditions)
+        or (definition.trigger.kind == "customer_message_received" and definition.trigger.channel is not None)
+    ):
+        assumptions.append("Channel defaults to web because no sample channel was provided.")
+    if is_first_customer_message is None:
+        if definition.trigger.kind == "conversation_started":
+            assumptions.append("The preview assumes this is the first customer message in the conversation.")
+        elif definition.trigger.kind == "customer_message_received" and definition.trigger.first_message_only:
+            assumptions.append("The trigger preview assumes this is the customer's first message.")
+    if assignee_present is None and any(
+        condition.kind == "assignee_present" for condition in preview_conditions
+    ):
+        assumptions.append("The preview assumes no teammate is assigned.")
+    if conversation_ai_mode is None and any(
+        condition.kind == "conversation_ai_mode_is" for condition in preview_conditions
+    ):
+        assumptions.append("Conversation mode defaults to Human because no sample mode was provided.")
+    if shopify_connected is None and any(
+        condition.kind == "shopify_store_connected" for condition in preview_conditions
+    ):
+        assumptions.append("The preview assumes Shopify is not connected.")
+    if conversation_ai_agent_id is not None:
+        assumptions.append("The preview uses the active AI bot selected in the sample context.")
+    elif definition.trigger.kind == "customer_message_received" and definition.trigger.ai_agent_id is not None:
+        assumptions.append("The preview assumes the message is routed through the bot selected by this trigger.")
+    if conversation_integration_connection_id is not None:
+        assumptions.append("The preview uses the connected integration selected in the sample context.")
+    elif (
+        definition.trigger.kind == "customer_message_received"
+        and definition.trigger.integration_connection_id is not None
+    ):
+        assumptions.append("The preview assumes the message arrives through the connection selected by this trigger.")
+
     ctx = EvaluationContext(
         message=message,
         ticket_priority=current_ticket_priority or "normal",
@@ -176,8 +239,16 @@ def preview_definition(
         trigger_integration_connection_id=definition.trigger.integration_connection_id
         if definition.trigger.kind == "customer_message_received"
         else None,
-        conversation_ai_agent_id=conversation_ai_agent_id,
-        conversation_integration_connection_id=conversation_integration_connection_id,
+        conversation_ai_agent_id=conversation_ai_agent_id or (
+            definition.trigger.ai_agent_id
+            if definition.trigger.kind == "customer_message_received"
+            else None
+        ),
+        conversation_integration_connection_id=conversation_integration_connection_id or (
+            definition.trigger.integration_connection_id
+            if definition.trigger.kind == "customer_message_received"
+            else None
+        ),
     )
 
     steps: list[AutomationPreviewStepOut] = []
@@ -191,9 +262,15 @@ def preview_definition(
             conditions=[],
             planned_actions=[],
             steps=steps,
+            assumptions=assumptions,
         )
 
-    steps.append(AutomationPreviewStepOut(step="trigger", outcome="matched", detail="Incoming customer message"))
+    trigger_detail = (
+        "First customer message in conversation"
+        if definition.trigger.kind == "conversation_started"
+        else "Incoming customer message"
+    )
+    steps.append(AutomationPreviewStepOut(step="trigger", outcome="matched", detail=trigger_detail))
 
     condition_rows: list[AutomationPreviewConditionOut] = []
     for condition in definition.conditions:
@@ -241,17 +318,65 @@ def preview_definition(
             )
         )
 
-    selected_branch = "match" if group_ok else "no_match" if definition.else_actions else None
-    matches = group_ok or bool(definition.else_actions)
-    selected_actions = definition.actions if group_ok else definition.else_actions
+    selected_branch = "match" if group_ok else None
+    selected_actions: Sequence[Action] = definition.actions if group_ok else ()
+    if not group_ok:
+        for branch in definition.branches:
+            branch_rows = [
+                AutomationPreviewConditionOut(
+                    kind=condition.kind,
+                    label=_condition_label(condition),
+                    matched=_condition_preview_match(condition, ctx),
+                )
+                for condition in branch.conditions
+            ]
+            branch_match = _conditions_match(
+                branch.conditions,
+                branch.condition_mode,
+                ctx,
+            )
+            steps.append(
+                AutomationPreviewStepOut(
+                    step=f"branch:{branch.id}:conditions",
+                    outcome="matched" if branch_match else "skipped",
+                    detail=(
+                        f"{branch.name}: first matching branch selected"
+                        if branch_match
+                        else f"{branch.name}: conditions did not match"
+                    ),
+                )
+            )
+            for row in branch_rows:
+                steps.append(
+                    AutomationPreviewStepOut(
+                        step=f"branch:{branch.id}:{row.label}",
+                        outcome="matched" if row.matched else "skipped",
+                        detail="Matched" if row.matched else "Not matched",
+                    )
+                )
+            if branch_match:
+                selected_branch = f"branch:{branch.id}"
+                selected_actions = branch.actions
+                break
+        if selected_branch is None and definition.else_actions:
+            selected_branch = "no_match"
+            selected_actions = definition.else_actions
+
+    matches = selected_branch is not None
     planned: list[AutomationPreviewActionOut] = []
     if matches:
         if selected_branch is not None:
             steps.append(
                 AutomationPreviewStepOut(
-                    step=f"branch:{selected_branch}",
+                    step=f"selected:{selected_branch}",
                     outcome="matched",
-                    detail="Selected the condition-matched path" if group_ok else "Selected the no-match path",
+                    detail=(
+                        "Selected the condition-matched path"
+                        if selected_branch == "match"
+                        else "Selected the no-match path"
+                        if selected_branch == "no_match"
+                        else f"Selected {next(branch.name for branch in definition.branches if selected_branch == f'branch:{branch.id}')}"
+                    ),
                 )
             )
         current_p = ctx.ticket_priority
@@ -282,6 +407,7 @@ def preview_definition(
         planned_actions=planned,
         steps=steps,
         selected_branch=selected_branch,
+        assumptions=assumptions,
     )
 
 
@@ -424,7 +550,7 @@ def evaluate_customer_message_match(
     definition: WorkflowDefinition,
     ctx: EvaluationContext,
 ) -> bool:
-    if definition.trigger.kind != "customer_message_received":
+    if definition.trigger.kind not in ("customer_message_received", "conversation_started"):
         return False
     # Fill trigger ids from definition for evaluate_conditions
     merged = EvaluationContext(
@@ -453,7 +579,7 @@ def evaluate_customer_message_branch(
     ctx: EvaluationContext,
 ) -> str | None:
     """Return the matching path, with None reserved for a non-matching trigger."""
-    if definition.trigger.kind != "customer_message_received":
+    if definition.trigger.kind not in ("customer_message_received", "conversation_started"):
         return None
     merged = EvaluationContext(
         message=ctx.message,
@@ -471,4 +597,9 @@ def evaluate_customer_message_branch(
     )
     if not _trigger_matches(definition, merged):
         return None
-    return "match" if _condition_group_matches(definition, merged) else "no_match"
+    if _condition_group_matches(definition, merged):
+        return "match"
+    for branch in definition.branches:
+        if _conditions_match(branch.conditions, branch.condition_mode, merged):
+            return f"branch:{branch.id}"
+    return "no_match"

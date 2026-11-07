@@ -123,6 +123,8 @@ def widget_out(
         collect_contact=widget.collect_contact,
         ai_enabled=widget.ai_enabled,
         ai_reply_mode=widget.ai_reply_mode,
+        assistant_name=widget.assistant_name,
+        welcome_message=widget.welcome_message,
         last_widget_load_at=widget.last_widget_load_at,
         last_customer_message_at=last_customer_message_at,
         created_at=widget.created_at,

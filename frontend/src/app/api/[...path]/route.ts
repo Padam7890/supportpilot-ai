@@ -400,8 +400,14 @@ async function forward(
         const response = responseFromUpstream(upstream, raw, correlationId);
         setSessionCookies(response, tokenBody, platform);
         return response;
-      } catch {
-        /* refresh failed — fall through to 401 handling */
+      } catch (error) {
+        console.warn("session_refresh_failed", {
+          correlation_id: correlationId,
+          realm: platform ? "platform" : "tenant",
+          method: request.method,
+          route: path,
+          error_type: error instanceof Error ? error.name : typeof error,
+        });
       }
     }
 

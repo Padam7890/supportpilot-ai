@@ -46,6 +46,8 @@ export function InboxWorkspace({ initialOverdueOnly = false, initialSlaStatus, i
   const [selectedConversation, setSelectedConversation] = useState("");
   const [showDetails, setShowDetails] = useState(false);
   const [reply, setReply] = useState("");
+  const conversationDrafts = useRef(new Map<string, { reply: string; mode: "reply" | "note"; shopifyOrderNumber: string }>());
+  const lastDraftConversation = useRef("");
   const replyInputRef = useRef<HTMLTextAreaElement>(null);
   const [attachmentValidationError, setAttachmentValidationError] = useState<string | null>(null);
   const [fileDropActive, setFileDropActive] = useState(false);
@@ -91,6 +93,18 @@ export function InboxWorkspace({ initialOverdueOnly = false, initialSlaStatus, i
     : conversations.data?.some((item) => item.id === selectedConversation)
       ? selectedConversation
       : "";
+  useEffect(() => {
+    if (!activeConversationId) {
+      lastDraftConversation.current = "";
+      return;
+    }
+    if (lastDraftConversation.current === activeConversationId) return;
+    lastDraftConversation.current = activeConversationId;
+    const savedDraft = conversationDrafts.current.get(activeConversationId);
+    setReply(savedDraft?.reply ?? "");
+    setComposeMode(savedDraft?.mode ?? "reply");
+    setShopifyOrderNumber(savedDraft?.shopifyOrderNumber ?? "");
+  }, [activeConversationId]);
   const startThread = useMutation({
     mutationFn: () => startConversation(activeTicket!.ticketId),
     onSuccess: async (conversation) => {
@@ -191,27 +205,50 @@ export function InboxWorkspace({ initialOverdueOnly = false, initialSlaStatus, i
       transcriptEndRef.current?.scrollIntoView({ block: "end", behavior: "auto" });
     }
   }, [activeConversationId, messages.data?.length, notes.data?.length, widgetAI.data?.status]);
-  const send = useMutation({ mutationFn: () => composeMode === "note"
-    ? sendInternalNote(activeConversationId, sendMessageSchema.parse({ content: reply }).content)
-    : sendMessage(activeConversationId, sendMessageSchema.parse({ content: reply })), onSuccess: async () => {
-    setReply("");
-    setDraftExecutionId(undefined);
-    await Promise.all([client.invalidateQueries({ queryKey: inboxQueryKeys.messages(activeConversationId) }), client.invalidateQueries({ queryKey: ["internal-notes", activeConversationId] }), client.invalidateQueries({ queryKey: ["inbox"] }), client.invalidateQueries({ queryKey: ["widget-ai-reply", activeConversationId] })]);
-  } });
-  const approveWidgetDraft = useMutation({
-    mutationFn: () => sendMessage(activeConversationId, sendMessageSchema.parse({ content: widgetAI.data?.draft ?? "" })),
-    onSuccess: async () => {
-      setReply("");
+  const send = useMutation({
+    mutationFn: ({ conversationId, content, mode }: { conversationId: string; content: string; mode: "reply" | "note" }) => {
+      const validated = sendMessageSchema.parse({ content });
+      return mode === "note" ? sendInternalNote(conversationId, validated.content) : sendMessage(conversationId, validated);
+    },
+    onSuccess: async (_message, variables) => {
+      const savedDraft = conversationDrafts.current.get(variables.conversationId);
+      if (savedDraft?.mode === variables.mode && savedDraft.reply.trim() === variables.content.trim()) {
+        conversationDrafts.current.delete(variables.conversationId);
+      }
+      if (activeConversationId === variables.conversationId && composeMode === variables.mode && reply.trim() === variables.content.trim()) {
+        setReply("");
+        setDraftExecutionId(undefined);
+      }
       await Promise.all([
-        client.invalidateQueries({ queryKey: inboxQueryKeys.messages(activeConversationId) }),
-        client.invalidateQueries({ queryKey: ["widget-ai-reply", activeConversationId] }),
+        client.invalidateQueries({ queryKey: inboxQueryKeys.messages(variables.conversationId) }),
+        client.invalidateQueries({ queryKey: ["internal-notes", variables.conversationId] }),
+        client.invalidateQueries({ queryKey: ["inbox"] }),
+        client.invalidateQueries({ queryKey: ["widget-ai-reply", variables.conversationId] }),
+      ]);
+    },
+  });
+  const approveWidgetDraft = useMutation({
+    mutationFn: ({ conversationId, content }: { conversationId: string; content: string }) =>
+      sendMessage(conversationId, sendMessageSchema.parse({ content })),
+    onSuccess: async (_message, variables) => {
+      const savedDraft = conversationDrafts.current.get(variables.conversationId);
+      if (savedDraft?.mode === "reply" && savedDraft.reply.trim() === variables.content.trim()) {
+        conversationDrafts.current.delete(variables.conversationId);
+      }
+      if (activeConversationId === variables.conversationId && reply.trim() === variables.content.trim()) setReply("");
+      await Promise.all([
+        client.invalidateQueries({ queryKey: inboxQueryKeys.messages(variables.conversationId) }),
+        client.invalidateQueries({ queryKey: ["widget-ai-reply", variables.conversationId] }),
         client.invalidateQueries({ queryKey: ["inbox"] }),
       ]);
     },
   });
   const createDraft = useMutation({
-    mutationFn: () => createReplyDraft({ conversation_id: activeConversationId, ...(shopifyOrderNumber.trim() ? { shopify_order_number: shopifyOrderNumber.trim() } : {}) }),
-    onSuccess: (execution) => setDraftExecutionId(execution.id),
+    mutationFn: ({ conversationId, orderNumber }: { conversationId: string; orderNumber: string }) =>
+      createReplyDraft({ conversation_id: conversationId, ...(orderNumber ? { shopify_order_number: orderNumber } : {}) }),
+    onSuccess: (execution, variables) => {
+      if (activeConversationId === variables.conversationId) setDraftExecutionId(execution.id);
+    },
   });
   const draftExecution = useQuery({
     queryKey: aiQueryKeys.execution(draftExecutionId),
@@ -234,15 +271,15 @@ export function InboxWorkspace({ initialOverdueOnly = false, initialSlaStatus, i
   }, [showDetails]);
 
   function chooseConversation(id: string) {
-    setReply("");
+    rememberActiveDraft();
     setSelectedConversation(id);
     setAttachmentValidationError(null);
     setFileDropActive(false);
-    setComposeMode("reply");
     setDraftExecutionId(undefined);
     createDraft.reset();
   }
   function changeFilters(update: (current: InboxFilters) => InboxFilters) {
+    rememberActiveDraft();
     setFilters(update);
     setSelectedTicket(null);
     setSelectedConversation("");
@@ -260,6 +297,7 @@ export function InboxWorkspace({ initialOverdueOnly = false, initialSlaStatus, i
     changeFilters(() => initialFilters);
   }
   function selectTicket(item: InboxItem) {
+    rememberActiveDraft();
     setReply("");
     setComposeMode("reply");
     setSelectedTicket(item);
@@ -270,6 +308,15 @@ export function InboxWorkspace({ initialOverdueOnly = false, initialSlaStatus, i
     setDraftExecutionId(undefined);
     createDraft.reset();
     setShowDetails(false);
+  }
+
+  function rememberActiveDraft() {
+    if (!activeConversationId) return;
+    conversationDrafts.current.set(activeConversationId, {
+      reply,
+      mode: composeMode,
+      shopifyOrderNumber,
+    });
   }
 
   const canReply = ["owner", "admin", "agent"].includes(me.data?.role ?? "");
@@ -433,7 +480,7 @@ export function InboxWorkspace({ initialOverdueOnly = false, initialSlaStatus, i
               {widgetAI.data.safe_summary && <p className="mt-1 text-xs">{widgetAI.data.safe_summary}</p>}
               {widgetAI.data.status === "failed" && widgetAI.data.correlation_id && <p className="mt-1 text-xs">Support reference: <SupportTraceLink correlationId={widgetAI.data.correlation_id} /></p>}
               {widgetAI.data.status === "processing" && <p className="mt-1 text-xs">Preparing a grounded response…</p>}
-              {widgetAI.data.status === "draft_ready" && widgetAI.data.draft && <><p className="mt-2 whitespace-pre-wrap">{widgetAI.data.draft}</p><div className="mt-3 flex flex-wrap gap-2"><Button type="button" size="sm" disabled={!canReply || approveWidgetDraft.isPending} onClick={() => approveWidgetDraft.mutate()}><Check size={14}/>{approveWidgetDraft.isPending ? "Sending…" : "Approve & send"}</Button><Button type="button" size="sm" variant="secondary" onClick={() => { setComposeMode("reply"); setReply(widgetAI.data?.draft ?? ""); }}>Edit draft</Button></div>{approveWidgetDraft.isError && <p role="alert" className="mt-2 text-xs text-red-700">{approveWidgetDraft.error instanceof Error ? approveWidgetDraft.error.message : "Draft could not be sent."}</p>}</>}
+              {widgetAI.data.status === "draft_ready" && widgetAI.data.draft && <><p className="mt-2 whitespace-pre-wrap">{widgetAI.data.draft}</p><div className="mt-3 flex flex-wrap gap-2"><Button type="button" size="sm" disabled={!canReply || approveWidgetDraft.isPending} onClick={() => approveWidgetDraft.mutate({ conversationId: activeConversationId, content: widgetAI.data?.draft ?? "" })}><Check size={14}/>{approveWidgetDraft.isPending ? "Sending…" : "Approve & send"}</Button><Button type="button" size="sm" variant="secondary" onClick={() => { setComposeMode("reply"); setReply(widgetAI.data?.draft ?? ""); }}>Edit draft</Button></div>{approveWidgetDraft.isError && approveWidgetDraft.variables?.conversationId === activeConversationId && <p role="alert" className="mt-2 text-xs text-red-700">{approveWidgetDraft.error instanceof Error ? approveWidgetDraft.error.message : "Draft could not be sent."}</p>}</>}
               {widgetAI.data.citations.length > 0 && <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs"><span>Sources:</span>{widgetAI.data.citations.map((citation) => <span key={`${citation.document_id}-${citation.chunk_index}`} className="inline-flex flex-wrap items-center gap-1"><Link href={`/dashboard/knowledge/${encodeURIComponent(citation.document_id)}`} className="font-medium underline underline-offset-2">{citation.knowledge_base_name ? `${citation.knowledge_base_name} · ` : ""}{citation.document_name} · section {citation.chunk_index + 1}</Link>{citation.match_basis && <span className="rounded-full bg-white/70 px-1.5 py-0.5 text-[10px]">{citation.match_basis === "chunk_content" ? "passage" : "title"}</span>}</span>)}</div>}
             </div>}
             {activeConversationId && messages.data?.length === 0 && notes.data?.length === 0 && !notes.isPending && <p className="py-10 text-center text-sm text-slate-500">No messages or notes in this conversation.</p>}
@@ -441,7 +488,7 @@ export function InboxWorkspace({ initialOverdueOnly = false, initialSlaStatus, i
           </div>
           {activeTicket && <div className="sticky bottom-0 z-10 shrink-0 border-t border-slate-200 bg-white/95 px-3 py-2 backdrop-blur sm:px-5"><ShopifyCancellationPanel ticketId={activeTicket.ticketId} compact/></div>}
           {activeConversationId && <>
-            {composeMode === "reply" && (createDraft.isError || draftExecution.isError) && <p role="alert" className="border-t border-red-100 bg-red-50 px-4 py-2 text-sm text-red-700">{createDraft.error?.message ?? "Draft status could not be refreshed."}</p>}
+            {composeMode === "reply" && ((createDraft.isError && createDraft.variables?.conversationId === activeConversationId) || draftExecution.isError) && <p role="alert" className="border-t border-red-100 bg-red-50 px-4 py-2 text-sm text-red-700">{createDraft.error?.message ?? "Draft status could not be refreshed."}</p>}
             {composeMode === "reply" && draftExecution.data && ["queued", "running"].includes(draftExecution.data.status) && <p role="status" className="flex items-center gap-2 border-t border-blue-100 bg-blue-50 px-4 py-2 text-sm text-blue-800"><LoaderCircle size={15} className="animate-spin"/>Finding sources and preparing an unsent draft…</p>}
             {composeMode === "reply" && draftExecution.data?.status === "failed" && <div role="alert" className="border-t border-amber-100 bg-amber-50 px-4 py-2 text-sm text-amber-800"><p>The AI draft could not be completed. Your reply was not sent.</p>{draftExecution.data.correlation_id && <p className="mt-1 text-xs">Support reference: <SupportTraceLink correlationId={draftExecution.data.correlation_id} /></p>}</div>}
             {composeMode === "reply" && draftExecution.data?.status === "succeeded" && <div className="border-t border-slate-200 bg-slate-50 px-4 py-3 sm:px-5">
@@ -450,7 +497,7 @@ export function InboxWorkspace({ initialOverdueOnly = false, initialSlaStatus, i
               {draftExecution.data.citations.length > 0 && <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-blue-700"><span>Sources:</span>{draftExecution.data.citations.map((citation) => <span key={`${citation.document_id}-${citation.chunk_index}`} className="inline-flex flex-wrap items-center gap-1"><Link href={`/dashboard/knowledge/${encodeURIComponent(citation.document_id)}`} className="font-medium underline underline-offset-2">{citation.knowledge_base_name ? `${citation.knowledge_base_name} · ` : ""}{citation.document_name} · section {citation.chunk_index + 1}</Link>{citation.match_basis && <span className="rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px]">{citation.match_basis === "chunk_content" ? "passage" : "title"}</span>}</span>)}</div>}
               {draftExecution.data.citations.length === 0 && <p className="mt-2 text-xs text-amber-700">No matching knowledge sources were found. Verify the draft carefully.</p>}
             </div>}
-            <form onSubmit={(event) => { event.preventDefault(); if (reply.trim()) send.mutate(); }} className={`shrink-0 border-t p-3 sm:p-4 ${composeMode === "note" ? "border-amber-200 bg-amber-50/60" : "border-slate-200 bg-white"}`}>
+            <form onSubmit={(event) => { event.preventDefault(); if (reply.trim() && activeConversationId) send.mutate({ conversationId: activeConversationId, content: reply, mode: composeMode }); }} className={`shrink-0 border-t p-3 sm:p-4 ${composeMode === "note" ? "border-amber-200 bg-amber-50/60" : "border-slate-200 bg-white"}`}>
               <div className="mb-3 flex gap-2" role="group" aria-label="Message type"><Button type="button" size="sm" variant={composeMode === "reply" ? "primary" : "secondary"} aria-pressed={composeMode === "reply"} onClick={() => setComposeMode("reply")}>Reply</Button><Button type="button" size="sm" variant={composeMode === "note" ? "primary" : "secondary"} aria-pressed={composeMode === "note"} onClick={() => { setComposeMode("note"); setDraftExecutionId(undefined); }}>Internal note</Button></div>
               <details ref={attachmentDetailsRef} className="mb-3 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2 text-xs text-slate-600">
                 <summary className="flex cursor-pointer list-none items-center gap-2 font-medium"><Paperclip size={14}/>Team files <span className="text-slate-400">({attachments.data?.length ?? 0})</span></summary>
@@ -467,9 +514,9 @@ export function InboxWorkspace({ initialOverdueOnly = false, initialSlaStatus, i
               {composeMode === "note" && <p className="mb-2 text-xs font-medium text-amber-700">Only workspace teammates can see this note. It will not be sent to the customer.</p>}
               {composeMode === "reply" && <details className="mb-3 text-xs text-slate-500"><summary className="cursor-pointer font-medium">Shopify order context (optional)</summary><label className="mt-2 block max-w-xs text-xs font-medium text-slate-600">Verified order for this draft <input aria-label="Shopify order number for AI draft" value={shopifyOrderNumber} onChange={(event) => setShopifyOrderNumber(event.target.value)} placeholder="#1001 (optional)" className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"/></label></details>}
               {composeMode === "reply" && canReply && (savedReplies.data?.length ? <div className="mb-3 max-w-sm"><label className="block text-xs font-medium text-slate-600">Insert saved reply <Select aria-label="Insert saved reply" value="" onChange={(event) => { const item = savedReplies.data?.find((entry) => entry.id === event.target.value); if (!item) return; setReply((current) => current.trim() ? `${current.trim()}\n\n${item.body}` : item.body); }} className="mt-1 min-h-9 rounded-lg text-sm"><option value="">Choose a reply…</option>{savedReplies.data.map((item) => <option key={item.id} value={item.id}>{item.title} · /{item.shortcut}</option>)}</Select></label><p className="mt-1 text-[11px] text-slate-500">Or type <kbd className="rounded border border-slate-300 bg-slate-50 px-1">/shortcut</kbd> in your reply and press Tab.</p></div> : savedReplies.isError ? <p role="status" className="mb-3 text-xs text-amber-700">Saved replies unavailable. You can still write a reply.</p> : savedReplies.isSuccess ? <p className="mb-3 text-xs text-slate-500">No saved replies yet · <Link className="font-medium text-blue-700 underline" href="/dashboard/settings#saved-replies">Create one in Settings</Link></p> : null)}
-              <Textarea ref={replyInputRef} aria-label={composeMode === "note" ? "Write an internal note" : "Write a reply"} placeholder={!canReply ? "Your role has read-only access" : composeMode === "note" ? "Write a private note for your team…" : "Reply to the customer…"} value={reply} disabled={!canReply || send.isPending} onChange={(event) => setReply(event.target.value)} onKeyDown={(event) => { if (event.key === "Tab" && composeMode === "reply" && savedReplies.data?.length) { const expansion = expandSavedReplyAtCursor(event.currentTarget.value, event.currentTarget.selectionStart, savedReplies.data); if (expansion) { event.preventDefault(); setReply(expansion.value); requestAnimationFrame(() => replyInputRef.current?.setSelectionRange(expansion.cursor, expansion.cursor)); return; } } if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); if (reply.trim() && canReply && !send.isPending) send.mutate(); } }} className="min-h-20 max-h-40 resize-y rounded-xl border-slate-200 bg-slate-50/60 focus:bg-white"/>
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-2"><span className="text-xs text-slate-500">{composeMode === "note" ? "Private to your workspace" : "Messages are sent as you."} <span className="ml-1 text-slate-400">· Ctrl/⌘+Enter to {composeMode === "note" ? "add note" : "send"}</span></span><div className="flex gap-2">{composeMode === "reply" && <Button type="button" variant="secondary" disabled={!canReply || createDraft.isPending || Boolean(draftExecution.data && ["queued", "running"].includes(draftExecution.data.status))} onClick={() => createDraft.mutate()}><Sparkles size={15}/>{createDraft.isPending ? "Starting…" : "Draft with AI"}</Button>}<Button type="submit" disabled={!canReply || !reply.trim() || send.isPending}>{send.isPending ? composeMode === "note" ? "Saving…" : "Sending…" : composeMode === "note" ? "Add note" : "Send reply"}{composeMode === "reply" && <Send size={15}/>}</Button></div></div>
-              {send.isError && <p role="alert" className="mt-2 text-sm text-red-700">{send.error instanceof Error ? send.error.message : "Message could not be sent."}</p>}
+              <Textarea ref={replyInputRef} aria-label={composeMode === "note" ? "Write an internal note" : "Write a reply"} placeholder={!canReply ? "Your role has read-only access" : composeMode === "note" ? "Write a private note for your team…" : "Reply to the customer…"} value={reply} disabled={!canReply || send.isPending} onChange={(event) => setReply(event.target.value)} onKeyDown={(event) => { if (event.key === "Tab" && composeMode === "reply" && savedReplies.data?.length) { const expansion = expandSavedReplyAtCursor(event.currentTarget.value, event.currentTarget.selectionStart, savedReplies.data); if (expansion) { event.preventDefault(); setReply(expansion.value); requestAnimationFrame(() => replyInputRef.current?.setSelectionRange(expansion.cursor, expansion.cursor)); return; } } if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); if (reply.trim() && canReply && !send.isPending && activeConversationId) send.mutate({ conversationId: activeConversationId, content: reply, mode: composeMode }); } }} className="min-h-20 max-h-40 resize-y rounded-xl border-slate-200 bg-slate-50/60 focus:bg-white"/>
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2"><span className="text-xs text-slate-500">{composeMode === "note" ? "Private to your workspace" : "Messages are sent as you."} <span className="ml-1 text-slate-400">· Ctrl/⌘+Enter to {composeMode === "note" ? "add note" : "send"}</span></span><div className="flex gap-2">{composeMode === "reply" && <Button type="button" variant="secondary" disabled={!canReply || createDraft.isPending || Boolean(draftExecution.data && ["queued", "running"].includes(draftExecution.data.status))} onClick={() => activeConversationId && createDraft.mutate({ conversationId: activeConversationId, orderNumber: shopifyOrderNumber.trim() })}><Sparkles size={15}/>{createDraft.isPending ? "Starting…" : "Draft with AI"}</Button>}<Button type="submit" disabled={!canReply || !reply.trim() || send.isPending}>{send.isPending ? composeMode === "note" ? "Saving…" : "Sending…" : composeMode === "note" ? "Add note" : "Send reply"}{composeMode === "reply" && <Send size={15}/>}</Button></div></div>
+              {send.isError && send.variables?.conversationId === activeConversationId && <p role="alert" className="mt-2 text-sm text-red-700">{send.error instanceof Error ? send.error.message : "Message could not be sent."}</p>}
             </form>
           </>}
         </>}

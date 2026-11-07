@@ -42,6 +42,10 @@ class SupportWidget(TimestampMixin, UUIDPrimaryKey, Base):
     )
     public_id: Mapped[str] = mapped_column(String(48), nullable=False)
     ai_agent_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    assistant_name: Mapped[str] = mapped_column(String(60), default="SupportPilot AI", nullable=False)
+    welcome_message: Mapped[str] = mapped_column(
+        String(240), default="Hi! How can we help?", nullable=False
+    )
     allowed_origins: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     collect_contact: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

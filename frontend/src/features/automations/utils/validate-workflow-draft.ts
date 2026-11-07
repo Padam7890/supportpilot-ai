@@ -44,9 +44,7 @@ export function validateWorkflowDraft(draft: WorkflowDraft): WorkflowDraftValida
     errors.push("Keep the description to 500 characters or fewer.");
   }
 
-  if (draft.trigger.kind !== "customer_message_received") {
-    pushError(errors, issues, "Only incoming customer message workflows can be saved in this release.", { type: "trigger" });
-  } else {
+  if (draft.trigger.kind === "customer_message_received") {
     if (draft.trigger.channel != null && draft.trigger.channel.trim().length === 0) {
       pushError(errors, issues, "Clear the channel filter or enter a channel name.", { type: "trigger" });
     }
@@ -61,6 +59,64 @@ export function validateWorkflowDraft(draft: WorkflowDraft): WorkflowDraftValida
   }
   if (elseNote.length > 4000) {
     pushError(errors, issues, "Keep the no-match internal note to 4,000 characters or fewer.", { type: "trigger" });
+  }
+  const branches = draft.branches ?? [];
+  if (branches.length > 5) {
+    pushError(errors, issues, "Use no more than 5 additional condition branches.", { type: "trigger" });
+  }
+  if (branches.length > 0 && draft.conditions.length === 0) {
+    pushError(errors, issues, "Additional condition branches require a primary condition group.", { type: "trigger" });
+  }
+  const branchIds = new Set<string>();
+  const branchRuleKeys = new Set<string>();
+  branches.forEach((branch, index) => {
+    const branchStep: WorkflowValidationIssue["step"] = { type: "branch", branchId: branch.id };
+    if (branchIds.has(branch.id)) {
+      pushError(errors, issues, `Branch ${index + 1} has a duplicate identifier. Remove and recreate this path.`, branchStep);
+    }
+    branchIds.add(branch.id);
+    if (branch.name.trim().length < 2) {
+      pushError(errors, issues, `Branch ${index + 1} needs a name with at least 2 characters.`, branchStep);
+    }
+    if (branch.conditions.length === 0) {
+      pushError(errors, issues, `Branch ${index + 1} needs at least one condition.`, branchStep);
+    }
+    const ruleKey = JSON.stringify({
+      mode: branch.condition_mode,
+      conditions: branch.conditions.map((condition) => JSON.stringify(condition)).sort(),
+    });
+    if (branchRuleKeys.has(ruleKey)) {
+      warnings.push(`Branch “${branch.name}” duplicates an earlier rule and will not be reached when that rule matches first.`);
+    }
+    branchRuleKeys.add(ruleKey);
+
+    // Reuse the same field-level rules as the primary path, then scope issues to this branch.
+    const branchValidation = validateWorkflowDraft({
+      ...draft,
+      conditions: branch.conditions,
+      actions: branch.actions,
+      branches: [],
+      elseNote: "",
+      canvasLayout: {
+        ...draft.canvasLayout,
+        conditions: branch.conditions.map(() => ({ x: 0, y: 0 })),
+        actions: branch.actions.map(() => ({ x: 0, y: 0 })),
+        branch_nodes: [],
+      },
+    });
+    for (const issue of branchValidation.issues) {
+      if (issue.step.type !== "condition" && issue.step.type !== "action") continue;
+      pushError(errors, issues, `Branch ${index + 1}: ${issue.message}`, branchStep);
+    }
+  });
+
+  const layoutBranchIds = (draft.canvasLayout.branch_nodes ?? []).map((node) => node.branch_id);
+  if (layoutBranchIds.length !== branches.length || new Set(layoutBranchIds).size !== layoutBranchIds.length ||
+    branches.some((branch) => !layoutBranchIds.includes(branch.id))) {
+    const issueStep: WorkflowValidationIssue["step"] = branches[0]
+      ? { type: "branch", branchId: branches[0].id }
+      : { type: "trigger" };
+    pushError(errors, issues, "Canvas layout is out of sync with conditional branches. Use Arrange to repair node positions.", issueStep);
   }
 
   draft.conditions.forEach((condition, index) => {

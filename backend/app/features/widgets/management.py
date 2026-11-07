@@ -129,6 +129,8 @@ async def create_widget_config(
         collect_contact=data.collect_contact,
         ai_enabled=data.ai_enabled,
         ai_reply_mode=data.ai_reply_mode,
+        assistant_name=data.assistant_name,
+        welcome_message=data.welcome_message,
         enabled=True,
     )
     db.add(widget)
@@ -171,6 +173,10 @@ async def update_widget_config(
     widget.collect_contact = data.collect_contact
     widget.ai_enabled = data.ai_enabled
     widget.ai_reply_mode = data.ai_reply_mode
+    if data.assistant_name is not None:
+        widget.assistant_name = data.assistant_name
+    if data.welcome_message is not None:
+        widget.welcome_message = data.welcome_message
     if data.ai_agent_ids is not None or data.ai_agent_id is not None:
         requested_ids = data.ai_agent_ids or ([data.ai_agent_id] if data.ai_agent_id else None)
         if requested_ids is None:

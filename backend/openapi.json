@@ -1989,6 +1989,14 @@
       "AutomationPreviewOut": {
         "additionalProperties": false,
         "properties": {
+          "assumptions": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 12,
+            "title": "Assumptions",
+            "type": "array"
+          },
           "condition_mode": {
             "enum": [
               "all",
@@ -2018,10 +2026,6 @@
           "selected_branch": {
             "anyOf": [
               {
-                "enum": [
-                  "match",
-                  "no_match"
-                ],
                 "type": "string"
               },
               {
@@ -2053,6 +2057,18 @@
         "properties": {
           "definition": {
             "$ref": "#/components/schemas/WorkflowDefinition"
+          },
+          "sample_ai_agent_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sample Ai Agent Id"
           },
           "sample_assignee_present": {
             "anyOf": [
@@ -2091,6 +2107,18 @@
               }
             ],
             "title": "Sample Conversation Ai Mode"
+          },
+          "sample_integration_connection_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sample Integration Connection Id"
           },
           "sample_is_first_customer_message": {
             "anyOf": [
@@ -3489,6 +3517,148 @@
           "verified_attributes"
         ],
         "title": "ComparedProduct",
+        "type": "object"
+      },
+      "ConditionalWorkflowBranch": {
+        "additionalProperties": false,
+        "description": "One ordered rule path, evaluated after the primary condition group.",
+        "properties": {
+          "actions": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "add_internal_note": "#/components/schemas/AddInternalNoteAction",
+                  "assign_to_team": "#/components/schemas/AssignTeamAction",
+                  "assign_to_user": "#/components/schemas/AssignUserAction",
+                  "lookup_shopify_order": "#/components/schemas/LookupShopifyOrderAction",
+                  "request_commerce_approval": "#/components/schemas/RequestCommerceApprovalAction",
+                  "require_human_approval": "#/components/schemas/HumanApprovalAction",
+                  "restore_widget_bot_routing": "#/components/schemas/RestoreWidgetBotRoutingAction",
+                  "route_to_ai_bot": "#/components/schemas/RouteConversationToAgentAction",
+                  "search_shopify_catalog": "#/components/schemas/SearchShopifyCatalogAction",
+                  "set_conversation_ai_mode": "#/components/schemas/SetConversationAiModeAction",
+                  "set_priority": "#/components/schemas/SetPriorityAction",
+                  "set_ticket_status": "#/components/schemas/SetTicketStatusAction"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/SetPriorityAction"
+                },
+                {
+                  "$ref": "#/components/schemas/AssignUserAction"
+                },
+                {
+                  "$ref": "#/components/schemas/AssignTeamAction"
+                },
+                {
+                  "$ref": "#/components/schemas/SetTicketStatusAction"
+                },
+                {
+                  "$ref": "#/components/schemas/SetConversationAiModeAction"
+                },
+                {
+                  "$ref": "#/components/schemas/RouteConversationToAgentAction"
+                },
+                {
+                  "$ref": "#/components/schemas/RestoreWidgetBotRoutingAction"
+                },
+                {
+                  "$ref": "#/components/schemas/AddInternalNoteAction"
+                },
+                {
+                  "$ref": "#/components/schemas/HumanApprovalAction"
+                },
+                {
+                  "$ref": "#/components/schemas/RequestCommerceApprovalAction"
+                },
+                {
+                  "$ref": "#/components/schemas/LookupShopifyOrderAction"
+                },
+                {
+                  "$ref": "#/components/schemas/SearchShopifyCatalogAction"
+                }
+              ]
+            },
+            "maxItems": 10,
+            "minItems": 1,
+            "title": "Actions",
+            "type": "array"
+          },
+          "condition_mode": {
+            "default": "all",
+            "enum": [
+              "all",
+              "any"
+            ],
+            "title": "Condition Mode",
+            "type": "string"
+          },
+          "conditions": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "assignee_present": "#/components/schemas/AssigneePresentCondition",
+                  "channel_is": "#/components/schemas/ChannelCondition",
+                  "contains_keyword": "#/components/schemas/ContainsKeywordCondition",
+                  "conversation_ai_mode_is": "#/components/schemas/ConversationAiModeCondition",
+                  "shopify_store_connected": "#/components/schemas/ShopifyStoreConnectedCondition",
+                  "ticket_priority_is": "#/components/schemas/TicketPriorityCondition",
+                  "ticket_status_is": "#/components/schemas/TicketStatusCondition"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/ContainsKeywordCondition"
+                },
+                {
+                  "$ref": "#/components/schemas/TicketPriorityCondition"
+                },
+                {
+                  "$ref": "#/components/schemas/TicketStatusCondition"
+                },
+                {
+                  "$ref": "#/components/schemas/ChannelCondition"
+                },
+                {
+                  "$ref": "#/components/schemas/ConversationAiModeCondition"
+                },
+                {
+                  "$ref": "#/components/schemas/AssigneePresentCondition"
+                },
+                {
+                  "$ref": "#/components/schemas/ShopifyStoreConnectedCondition"
+                }
+              ]
+            },
+            "maxItems": 10,
+            "minItems": 1,
+            "title": "Conditions",
+            "type": "array"
+          },
+          "id": {
+            "maxLength": 40,
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9_-]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 80,
+            "minLength": 2,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "conditions",
+          "actions"
+        ],
+        "title": "ConditionalWorkflowBranch",
         "type": "object"
       },
       "ContainsKeywordCondition": {
@@ -6452,6 +6622,29 @@
           "excerpt"
         ],
         "title": "KnowledgeSearchResult",
+        "type": "object"
+      },
+      "KnowledgeSourcePreviewOut": {
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "max_bytes": {
+            "title": "Max Bytes",
+            "type": "integer"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "content",
+          "truncated",
+          "max_bytes"
+        ],
+        "title": "KnowledgeSourcePreviewOut",
         "type": "object"
       },
       "LoginRequest": {
@@ -10755,10 +10948,24 @@
             "title": "Allowed Origins",
             "type": "array"
           },
+          "assistant_name": {
+            "default": "SupportPilot AI",
+            "maxLength": 60,
+            "minLength": 1,
+            "title": "Assistant Name",
+            "type": "string"
+          },
           "collect_contact": {
             "default": true,
             "title": "Collect Contact",
             "type": "boolean"
+          },
+          "welcome_message": {
+            "default": "Hi! How can we help?",
+            "maxLength": 240,
+            "minLength": 1,
+            "title": "Welcome Message",
+            "type": "string"
           }
         },
         "required": [
@@ -10803,6 +11010,11 @@
             "title": "Allowed Origins",
             "type": "array"
           },
+          "assistant_name": {
+            "default": "SupportPilot AI",
+            "title": "Assistant Name",
+            "type": "string"
+          },
           "collect_contact": {
             "title": "Collect Contact",
             "type": "boolean"
@@ -10842,6 +11054,11 @@
           },
           "public_id": {
             "title": "Public Id",
+            "type": "string"
+          },
+          "welcome_message": {
+            "default": "Hi! How can we help?",
+            "title": "Welcome Message",
             "type": "string"
           }
         },
@@ -10911,6 +11128,19 @@
             "title": "Allowed Origins",
             "type": "array"
           },
+          "assistant_name": {
+            "anyOf": [
+              {
+                "maxLength": 60,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assistant Name"
+          },
           "collect_contact": {
             "default": true,
             "title": "Collect Contact",
@@ -10920,6 +11150,19 @@
             "default": true,
             "title": "Enabled",
             "type": "boolean"
+          },
+          "welcome_message": {
+            "anyOf": [
+              {
+                "maxLength": 240,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Welcome Message"
           }
         },
         "required": [
@@ -11359,6 +11602,37 @@
         "title": "WorkerHealthOut",
         "type": "object"
       },
+      "WorkflowBranchCanvasPosition": {
+        "additionalProperties": false,
+        "properties": {
+          "branch_id": {
+            "maxLength": 40,
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9_-]*$",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "x": {
+            "maximum": 1200.0,
+            "minimum": 0.0,
+            "title": "X",
+            "type": "integer"
+          },
+          "y": {
+            "maximum": 1800.0,
+            "minimum": 0.0,
+            "title": "Y",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "branch_id",
+          "x",
+          "y"
+        ],
+        "title": "WorkflowBranchCanvasPosition",
+        "type": "object"
+      },
       "WorkflowCanvasLayout": {
         "additionalProperties": false,
         "properties": {
@@ -11368,6 +11642,14 @@
             },
             "maxItems": 10,
             "title": "Actions",
+            "type": "array"
+          },
+          "branch_nodes": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowBranchCanvasPosition"
+            },
+            "maxItems": 5,
+            "title": "Branch Nodes",
             "type": "array"
           },
           "conditions": {
@@ -11504,6 +11786,14 @@
             "maxItems": 10,
             "minItems": 1,
             "title": "Actions",
+            "type": "array"
+          },
+          "branches": {
+            "items": {
+              "$ref": "#/components/schemas/ConditionalWorkflowBranch"
+            },
+            "maxItems": 5,
+            "title": "Branches",
             "type": "array"
           },
           "condition_mode": {
@@ -11842,6 +12132,90 @@
           "status"
         ],
         "title": "WorkflowVersionOut",
+        "type": "object"
+      },
+      "WorkspaceAuditItem": {
+        "properties": {
+          "actor_name": {
+            "title": "Actor Name",
+            "type": "string"
+          },
+          "category": {
+            "enum": [
+              "AI bot",
+              "Knowledge",
+              "Team",
+              "Integration",
+              "Commerce",
+              "Ticket"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "event_type": {
+            "title": "Event Type",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "target_id": {
+            "format": "uuid",
+            "title": "Target Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "category",
+          "target_id",
+          "event_type",
+          "actor_name",
+          "created_at"
+        ],
+        "title": "WorkspaceAuditItem",
+        "type": "object"
+      },
+      "WorkspaceAuditPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceAuditItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "WorkspaceAuditPage",
         "type": "object"
       }
     },
@@ -27172,6 +27546,144 @@
         ]
       }
     },
+    "/api/v1/knowledge/documents/{document_id}/source-preview": {
+      "get": {
+        "operationId": "preview_document_source_api_v1_knowledge_documents__document_id__source_preview_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeSourcePreviewOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 Problem Details response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 Problem Details response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 Problem Details response"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 Problem Details response"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 Problem Details response"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 Problem Details response"
+          },
+          "415": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 Problem Details response"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 Problem Details response"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 Problem Details response"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 Problem Details response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Preview Document Source",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
     "/api/v1/organization": {
       "get": {
         "operationId": "get_organization_api_v1_organization_get",
@@ -27427,6 +27939,159 @@
           }
         ],
         "summary": "Update Organization",
+        "tags": [
+          "team"
+        ]
+      }
+    },
+    "/api/v1/organization/audit": {
+      "get": {
+        "description": "List bounded workspace audit metadata for Owners and Admins.",
+        "operationId": "get_workspace_audit_api_v1_organization_audit_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 100000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceAuditPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 Problem Details response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 Problem Details response"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 Problem Details response"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 Problem Details response"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 Problem Details response"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 Problem Details response"
+          },
+          "415": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 Problem Details response"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 Problem Details response"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 Problem Details response"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "RFC 9457 Problem Details response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Workspace Audit",
         "tags": [
           "team"
         ]

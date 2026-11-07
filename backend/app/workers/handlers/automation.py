@@ -174,7 +174,13 @@ class AutomationExecutionHandler(JobHandler):
                         Message.organization_id == job.organization_id,
                         Message.conversation_id == message.conversation_id,
                         Message.sender_type == "customer",
-                        Message.created_at < message.created_at,
+                        or_(
+                            Message.created_at < message.created_at,
+                            and_(
+                                Message.created_at == message.created_at,
+                                Message.id < message.id,
+                            ),
+                        ),
                     )
                 )
                 is_first_customer_message = int(prior_customer_messages or 0) == 0
@@ -200,24 +206,22 @@ class AutomationExecutionHandler(JobHandler):
                     conversation_ai_agent_id=conversation.ai_agent_id,
                     conversation_integration_connection_id=conversation.integration_connection_id,
                 )
-                resuming_approval = any(
-                    item.get("outcome") == "waiting_approval"
-                    for item in execution.result
-                    if isinstance(item, dict)
+                valid_branch_selections = {
+                    "match",
+                    "no_match",
+                    *(f"branch:{branch.id}" for branch in definition.branches),
+                }
+                persisted_branch = next(
+                    (
+                        item.get("detail")
+                        for item in execution.result
+                        if isinstance(item, dict)
+                        and item.get("action") == "branch_selection"
+                        and item.get("detail") in valid_branch_selections
+                    ),
+                    None,
                 )
-                if resuming_approval:
-                    selected_branch = next(
-                        (
-                            item.get("detail")
-                            for item in execution.result
-                            if isinstance(item, dict)
-                            and item.get("action") == "branch_selection"
-                            and item.get("detail") in ("match", "no_match")
-                        ),
-                        "match",
-                    )
-                else:
-                    selected_branch = evaluate_customer_message_branch(definition, ctx)
+                selected_branch = persisted_branch or evaluate_customer_message_branch(definition, ctx)
 
                 if selected_branch is None:
                     execution.result = [{
@@ -232,12 +236,23 @@ class AutomationExecutionHandler(JobHandler):
                         "detail": "Message did not match the workflow conditions",
                     }]
                 else:
-                    if not resuming_approval and (definition.conditions or definition.else_actions):
+                    if persisted_branch is None and (definition.conditions or definition.branches or definition.else_actions):
                         execution.result = [{
                             "action": "branch_selection",
                             "outcome": "applied",
                             "detail": selected_branch,
                         }]
+                    branch = next(
+                        (item for item in definition.branches if selected_branch == f"branch:{item.id}"),
+                        None,
+                    )
+                    selected_actions = (
+                        definition.actions
+                        if selected_branch == "match"
+                        else branch.actions
+                        if branch is not None
+                        else definition.else_actions
+                    )
                     execution.result = _merge_action_results(
                         execution.result,
                         await _apply_actions(
@@ -251,7 +266,7 @@ class AutomationExecutionHandler(JobHandler):
                             customer_email=await ticket_customer_email(db, job.organization_id, ticket.id),
                             ticket=ticket,
                             conversation=conversation,
-                            actions=definition.actions if selected_branch == "match" else definition.else_actions,
+                            actions=selected_actions,
                         ),
                     )
                 outcomes = execution.result

@@ -26,6 +26,7 @@ import { SecuritySessions } from "@/features/auth/components/security-sessions";
 import { TeamRoutingSettings } from "./team-routing-settings";
 import { FirstResponseSlaSettings } from "./first-response-sla-settings";
 import { SavedRepliesSettings } from "./saved-replies-settings";
+import { WorkspaceAuditHistory } from "./workspace-audit-history";
 import { settingsSectionFromHash, settingsSectionHash, type SettingsSection } from "../utils/settings-section";
 
 type SettingsNavigationItem = { id?: SettingsSection; href?: string; label: string; icon: typeof Building2 };
@@ -156,7 +157,7 @@ export default function SettingsPage() {
               </Panel>
             )}
             {visibleSection === "general" && <Panel><PanelHeader title="Workspace details" description="Basic information visible to your team." action={<span className="grid size-9 place-items-center rounded-xl bg-blue-50 text-blue-700"><Building2 size={18}/></span>}/><PanelBody><form className="grid gap-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end" onSubmit={orgForm.handleSubmit((values) => updateOrg.mutate(values))}><Field label="Workspace name" error={orgForm.formState.errors.name?.message}><Input defaultValue={organization.data?.name} key={organization.data?.name} {...orgForm.register("name")}/></Field><Field label="Workspace slug"><Input value={organization.data?.slug ?? ""} disabled readOnly/></Field><Button type="submit" disabled={updateOrg.isPending}>{updateOrg.isPending ? "Saving…" : "Save changes"}</Button></form>{updateOrg.isError && <p role="alert" className="mt-3 text-sm text-red-700">{updateOrg.error instanceof ApiError ? updateOrg.error.message : "Workspace could not be updated."}</p>}{updateOrg.isSuccess && <p role="status" className="mt-3 text-sm text-emerald-700">Workspace updated.</p>}</PanelBody></Panel>}
-            {visibleSection === "security" && <SecuritySessions/>}
+            {visibleSection === "security" && <><SecuritySessions/>{canManageSettings && <WorkspaceAuditHistory/>}</>}
             {visibleSection === "sla" && <FirstResponseSlaSettings/>}
             {visibleSection === "saved-replies" && canManageSettings && <SavedRepliesSettings organizationId={me.data?.organization_id}/>}
             {visibleSection === "team" && <div className="space-y-5">
@@ -195,7 +196,7 @@ function sectionDescription(section: SettingsSection) {
     team: "Invite teammates, manage workspace roles, and organize ticket routing teams.",
     sla: "Set first-response targets for each ticket priority and see deadline status in the Inbox.",
     "saved-replies": "Manage reusable responses your team can insert into the Inbox composer.",
-    security: "Review active sign-in sessions for your account and revoke access you no longer use.",
+    security: "Review sign-in sessions and, for workspace admins, recent security-relevant activity.",
     recommendations: "Control how the AI assistant recommends products from your catalog.",
     widget: "Configure the storefront chat experience and its allowed origins.",
     shopify: "Connect and manage your Shopify store integration.",

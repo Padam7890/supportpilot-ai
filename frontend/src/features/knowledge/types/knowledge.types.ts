@@ -4,3 +4,4 @@ export type IngestionJob = components["schemas"]["IngestionJobOut"];
 export type KnowledgeDocument = components["schemas"]["KnowledgeDocumentOut"];
 export type KnowledgeDocumentPage = components["schemas"]["KnowledgeDocumentPage"];
 export type KnowledgeSearchPage = components["schemas"]["KnowledgeSearchPage"];
+export type KnowledgeSourcePreview = components["schemas"]["KnowledgeSourcePreviewOut"];

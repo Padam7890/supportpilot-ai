@@ -1,15 +1,33 @@
 """Tenant-scoped organization profile endpoints."""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_roles
 from app.db.session import get_db
+from app.features.organizations.audit_service import list_workspace_audit
 from app.models import Organization, User
 from app.schemas.auth import FirstResponseSlaPolicy, OrganizationOut, OrganizationUpdate
 from app.schemas.errors import COMMON_ERROR_RESPONSES
+from app.schemas.workspace_audit import WorkspaceAuditPage
 
 router = APIRouter(tags=["team"], responses=COMMON_ERROR_RESPONSES)
+
+
+@router.get("/organization/audit", response_model=WorkspaceAuditPage)
+async def get_workspace_audit(
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0, le=100_000),
+    db: AsyncSession = Depends(get_db),
+    actor: User = Depends(require_roles("owner", "admin")),
+) -> WorkspaceAuditPage:
+    """List bounded workspace audit metadata for Owners and Admins."""
+    return await list_workspace_audit(
+        db,
+        organization_id=actor.organization_id,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get("/organization/sla", response_model=FirstResponseSlaPolicy)

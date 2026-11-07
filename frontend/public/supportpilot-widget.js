@@ -252,7 +252,7 @@
     const welcome = document.createElement("section");
     welcome.className = "welcome";
     const title = document.createElement("h2");
-    title.textContent = `Hi! Welcome to ${config?.store_name || "our store"}.`;
+    title.textContent = config?.welcome_message || `Hi! Welcome to ${config?.store_name || "our store"}.`;
     const intro = document.createElement("p");
     intro.textContent = "I can help with product questions, store policies, and order updates. What can I help you with?";
     const actions = document.createElement("div");

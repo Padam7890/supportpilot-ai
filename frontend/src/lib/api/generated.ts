@@ -2031,6 +2031,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/knowledge/documents/{document_id}/source-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Preview Document Source */
+        get: operations["preview_document_source_api_v1_knowledge_documents__document_id__source_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/organization": {
         parameters: {
             query?: never;
@@ -2047,6 +2064,26 @@ export interface paths {
         head?: never;
         /** Update Organization */
         patch: operations["update_organization_api_v1_organization_patch"];
+        trace?: never;
+    };
+    "/api/v1/organization/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Workspace Audit
+         * @description List bounded workspace audit metadata for Owners and Admins.
+         */
+        get: operations["get_workspace_audit_api_v1_organization_audit_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/organization/sla": {
@@ -3569,6 +3606,8 @@ export interface components {
         };
         /** AutomationPreviewOut */
         AutomationPreviewOut: {
+            /** Assumptions */
+            assumptions?: string[];
             /**
              * Condition Mode
              * @enum {string}
@@ -3581,19 +3620,23 @@ export interface components {
             /** Planned Actions */
             planned_actions: components["schemas"]["AutomationPreviewActionOut"][];
             /** Selected Branch */
-            selected_branch?: ("match" | "no_match") | null;
+            selected_branch?: string | null;
             /** Steps */
             steps: components["schemas"]["AutomationPreviewStepOut"][];
         };
         /** AutomationPreviewRequest */
         AutomationPreviewRequest: {
             definition: components["schemas"]["WorkflowDefinition"];
+            /** Sample Ai Agent Id */
+            sample_ai_agent_id?: string | null;
             /** Sample Assignee Present */
             sample_assignee_present?: boolean | null;
             /** Sample Channel */
             sample_channel?: string | null;
             /** Sample Conversation Ai Mode */
             sample_conversation_ai_mode?: ("ai" | "human") | null;
+            /** Sample Integration Connection Id */
+            sample_integration_connection_id?: string | null;
             /** Sample Is First Customer Message */
             sample_is_first_customer_message?: boolean | null;
             /** Sample Message */
@@ -4118,6 +4161,26 @@ export interface components {
             verified_attributes: {
                 [key: string]: string;
             };
+        };
+        /**
+         * ConditionalWorkflowBranch
+         * @description One ordered rule path, evaluated after the primary condition group.
+         */
+        ConditionalWorkflowBranch: {
+            /** Actions */
+            actions: (components["schemas"]["SetPriorityAction"] | components["schemas"]["AssignUserAction"] | components["schemas"]["AssignTeamAction"] | components["schemas"]["SetTicketStatusAction"] | components["schemas"]["SetConversationAiModeAction"] | components["schemas"]["RouteConversationToAgentAction"] | components["schemas"]["RestoreWidgetBotRoutingAction"] | components["schemas"]["AddInternalNoteAction"] | components["schemas"]["HumanApprovalAction"] | components["schemas"]["RequestCommerceApprovalAction"] | components["schemas"]["LookupShopifyOrderAction"] | components["schemas"]["SearchShopifyCatalogAction"])[];
+            /**
+             * Condition Mode
+             * @default all
+             * @enum {string}
+             */
+            condition_mode: "all" | "any";
+            /** Conditions */
+            conditions: (components["schemas"]["ContainsKeywordCondition"] | components["schemas"]["TicketPriorityCondition"] | components["schemas"]["TicketStatusCondition"] | components["schemas"]["ChannelCondition"] | components["schemas"]["ConversationAiModeCondition"] | components["schemas"]["AssigneePresentCondition"] | components["schemas"]["ShopifyStoreConnectedCondition"])[];
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
         };
         /** ContainsKeywordCondition */
         ContainsKeywordCondition: {
@@ -5338,6 +5401,15 @@ export interface components {
             excerpt: string;
             /** Knowledge Base Name */
             knowledge_base_name: string;
+        };
+        /** KnowledgeSourcePreviewOut */
+        KnowledgeSourcePreviewOut: {
+            /** Content */
+            content: string;
+            /** Max Bytes */
+            max_bytes: number;
+            /** Truncated */
+            truncated: boolean;
         };
         /** LoginRequest */
         LoginRequest: {
@@ -7056,10 +7128,20 @@ export interface components {
             /** Allowed Origins */
             allowed_origins: string[];
             /**
+             * Assistant Name
+             * @default SupportPilot AI
+             */
+            assistant_name: string;
+            /**
              * Collect Contact
              * @default true
              */
             collect_contact: boolean;
+            /**
+             * Welcome Message
+             * @default Hi! How can we help?
+             */
+            welcome_message: string;
         };
         /** WidgetConfigOut */
         WidgetConfigOut: {
@@ -7083,6 +7165,11 @@ export interface components {
             ai_reply_mode: "draft_only" | "auto_reply";
             /** Allowed Origins */
             allowed_origins: string[];
+            /**
+             * Assistant Name
+             * @default SupportPilot AI
+             */
+            assistant_name: string;
             /** Collect Contact */
             collect_contact: boolean;
             /**
@@ -7098,6 +7185,11 @@ export interface components {
             last_widget_load_at?: string | null;
             /** Public Id */
             public_id: string;
+            /**
+             * Welcome Message
+             * @default Hi! How can we help?
+             */
+            welcome_message: string;
         };
         /** WidgetConfigUpdate */
         WidgetConfigUpdate: {
@@ -7118,6 +7210,8 @@ export interface components {
             ai_reply_mode: "draft_only" | "auto_reply";
             /** Allowed Origins */
             allowed_origins: string[];
+            /** Assistant Name */
+            assistant_name?: string | null;
             /**
              * Collect Contact
              * @default true
@@ -7128,6 +7222,8 @@ export interface components {
              * @default true
              */
             enabled: boolean;
+            /** Welcome Message */
+            welcome_message?: string | null;
         };
         /** WidgetConversationOut */
         WidgetConversationOut: {
@@ -7305,10 +7401,21 @@ export interface components {
              */
             status: "active" | "inactive";
         };
+        /** WorkflowBranchCanvasPosition */
+        WorkflowBranchCanvasPosition: {
+            /** Branch Id */
+            branch_id: string;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+        };
         /** WorkflowCanvasLayout */
         WorkflowCanvasLayout: {
             /** Actions */
             actions?: components["schemas"]["CanvasPosition"][];
+            /** Branch Nodes */
+            branch_nodes?: components["schemas"]["WorkflowBranchCanvasPosition"][];
             /** Conditions */
             conditions?: components["schemas"]["CanvasPosition"][];
             else_action?: components["schemas"]["CanvasPosition"] | null;
@@ -7327,6 +7434,8 @@ export interface components {
         WorkflowDefinition: {
             /** Actions */
             actions: (components["schemas"]["SetPriorityAction"] | components["schemas"]["AssignUserAction"] | components["schemas"]["AssignTeamAction"] | components["schemas"]["SetTicketStatusAction"] | components["schemas"]["SetConversationAiModeAction"] | components["schemas"]["RouteConversationToAgentAction"] | components["schemas"]["RestoreWidgetBotRoutingAction"] | components["schemas"]["AddInternalNoteAction"] | components["schemas"]["HumanApprovalAction"] | components["schemas"]["RequestCommerceApprovalAction"] | components["schemas"]["LookupShopifyOrderAction"] | components["schemas"]["SearchShopifyCatalogAction"])[];
+            /** Branches */
+            branches?: components["schemas"]["ConditionalWorkflowBranch"][];
             /**
              * Condition Mode
              * @default all
@@ -7417,6 +7526,44 @@ export interface components {
              * Format: uuid
              */
             workflow_id: string;
+        };
+        /** WorkspaceAuditItem */
+        WorkspaceAuditItem: {
+            /** Actor Name */
+            actor_name: string;
+            /**
+             * Category
+             * @enum {string}
+             */
+            category: "AI bot" | "Knowledge" | "Team" | "Integration" | "Commerce" | "Ticket";
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Event Type */
+            event_type: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Target Id
+             * Format: uuid
+             */
+            target_id: string;
+        };
+        /** WorkspaceAuditPage */
+        WorkspaceAuditPage: {
+            /** Items */
+            items: components["schemas"]["WorkspaceAuditItem"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
         };
     };
     responses: never;
@@ -18831,6 +18978,118 @@ export interface operations {
             };
         };
     };
+    preview_document_source_api_v1_knowledge_documents__document_id__source_preview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeSourcePreviewOut"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
     get_organization_api_v1_organization_get: {
         parameters: {
             query?: never;
@@ -18961,6 +19220,119 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OrganizationOut"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RFC 9457 Problem Details response */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    get_workspace_audit_api_v1_organization_audit_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceAuditPage"];
                 };
             };
             /** @description RFC 9457 Problem Details response */

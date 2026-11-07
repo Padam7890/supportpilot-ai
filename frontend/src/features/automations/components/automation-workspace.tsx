@@ -10,6 +10,7 @@ import {
   ChevronLeft,
   CircleUser,
   CircleAlert,
+  ChevronDown,
   Database,
   Hash,
   MessageSquare,
@@ -17,6 +18,7 @@ import {
   Search,
   Sparkles,
   Ticket,
+  ChevronUp,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -24,8 +26,13 @@ import { AutomationNodeCanvas } from "./automation-node-canvas";
 import { getCurrentUser } from "@/features/auth/api/auth-api";
 import { listMembers } from "@/features/organization/api/organization-api";
 import { activeTeamsQueryKey, listActiveTeams } from "@/features/organization/api/team-api";
+import type { SupportTeam } from "@/features/organization/api/team-api";
 import { aiAgentsKey, listAIAgents } from "@/features/ai/api/ai-agent-api";
+import type { AIAgent } from "@/features/ai/api/ai-agent-api";
+import { getIntegrationConnections, integrationManagementQueryKeys } from "@/features/integrations/api/integration-management-api";
+import type { IntegrationConnection } from "@/features/integrations/api/integration-management-api";
 import type { WorkflowDraft, DraftStep, Condition, Action } from "../types/workflow-draft";
+import { createEmptyCustomerMessageTrigger } from "../types/workflow-draft";
 import { validateWorkflowDraft } from "../utils/validate-workflow-draft";
 import { fitCanvasLayout } from "../utils/canvas-layout";
 import {
@@ -97,6 +104,8 @@ export function AutomationWorkspace() {
   });
   const [sampleMessage, setSampleMessage] = useState("");
   const [sampleTicketPriority, setSampleTicketPriority] = useState<"" | "low" | "normal" | "high" | "urgent">("");
+  const [sampleAiAgentId, setSampleAiAgentId] = useState("");
+  const [sampleIntegrationConnectionId, setSampleIntegrationConnectionId] = useState("");
   const [sampleTicketStatus, setSampleTicketStatus] = useState("");
   const [sampleChannel, setSampleChannel] = useState("");
   const [sampleFirstMessage, setSampleFirstMessage] = useState<boolean | null>(null);
@@ -136,6 +145,7 @@ export function AutomationWorkspace() {
   const members = useQuery({ queryKey: ["users"], queryFn: listMembers, enabled: canManage });
   const teams = useQuery({ queryKey: activeTeamsQueryKey, queryFn: listActiveTeams, enabled: canManage });
   const aiAgents = useQuery({ queryKey: aiAgentsKey, queryFn: listAIAgents, enabled: canManage });
+  const integrationConnections = useQuery({ queryKey: integrationManagementQueryKeys.connections, queryFn: getIntegrationConnections, enabled: canManage });
 
   const memberNamesById = useMemo(() => {
     const map = new Map<string, string>();
@@ -398,10 +408,13 @@ export function AutomationWorkspace() {
       if (next === current) return;
       const condLen = next.conditions.length;
       const actLen = next.actions.length;
+      const branchIds = (next.branches ?? []).map((branch) => branch.id);
+      const currentBranchIds = (current.branches ?? []).map((branch) => branch.id);
+      const branchesChanged = branchIds.length !== currentBranchIds.length || branchIds.some((id, index) => id !== currentBranchIds[index]);
       const normalized: WorkflowDraft =
-        condLen === current.conditions.length && actLen === current.actions.length
+        condLen === current.conditions.length && actLen === current.actions.length && !branchesChanged
           ? next
-          : { ...next, canvasLayout: fitCanvasLayout(next.canvasLayout, condLen, actLen) };
+          : { ...next, canvasLayout: fitCanvasLayout(next.canvasLayout, condLen, actLen, branchIds) };
 
       setDraftHistory((history) => ({
         past: [...history.past.slice(-(MAX_DRAFT_HISTORY - 1)), current],
@@ -414,6 +427,16 @@ export function AutomationWorkspace() {
     },
     [],
   );
+
+  const moveBranch = useCallback((branchIndex: number, offset: -1 | 1) => {
+    updateDraft((current) => {
+      const branches = [...(current.branches ?? [])];
+      const targetIndex = branchIndex + offset;
+      if (targetIndex < 0 || targetIndex >= branches.length) return current;
+      [branches[branchIndex], branches[targetIndex]] = [branches[targetIndex], branches[branchIndex]];
+      return { ...current, branches };
+    });
+  }, [updateDraft]);
 
   const undoDraft = useCallback(() => {
     setDraftHistory((history) => {
@@ -454,7 +477,7 @@ export function AutomationWorkspace() {
       return {
         ...current,
         conditions: nextConditions,
-        canvasLayout: fitCanvasLayout(current.canvasLayout, nextConditions.length, current.actions.length),
+        canvasLayout: fitCanvasLayout(current.canvasLayout, nextConditions.length, current.actions.length, (current.branches ?? []).map((branch) => branch.id)),
       };
     });
     setSelectedStep({ type: "condition", index: atIndex });
@@ -467,7 +490,7 @@ export function AutomationWorkspace() {
       return {
         ...current,
         actions: nextActions,
-        canvasLayout: fitCanvasLayout(current.canvasLayout, current.conditions.length, nextActions.length),
+        canvasLayout: fitCanvasLayout(current.canvasLayout, current.conditions.length, nextActions.length, (current.branches ?? []).map((branch) => branch.id)),
       };
     });
     setSelectedStep({ type: "action", index: atIndex });
@@ -480,7 +503,7 @@ export function AutomationWorkspace() {
         ...current,
         conditions: next,
         elseNote: next.length ? current.elseNote : "",
-        canvasLayout: fitCanvasLayout(current.canvasLayout, next.length, current.actions.length),
+        canvasLayout: fitCanvasLayout(current.canvasLayout, next.length, current.actions.length, (current.branches ?? []).map((branch) => branch.id)),
       };
     });
     setSelectedStep((s) => {
@@ -498,7 +521,7 @@ export function AutomationWorkspace() {
       return {
         ...current,
         actions: next,
-        canvasLayout: fitCanvasLayout(current.canvasLayout, current.conditions.length, next.length),
+        canvasLayout: fitCanvasLayout(current.canvasLayout, current.conditions.length, next.length, (current.branches ?? []).map((branch) => branch.id)),
       };
     });
     setSelectedStep((s) => {
@@ -590,6 +613,12 @@ export function AutomationWorkspace() {
     setSelectedStep(step);
     setInspectorTab("configure");
     requestAnimationFrame(() => {
+      if (step.type === "branch") {
+        const branch = document.getElementById(`automation-branch-editor-${step.branchId}`);
+        branch?.scrollIntoView({ behavior: "smooth", block: "center" });
+        branch?.focus({ preventScroll: true });
+        return;
+      }
       const el = document.querySelector(`[data-automation-step="${issueKeyForStep(step)}"]`);
       el?.scrollIntoView({ behavior: "smooth", block: "center" });
     });
@@ -612,6 +641,8 @@ export function AutomationWorkspace() {
     preview.mutate({
       definition: workflowDraftDefinition(draft),
       sample_message: sampleMessage.trim(),
+      sample_ai_agent_id: sampleAiAgentId || null,
+      sample_integration_connection_id: sampleIntegrationConnectionId || null,
       sample_ticket_priority: sampleTicketPriority || null,
       sample_ticket_status: sampleTicketStatus.trim() || null,
       sample_channel: sampleChannel.trim() || null,
@@ -643,6 +674,21 @@ export function AutomationWorkspace() {
         available: true,
         addLabel: "Use trigger",
         onAdd: () => {
+          setSelectedStep({ type: "trigger" });
+          setInspectorTab("configure");
+        },
+      },
+      {
+        id: "trigger-conversation-started",
+        category: "triggers",
+        group: "inbox",
+        name: "Conversation started",
+        description: "Run once when a conversation receives its first customer message.",
+        icon: MessageSquare,
+        available: true,
+        addLabel: "Use trigger",
+        onAdd: () => {
+          updateDraft({ trigger: { kind: "conversation_started" } });
           setSelectedStep({ type: "trigger" });
           setInspectorTab("configure");
         },
@@ -751,7 +797,7 @@ export function AutomationWorkspace() {
             return {
               ...c,
               actions: next,
-              canvasLayout: fitCanvasLayout(c.canvasLayout, c.conditions.length, next.length),
+              canvasLayout: fitCanvasLayout(c.canvasLayout, c.conditions.length, next.length, (c.branches ?? []).map((branch) => branch.id)),
             };
           });
           setSelectedStep({ type: "action", index: nextIndex });
@@ -1210,6 +1256,11 @@ export function AutomationWorkspace() {
               onRemoveAction={removeAction}
               onMoveCondition={moveCondition}
               onMoveAction={moveAction}
+              onSelectBranch={(branchId) => {
+                const branchEditor = document.getElementById(`automation-branch-editor-${branchId}`);
+                branchEditor?.scrollIntoView({ behavior: "smooth", block: "center" });
+                branchEditor?.focus({ preventScroll: true });
+              }}
             />
             <section aria-label="No-match branch" className="border-t border-slate-200 bg-amber-50/70 p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1239,6 +1290,136 @@ export function AutomationWorkspace() {
                 </label>
               )}
               {!draft.conditions.length && <p className="mt-2 text-[11px] text-amber-800">Add at least one condition to enable a no-match path.</p>}
+            </section>
+            <section aria-label="Ordered conditional branches" className="border-t border-slate-200 bg-indigo-50/50 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-xs font-semibold text-indigo-950">Additional condition branches</h3>
+                  <p className="mt-0.5 max-w-xl text-[11px] leading-4 text-indigo-800">Checked in order after the main conditions. The first matching branch runs; otherwise the no-match note is used.</p>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  disabled={!draft.conditions.length || (draft.branches ?? []).length >= 5}
+                  onClick={() => updateDraft((current) => ({
+                    ...current,
+                    branches: [...(current.branches ?? []), {
+                      id: crypto.randomUUID(),
+                      name: `Branch ${(current.branches ?? []).length + 1}`,
+                      condition_mode: "all",
+                      conditions: [{ kind: "contains_keyword", value: "" }],
+                      actions: [{ kind: "add_internal_note", body: "" }],
+                    }],
+                  }))}
+                >Add branch</Button>
+              </div>
+              {!draft.conditions.length && <p className="mt-2 text-[11px] text-indigo-800">Add a primary condition group before adding alternate paths.</p>}
+              {(draft.branches ?? []).map((branch, index) => {
+                return <article id={`automation-branch-editor-${branch.id}`} key={branch.id} data-automation-step={`branch-${branch.id}`} tabIndex={-1} className={`mt-3 space-y-2 rounded-lg border bg-white p-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 ${validationIssueKeys.has(`branch-${branch.id}`) ? "border-red-300 ring-1 ring-red-200" : "border-indigo-200"}`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-semibold text-slate-800">Path {index + 1}</p>
+                    <div className="flex items-center gap-2">
+                      <button type="button" className="rounded-md p-1.5 text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40" aria-label={`Move ${branch.name} earlier`} title="Check this branch earlier" disabled={index === 0} onClick={() => moveBranch(index, -1)}>
+                        <ChevronUp aria-hidden="true" className="h-4 w-4" />
+                      </button>
+                      <button type="button" className="rounded-md p-1.5 text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40" aria-label={`Move ${branch.name} later`} title="Check this branch later" disabled={index === (draft.branches ?? []).length - 1} onClick={() => moveBranch(index, 1)}>
+                        <ChevronDown aria-hidden="true" className="h-4 w-4" />
+                      </button>
+                      <button type="button" className="text-xs font-semibold text-red-700 underline" onClick={() => updateDraft((current) => ({ ...current, branches: (current.branches ?? []).filter((item) => item.id !== branch.id) }))}>Remove</button>
+                    </div>
+                  </div>
+                  <label className="block text-xs font-medium text-slate-700">Branch name
+                    <input className={fieldClass} maxLength={80} value={branch.name} onChange={(event) => updateDraft((current) => ({ ...current, branches: (current.branches ?? []).map((item) => item.id === branch.id ? { ...item, name: event.target.value } : item) }))}/>
+                  </label>
+                  <div className="flex flex-wrap items-end justify-between gap-2">
+                    <label className="block min-w-48 flex-1 text-xs font-medium text-slate-700">Match logic
+                      <select className={fieldClass} value={branch.condition_mode} onChange={(event) => updateDraft((current) => ({
+                        ...current,
+                        branches: (current.branches ?? []).map((item) => item.id === branch.id ? { ...item, condition_mode: event.target.value as "all" | "any" } : item),
+                      }))}>
+                        <option value="all">Match all conditions (AND)</option>
+                        <option value="any">Match any condition (OR)</option>
+                      </select>
+                    </label>
+                    <Button type="button" size="sm" variant="secondary" disabled={branch.conditions.length >= 10} onClick={() => updateDraft((current) => ({
+                      ...current,
+                      branches: (current.branches ?? []).map((item) => item.id === branch.id ? { ...item, conditions: [...item.conditions, defaultConditionForKind("contains_keyword")] } : item),
+                    }))}>Add condition</Button>
+                  </div>
+                  {branch.conditions.map((condition, conditionIndex) => {
+                    const updateCondition = (nextCondition: Condition) => updateDraft((current) => ({
+                      ...current,
+                      branches: (current.branches ?? []).map((item) => item.id === branch.id ? {
+                        ...item,
+                        conditions: item.conditions.map((candidate, candidateIndex) => candidateIndex === conditionIndex ? nextCondition : candidate),
+                      } : item),
+                    }));
+                    const operator = condition.kind === "channel_is" || condition.kind === "ticket_priority_is" || condition.kind === "ticket_status_is"
+                      ? condition.operator
+                      : "is";
+                    return <div key={`${branch.id}-condition-${conditionIndex}`} className="rounded-md border border-slate-200 bg-slate-50 p-2">
+                      <div className="flex items-center gap-2">
+                        <label className="min-w-0 flex-1 text-xs font-medium text-slate-700">Condition {conditionIndex + 1}
+                          <select className={fieldClass} value={condition.kind} onChange={(event) => updateCondition(defaultConditionForKind(event.target.value as Condition["kind"]))}>
+                            <option value="contains_keyword">Message contains phrase</option>
+                            <option value="channel_is">Channel</option>
+                            <option value="ticket_priority_is">Ticket priority</option>
+                            <option value="ticket_status_is">Ticket status</option>
+                            <option value="conversation_ai_mode_is">Conversation AI mode</option>
+                            <option value="assignee_present">Assignee present</option>
+                            <option value="shopify_store_connected">Shopify store connected</option>
+                          </select>
+                        </label>
+                        <button type="button" className="mb-0.5 rounded px-2 py-1 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:text-slate-400" aria-label={`Remove branch condition ${conditionIndex + 1}`} disabled={branch.conditions.length <= 1} onClick={() => updateDraft((current) => ({
+                          ...current,
+                          branches: (current.branches ?? []).map((item) => item.id === branch.id ? { ...item, conditions: item.conditions.filter((_, candidateIndex) => candidateIndex !== conditionIndex) } : item),
+                        }))}>Remove</button>
+                      </div>
+                      {condition.kind === "contains_keyword" && <label className="mt-2 block text-xs font-medium text-slate-700">Phrase
+                        <input className={fieldClass} maxLength={80} value={condition.value} placeholder="e.g. delivery" onChange={(event) => updateCondition({ ...condition, value: event.target.value })}/>
+                      </label>}
+                      {(condition.kind === "channel_is" || condition.kind === "ticket_priority_is" || condition.kind === "ticket_status_is") && <div className="mt-2 grid grid-cols-2 gap-2">
+                        <label className="text-xs font-medium text-slate-700">Operator
+                          <select className={fieldClass} value={operator} onChange={(event) => {
+                            if (condition.kind === "channel_is") updateCondition({ ...condition, operator: event.target.value as "is" | "is_not" });
+                            if (condition.kind === "ticket_priority_is") updateCondition({ ...condition, operator: event.target.value as "is" | "is_not" });
+                            if (condition.kind === "ticket_status_is") updateCondition({ ...condition, operator: event.target.value as "is" | "is_not" });
+                          }}><option value="is">Is</option><option value="is_not">Is not</option></select>
+                        </label>
+                        {condition.kind === "channel_is" && <label className="text-xs font-medium text-slate-700">Channel
+                          <input className={fieldClass} maxLength={80} value={condition.value} placeholder="widget" onChange={(event) => updateCondition({ ...condition, value: event.target.value })}/>
+                        </label>}
+                        {condition.kind === "ticket_priority_is" && <label className="text-xs font-medium text-slate-700">Priority
+                          <select className={fieldClass} value={condition.value} onChange={(event) => updateCondition({ ...condition, value: event.target.value as typeof condition.value })}><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option></select>
+                        </label>}
+                        {condition.kind === "ticket_status_is" && <label className="text-xs font-medium text-slate-700">Status
+                          <select className={fieldClass} value={condition.value} onChange={(event) => updateCondition({ ...condition, value: event.target.value as typeof condition.value })}><option value="open">Open</option><option value="pending">Pending</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select>
+                        </label>}
+                      </div>}
+                      {condition.kind === "conversation_ai_mode_is" && <label className="mt-2 block text-xs font-medium text-slate-700">AI mode
+                        <select className={fieldClass} value={condition.mode} onChange={(event) => updateCondition({ ...condition, mode: event.target.value as "ai" | "human" })}><option value="ai">AI</option><option value="human">Human</option></select>
+                      </label>}
+                      {condition.kind === "assignee_present" && <label className="mt-2 flex items-center gap-2 text-xs font-medium text-slate-700">
+                        <input type="checkbox" checked={condition.value} onChange={(event) => updateCondition({ ...condition, value: event.target.checked })}/> An assignee is set
+                      </label>}
+                      {condition.kind === "shopify_store_connected" && <p className="mt-2 text-[11px] text-slate-500">Matches when this workspace has an active Shopify store connection.</p>}
+                    </div>;
+                  })}
+                  <BranchActionsEditor
+                    actions={branch.actions}
+                    members={members.data ?? []}
+                    teams={teams.data ?? []}
+                    agents={aiAgents.data?.items ?? []}
+                    fieldClass={fieldClass}
+                    onChange={(actions) => updateDraft((current) => ({
+                      ...current,
+                      branches: (current.branches ?? []).map((item) => item.id === branch.id ? { ...item, actions } : item),
+                    }))}
+                  />
+                </article>;
+              })}
+              {(draft.branches ?? []).length >= 5 && <p className="mt-2 text-[11px] text-indigo-800">This workflow has reached the five-branch limit.</p>}
             </section>
           </div>
 
@@ -1285,6 +1466,10 @@ export function AutomationWorkspace() {
                 <InspectorTest
                   sampleMessage={sampleMessage}
                   setSampleMessage={setSampleMessage}
+                  sampleAiAgentId={sampleAiAgentId}
+                  setSampleAiAgentId={setSampleAiAgentId}
+                  sampleIntegrationConnectionId={sampleIntegrationConnectionId}
+                  setSampleIntegrationConnectionId={setSampleIntegrationConnectionId}
                   sampleTicketPriority={sampleTicketPriority}
                   setSampleTicketPriority={setSampleTicketPriority}
                   sampleTicketStatus={sampleTicketStatus}
@@ -1301,6 +1486,13 @@ export function AutomationWorkspace() {
                   setSampleShopifyConnected={setSampleShopifyConnected}
                   fieldClass={fieldClass}
                   previewResult={previewResult}
+                  branches={draft.branches ?? []}
+                  bots={aiAgents.data?.items ?? []}
+                  connections={integrationConnections.data?.items ?? []}
+                  botOptionsStatus={!canManage ? "restricted" : aiAgents.isPending ? "loading" : aiAgents.isError ? "error" : "ready"}
+                  connectionOptionsStatus={!canManage ? "restricted" : integrationConnections.isPending ? "loading" : integrationConnections.isError ? "error" : "ready"}
+                  onRetryBotOptions={() => void aiAgents.refetch()}
+                  onRetryConnectionOptions={() => void integrationConnections.refetch()}
                   previewPending={preview.isPending}
                   onRunTest={handleTestWorkflow}
                   testDisabled={draftValidation.errors.length > 0 || !sampleMessage.trim()}
@@ -1313,6 +1505,110 @@ export function AutomationWorkspace() {
       </div>
     </div>
   );
+}
+
+function BranchActionsEditor({
+  actions,
+  members,
+  teams,
+  agents,
+  fieldClass,
+  onChange,
+}: {
+  actions: Action[];
+  members: User[];
+  teams: SupportTeam[];
+  agents: AIAgent[];
+  fieldClass: string;
+  onChange: (actions: Action[]) => void;
+}) {
+  const updateAction = (index: number, next: Action) => onChange(actions.map((action, actionIndex) => actionIndex === index ? next : action));
+  const moveAction = (index: number, delta: -1 | 1) => {
+    const targetIndex = index + delta;
+    if (targetIndex < 0 || targetIndex >= actions.length) return;
+    const reordered = [...actions];
+    [reordered[index], reordered[targetIndex]] = [reordered[targetIndex]!, reordered[index]!];
+    onChange(reordered);
+  };
+  const actionNames: Record<Action["kind"], string> = {
+    set_priority: "Set ticket priority",
+    assign_to_user: "Assign to teammate",
+    assign_to_team: "Assign to support team",
+    set_ticket_status: "Set ticket status",
+    set_conversation_ai_mode: "Set conversation AI mode",
+    route_to_ai_bot: "Route to AI bot",
+    restore_widget_bot_routing: "Restore widget bot routing",
+    add_internal_note: "Add internal note",
+    require_human_approval: "Require Owner/Admin approval",
+    lookup_shopify_order: "Look up Shopify order (read-only)",
+    search_shopify_catalog: "Search Shopify catalog (read-only)",
+    request_commerce_approval: "Request cancellation review",
+  };
+
+  return <section aria-label="Branch actions" className="space-y-2 rounded-md border border-indigo-100 bg-indigo-50/40 p-2">
+    <div className="flex items-center justify-between gap-2">
+      <p className="text-xs font-semibold text-slate-800">Then run these actions, in order</p>
+      <Button type="button" size="sm" variant="secondary" disabled={actions.length >= 10} onClick={() => onChange([...actions, defaultActionForKind("add_internal_note")])}>Add action</Button>
+    </div>
+    {actions.map((action, index) => <div key={`${index}-${action.kind}`} className="space-y-2 rounded-md border border-slate-200 bg-white p-2">
+      <div className="flex items-end gap-1.5">
+        <label className="min-w-0 flex-1 text-xs font-medium text-slate-700">Action {index + 1}
+          <select className={fieldClass} value={action.kind} onChange={(event) => updateAction(index, defaultActionForKind(event.target.value as Action["kind"]))}>
+            {(Object.keys(actionNames) as Action["kind"][]).map((kind) => <option key={kind} value={kind}>{actionNames[kind]}</option>)}
+          </select>
+        </label>
+        <button type="button" className="rounded px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 disabled:text-slate-300" aria-label={`Move branch action ${index + 1} up`} disabled={index === 0} onClick={() => moveAction(index, -1)}>↑</button>
+        <button type="button" className="rounded px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 disabled:text-slate-300" aria-label={`Move branch action ${index + 1} down`} disabled={index === actions.length - 1} onClick={() => moveAction(index, 1)}>↓</button>
+        <button type="button" className="rounded px-2 py-1 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:text-slate-300" aria-label={`Remove branch action ${index + 1}`} disabled={actions.length <= 1} onClick={() => onChange(actions.filter((_, actionIndex) => actionIndex !== index))}>Remove</button>
+      </div>
+      {action.kind === "set_priority" && <>
+        <label className="block text-xs font-medium text-slate-700">Priority
+          <select className={fieldClass} value={action.value} onChange={(event) => updateAction(index, { ...action, value: event.target.value as typeof action.value })}><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option></select>
+        </label>
+        <label className="flex items-center gap-2 text-xs text-slate-700"><input type="checkbox" checked={action.only_raise} onChange={(event) => updateAction(index, { ...action, only_raise: event.target.checked })}/> Only raise priority</label>
+      </>}
+      {action.kind === "assign_to_user" && <>
+        <label className="block text-xs font-medium text-slate-700">Teammate
+          <select className={fieldClass} value={action.user_id} onChange={(event) => updateAction(index, { ...action, user_id: event.target.value })}><option value="">Choose teammate</option>{members.filter((member) => member.is_active && ["owner", "admin", "agent"].includes(member.role)).map((member) => <option key={member.id} value={member.id}>{member.full_name} · {member.role}</option>)}</select>
+        </label>
+        <label className="flex items-center gap-2 text-xs text-slate-700"><input type="checkbox" checked={action.only_if_unassigned} onChange={(event) => updateAction(index, { ...action, only_if_unassigned: event.target.checked })}/> Only if unassigned</label>
+      </>}
+      {action.kind === "assign_to_team" && <>
+        <label className="block text-xs font-medium text-slate-700">Support team
+          <select className={fieldClass} value={action.team_id} onChange={(event) => updateAction(index, { ...action, team_id: event.target.value })}><option value="">Choose team</option>{teams.filter((team) => team.is_active).map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</select>
+        </label>
+        <label className="flex items-center gap-2 text-xs text-slate-700"><input type="checkbox" checked={action.only_if_unassigned} onChange={(event) => updateAction(index, { ...action, only_if_unassigned: event.target.checked })}/> Only if no team is assigned</label>
+      </>}
+      {action.kind === "set_ticket_status" && <label className="block text-xs font-medium text-slate-700">Status
+        <select className={fieldClass} value={action.value} onChange={(event) => updateAction(index, { ...action, value: event.target.value as typeof action.value })}><option value="open">Open</option><option value="pending">Pending</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select>
+      </label>}
+      {action.kind === "set_conversation_ai_mode" && <label className="block text-xs font-medium text-slate-700">Conversation mode
+        <select className={fieldClass} value={action.mode} onChange={(event) => updateAction(index, { ...action, mode: event.target.value as typeof action.mode })}><option value="ai">AI</option><option value="human">Human</option></select>
+      </label>}
+      {action.kind === "route_to_ai_bot" && <label className="block text-xs font-medium text-slate-700">AI bot
+        <select className={fieldClass} value={action.ai_agent_id} onChange={(event) => updateAction(index, { ...action, ai_agent_id: event.target.value })}><option value="">Choose active AI bot</option>{agents.filter((agent) => agent.status === "active").map((agent) => <option key={agent.id} value={agent.id}>{agent.name}{agent.is_default ? " · default" : ""}</option>)}</select>
+      </label>}
+      {action.kind === "add_internal_note" && <label className="block text-xs font-medium text-slate-700">Private internal note
+        <textarea className={`${fieldClass} min-h-16`} maxLength={4000} value={action.body} onChange={(event) => updateAction(index, { ...action, body: event.target.value })}/>
+      </label>}
+      {action.kind === "require_human_approval" && <>
+        <label className="block text-xs font-medium text-slate-700">Approval summary<input className={fieldClass} maxLength={200} value={action.summary} onChange={(event) => updateAction(index, { ...action, summary: event.target.value })}/></label>
+        <label className="block text-xs font-medium text-slate-700">Reviewer details<textarea className={`${fieldClass} min-h-14`} maxLength={2000} value={action.detail ?? ""} onChange={(event) => { const detail = event.target.value.trim(); updateAction(index, { ...action, detail: detail || null }); }}/></label>
+      </>}
+      {action.kind === "lookup_shopify_order" && <label className="block text-xs font-medium text-slate-700">Order number pattern<input className={fieldClass} value={action.order_number_regex} onChange={(event) => updateAction(index, { ...action, order_number_regex: event.target.value })}/></label>}
+      {action.kind === "search_shopify_catalog" && <>
+        <label className="block text-xs font-medium text-slate-700">Search pattern (optional)<input className={fieldClass} value={action.query_regex ?? ""} onChange={(event) => updateAction(index, { ...action, query_regex: event.target.value || null })}/></label>
+        <label className="block text-xs font-medium text-slate-700">Maximum results<input className={fieldClass} type="number" min={1} max={10} value={action.max_results} onChange={(event) => { const count = Number(event.target.value); if (Number.isInteger(count) && count >= 1 && count <= 10) updateAction(index, { ...action, max_results: count }); }}/></label>
+      </>}
+      {action.kind === "request_commerce_approval" && <>
+        <p className="rounded-md bg-amber-50 p-2 text-[11px] leading-4 text-amber-900">Creates a review request only; cancellation is not executed automatically.</p>
+        <label className="block text-xs font-medium text-slate-700">Request summary<input className={fieldClass} maxLength={200} value={action.summary} onChange={(event) => updateAction(index, { ...action, summary: event.target.value })}/></label>
+        <label className="block text-xs font-medium text-slate-700">Order number pattern<input className={fieldClass} value={action.order_number_regex} onChange={(event) => updateAction(index, { ...action, order_number_regex: event.target.value })}/></label>
+        <label className="block text-xs font-medium text-slate-700">Additional details<textarea className={`${fieldClass} min-h-14`} maxLength={2000} value={action.detail ?? ""} onChange={(event) => { const detail = event.target.value.trim(); updateAction(index, { ...action, detail: detail || null }); }}/></label>
+      </>}
+      {action.kind === "restore_widget_bot_routing" && <p className="text-[11px] text-slate-500">Future widget messages use configured automatic bot routing.</p>}
+    </div>)}
+  </section>;
 }
 
 function InspectorConfigure({
@@ -1348,11 +1644,30 @@ function InspectorConfigure({
       {selectedStep?.type === "trigger" && (
         <div data-automation-step="trigger">
           <p className="text-xs font-semibold uppercase text-teal-700">Trigger</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">Incoming customer message</p>
-          <p className="mt-2 text-xs text-slate-500">
-            Channel filters and “first message only” apply before conditions. Messaging integrations reuse this trigger with
-            a channel filter.
-          </p>
+          <label className="mt-2 block text-sm font-medium text-slate-700">
+            Start workflow when
+            <select
+              value={draft.trigger.kind}
+              onChange={(event) => updateDraft({
+                trigger: event.target.value === "conversation_started"
+                  ? { kind: "conversation_started" }
+                  : createEmptyCustomerMessageTrigger(),
+              })}
+              className={fieldClass}
+            >
+              <option value="customer_message_received">A customer sends a message</option>
+              <option value="conversation_started">A conversation receives its first message</option>
+            </select>
+          </label>
+          {draft.trigger.kind === "conversation_started" ? (
+            <p className="mt-2 text-xs text-slate-500">
+              Runs once when the first customer message is saved. Later messages in the same conversation do not start another run.
+            </p>
+          ) : (
+            <>
+              <p className="mt-2 text-xs text-slate-500">
+                Channel and bot filters apply before conditions. Enable “first message only” to run once per conversation.
+              </p>
           <label className="mt-3 block text-sm font-medium text-slate-700">
             Channel filter (optional)
             <input
@@ -1413,6 +1728,8 @@ function InspectorConfigure({
               placeholder="e.g. WhatsApp connection id"
             />
           </label>
+            </>
+          )}
           {showValidation && trigIssues.map((m) => (
             <p key={m} role="alert" className="mt-2 text-xs text-red-700">
               {m}
@@ -2136,6 +2453,10 @@ function InspectorConfigure({
 function InspectorTest({
   sampleMessage,
   setSampleMessage,
+  sampleAiAgentId,
+  setSampleAiAgentId,
+  sampleIntegrationConnectionId,
+  setSampleIntegrationConnectionId,
   sampleTicketPriority,
   setSampleTicketPriority,
   sampleTicketStatus,
@@ -2152,6 +2473,13 @@ function InspectorTest({
   setSampleShopifyConnected,
   fieldClass,
   previewResult,
+  branches,
+  bots,
+  connections,
+  botOptionsStatus,
+  connectionOptionsStatus,
+  onRetryBotOptions,
+  onRetryConnectionOptions,
   previewPending,
   onRunTest,
   testDisabled,
@@ -2159,6 +2487,10 @@ function InspectorTest({
 }: {
   sampleMessage: string;
   setSampleMessage: (v: string) => void;
+  sampleAiAgentId: string;
+  setSampleAiAgentId: (v: string) => void;
+  sampleIntegrationConnectionId: string;
+  setSampleIntegrationConnectionId: (v: string) => void;
   sampleTicketPriority: "" | "low" | "normal" | "high" | "urgent";
   setSampleTicketPriority: (v: "" | "low" | "normal" | "high" | "urgent") => void;
   sampleTicketStatus: string;
@@ -2175,11 +2507,29 @@ function InspectorTest({
   setSampleShopifyConnected: (v: boolean | null) => void;
   fieldClass: string;
   previewResult: AutomationPreview | null;
+  branches: NonNullable<WorkflowDraft["branches"]>;
+  bots: AIAgent[];
+  connections: IntegrationConnection[];
+  botOptionsStatus: "restricted" | "loading" | "error" | "ready";
+  connectionOptionsStatus: "restricted" | "loading" | "error" | "ready";
+  onRetryBotOptions: () => void;
+  onRetryConnectionOptions: () => void;
   previewPending: boolean;
   onRunTest: () => void;
   testDisabled: boolean;
   missingSample: boolean;
 }) {
+  const selectedBranchId = previewResult?.selected_branch?.startsWith("branch:")
+    ? previewResult.selected_branch.slice("branch:".length)
+    : null;
+  const selectedPathLabel = previewResult?.selected_branch === "match"
+    ? "Main condition path"
+    : previewResult?.selected_branch === "no_match"
+      ? "No-match path"
+      : selectedBranchId
+        ? branches.find((branch) => branch.id === selectedBranchId)?.name ?? "Selected condition branch"
+        : null;
+
   return (
     <div className="space-y-4">
       <p className="text-sm text-slate-600">
@@ -2216,6 +2566,32 @@ function InspectorTest({
           placeholder="Customer message text"
         />
       </label>
+      <div className="space-y-1.5">
+        <label className="block text-sm font-medium text-slate-700">
+          Sample AI bot
+          <select aria-label="Sample AI bot" value={sampleAiAgentId} onChange={(event) => setSampleAiAgentId(event.target.value)} className={fieldClass} disabled={botOptionsStatus !== "ready"}>
+            <option value="">Use the trigger bot, if configured</option>
+            {bots.filter((bot) => bot.status === "active").map((bot) => <option key={bot.id} value={bot.id}>{bot.name}</option>)}
+          </select>
+        </label>
+        {botOptionsStatus === "loading" && <span role="status" className="block text-xs font-normal text-slate-500">Loading active workspace bots…</span>}
+        {botOptionsStatus === "restricted" && <span className="block text-xs font-normal text-slate-500">Only Owners and Admins can select a sample bot; the configured trigger context will be used.</span>}
+        {botOptionsStatus === "error" && <span role="alert" className="flex items-center justify-between gap-2 text-xs font-normal text-rose-700"><span>Bot options could not be loaded; this preview will use trigger context.</span><button type="button" className="shrink-0 font-semibold underline" onClick={onRetryBotOptions}>Retry</button></span>}
+        {botOptionsStatus === "ready" && bots.filter((bot) => bot.status === "active").length === 0 && <span className="block text-xs font-normal text-slate-500">No active bots are available in this workspace.</span>}
+      </div>
+      <div className="space-y-1.5">
+        <label className="block text-sm font-medium text-slate-700">
+          Sample connected channel
+          <select aria-label="Sample connected channel" value={sampleIntegrationConnectionId} onChange={(event) => setSampleIntegrationConnectionId(event.target.value)} className={fieldClass} disabled={connectionOptionsStatus !== "ready"}>
+            <option value="">Use the trigger connection, if configured</option>
+            {connections.filter((connection) => connection.status === "connected").map((connection) => <option key={connection.id} value={connection.id}>{connection.display_name} · {connection.provider_id}</option>)}
+          </select>
+        </label>
+        {connectionOptionsStatus === "loading" && <span role="status" className="block text-xs font-normal text-slate-500">Loading connected integrations…</span>}
+        {connectionOptionsStatus === "restricted" && <span className="block text-xs font-normal text-slate-500">Only Owners and Admins can select a sample integration; the configured trigger context will be used.</span>}
+        {connectionOptionsStatus === "error" && <span role="alert" className="flex items-center justify-between gap-2 text-xs font-normal text-rose-700"><span>Integration options could not be loaded; this preview will use trigger context.</span><button type="button" className="shrink-0 font-semibold underline" onClick={onRetryConnectionOptions}>Retry</button></span>}
+        {connectionOptionsStatus === "ready" && connections.filter((connection) => connection.status === "connected").length === 0 && <span className="block text-xs font-normal text-slate-500">No connected integrations are available in this workspace.</span>}
+      </div>
       <label className="block text-sm font-medium text-slate-700">
         Sample ticket priority
         <select
@@ -2318,8 +2694,17 @@ function InspectorTest({
         >
           <p className="font-semibold">
             {previewResult.matches ? "Workflow would match" : "Workflow would not match"}
+            {previewResult.assumptions?.length ? " under these assumptions" : ""}
           </p>
-          {previewResult.selected_branch && <p className="mt-1 text-xs">Selected path: {previewResult.selected_branch === "no_match" ? "conditions did not match" : "conditions matched"}.</p>}
+          {previewResult.assumptions?.length > 0 && (
+            <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-950">
+              <p className="font-semibold">Preview assumptions</p>
+              <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                {previewResult.assumptions.map((assumption) => <li key={assumption}>{assumption}</li>)}
+              </ul>
+            </div>
+          )}
+          {selectedPathLabel && <p className="mt-1 text-xs">Selected path: <span className="font-semibold">{selectedPathLabel}</span>.</p>}
           <p className="mt-1 text-xs">
             Conditions ({previewResult.condition_mode === "all" ? "match all" : "match any"}):
           </p>

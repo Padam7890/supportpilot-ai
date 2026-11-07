@@ -20,6 +20,7 @@ export const EMPTY_DRAFT: WorkflowDraft = {
   conditionMode: "all",
   conditions: [],
   actions: [defaultActionNode()],
+  branches: [],
   elseNote: "",
   canvasLayout: defaultCanvasLayout(0, 1),
 };
@@ -28,22 +29,25 @@ export const EMPTY_DRAFT: WorkflowDraft = {
 export function workflowDraftDefinition(draft: WorkflowDraft): WorkflowDefinition {
   const trig = draft.trigger;
   return {
-    trigger: {
-      kind: "customer_message_received",
-      channel: trig.channel,
-      first_message_only: trig.first_message_only,
-      ai_agent_id:
-        trig.ai_agent_id != null && String(trig.ai_agent_id).trim() !== ""
-          ? String(trig.ai_agent_id).trim()
-          : null,
-      integration_connection_id:
-        trig.integration_connection_id != null && String(trig.integration_connection_id).trim() !== ""
-          ? String(trig.integration_connection_id).trim()
-          : null,
-    },
+    trigger: trig.kind === "conversation_started"
+      ? { kind: "conversation_started" }
+      : {
+          kind: "customer_message_received",
+          channel: trig.channel,
+          first_message_only: trig.first_message_only,
+          ai_agent_id:
+            trig.ai_agent_id != null && String(trig.ai_agent_id).trim() !== ""
+              ? String(trig.ai_agent_id).trim()
+              : null,
+          integration_connection_id:
+            trig.integration_connection_id != null && String(trig.integration_connection_id).trim() !== ""
+              ? String(trig.integration_connection_id).trim()
+              : null,
+        },
     condition_mode: draft.conditionMode,
     conditions: draft.conditions,
     actions: draft.actions,
+    branches: draft.branches ?? [],
     else_actions: draft.elseNote?.trim()
       ? [{ kind: "add_internal_note", body: draft.elseNote.trim() }]
       : [],
@@ -60,6 +64,9 @@ export function workflowDraftPayload(draft: WorkflowDraft) {
 }
 
 function normalizeDefinitionTrigger(raw: WorkflowDefinition["trigger"]): WorkflowDraft["trigger"] {
+  if (typeof raw === "object" && raw !== null && "kind" in raw && raw.kind === "conversation_started") {
+    return { kind: "conversation_started" };
+  }
   if (typeof raw === "object" && raw !== null && "kind" in raw && raw.kind === "customer_message_received") {
     return {
       kind: "customer_message_received",
@@ -79,11 +86,13 @@ export function workflowDraftFrom(workflow: AutomationWorkflow): WorkflowDraft {
   const conditionMode = def.condition_mode ?? "all";
   const conditions = [...(def.conditions ?? [])];
   const actions = def.actions?.length ? [...def.actions] : [defaultActionNode()];
+  const branches = [...(def.branches ?? [])];
   const elseNote = def.else_actions?.[0]?.body ?? "";
   const layout = fitCanvasLayout(
     workflow.canvas_layout ?? defaultCanvasLayout(conditions.length, actions.length),
     conditions.length,
     actions.length,
+    branches.map((branch) => branch.id),
   );
 
   return {
@@ -93,15 +102,17 @@ export function workflowDraftFrom(workflow: AutomationWorkflow): WorkflowDraft {
     conditionMode,
     conditions,
     actions,
+    branches,
     elseNote,
     canvasLayout: layout,
   };
 }
 
-export function issueKeyForStep(step: { type: string; index?: number }): string {
+export function issueKeyForStep(step: { type: string; index?: number; branchId?: string }): string {
   if (step.type === "trigger") return "trigger";
   if (step.type === "condition" && typeof step.index === "number") return `condition-${step.index}`;
   if (step.type === "action" && typeof step.index === "number") return `action-${step.index}`;
+  if (step.type === "branch" && typeof step.branchId === "string") return `branch-${step.branchId}`;
   return "trigger";
 }
 

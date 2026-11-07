@@ -211,7 +211,31 @@ Action = Annotated[
 ]
 
 
+class ConditionalWorkflowBranch(StrictModel):
+    """One ordered rule path, evaluated after the primary condition group."""
+
+    id: str = Field(min_length=1, max_length=40, pattern=r"^[a-z0-9][a-z0-9_-]*$")
+    name: str = Field(min_length=2, max_length=80)
+    condition_mode: Literal["all", "any"] = "all"
+    conditions: list[Condition] = Field(min_length=1, max_length=10)
+    actions: list[Action] = Field(min_length=1, max_length=10)
+
+    @field_validator("name")
+    @classmethod
+    def normalize_branch_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 2:
+            raise ValueError("Branch name must contain at least two non-space characters")
+        return normalized
+
+
 class CanvasPosition(StrictModel):
+    x: int = Field(ge=0, le=_CANVAS_X_MAX)
+    y: int = Field(ge=0, le=1800)
+
+
+class WorkflowBranchCanvasPosition(StrictModel):
+    branch_id: str = Field(min_length=1, max_length=40, pattern=r"^[a-z0-9][a-z0-9_-]*$")
     x: int = Field(ge=0, le=_CANVAS_X_MAX)
     y: int = Field(ge=0, le=1800)
 
@@ -221,6 +245,7 @@ class WorkflowCanvasLayout(StrictModel):
     conditions: list[CanvasPosition] = Field(default_factory=list, max_length=10)
     actions: list[CanvasPosition] = Field(default_factory=list, max_length=10)
     else_action: CanvasPosition | None = None
+    branch_nodes: list[WorkflowBranchCanvasPosition] = Field(default_factory=list, max_length=5)
 
     @model_validator(mode="before")
     @classmethod
@@ -230,12 +255,51 @@ class WorkflowCanvasLayout(StrictModel):
         return data
 
 
-def default_canvas_layout(condition_count: int, action_count: int) -> WorkflowCanvasLayout:
+def default_canvas_layout(
+    condition_count: int,
+    action_count: int,
+    branch_ids: list[str] | None = None,
+) -> WorkflowCanvasLayout:
     trigger_pos = CanvasPosition(x=400, y=48)
     conditions = [CanvasPosition(x=370, y=154 + index * 132) for index in range(condition_count)]
     action_y_base = 180 + condition_count * 132
     actions = [CanvasPosition(x=370, y=action_y_base + index * 132) for index in range(action_count)]
-    return WorkflowCanvasLayout(trigger=trigger_pos, conditions=conditions, actions=actions)
+    ids = branch_ids or []
+    branch_width = 220
+    branch_gap = 12
+    start_x = max(16, (1200 - len(ids) * branch_width - max(0, len(ids) - 1) * branch_gap) // 2)
+    branch_y = 48 + 148 * (1 + condition_count + action_count) + 180
+    branch_nodes = [
+        WorkflowBranchCanvasPosition(
+            branch_id=branch_id,
+            x=start_x + index * (branch_width + branch_gap),
+            y=min(1800, branch_y),
+        )
+        for index, branch_id in enumerate(ids)
+    ]
+    return WorkflowCanvasLayout(
+        trigger=trigger_pos,
+        conditions=conditions,
+        actions=actions,
+        branch_nodes=branch_nodes,
+    )
+
+
+def fit_canvas_layout(
+    layout: WorkflowCanvasLayout,
+    condition_count: int,
+    action_count: int,
+    branch_ids: list[str],
+) -> WorkflowCanvasLayout:
+    defaults = default_canvas_layout(condition_count, action_count, branch_ids)
+    current = {node.branch_id: node for node in layout.branch_nodes}
+    return WorkflowCanvasLayout(
+        trigger=layout.trigger,
+        conditions=(layout.conditions + defaults.conditions)[0:condition_count],
+        actions=(layout.actions + defaults.actions)[0:action_count],
+        else_action=layout.else_action,
+        branch_nodes=[current.get(branch_id, default) for branch_id, default in zip(branch_ids, defaults.branch_nodes)],
+    )
 
 
 class WorkflowDefinition(StrictModel):
@@ -243,12 +307,18 @@ class WorkflowDefinition(StrictModel):
     condition_mode: Literal["all", "any"] = "all"
     conditions: list[Condition] = Field(default_factory=list, max_length=10)
     actions: list[Action] = Field(min_length=1, max_length=10)
+    branches: list[ConditionalWorkflowBranch] = Field(default_factory=list, max_length=5)
     else_actions: list[AddInternalNoteAction] = Field(default_factory=list, max_length=1)
 
     @model_validator(mode="after")
     def validate_else_branch(self):
         if self.else_actions and not self.conditions:
             raise ValueError("A no-match branch requires at least one condition")
+        if self.branches and not self.conditions:
+            raise ValueError("Conditional branches require a primary condition group")
+        branch_ids = [branch.id for branch in self.branches]
+        if len(branch_ids) != len(set(branch_ids)):
+            raise ValueError("Conditional branch IDs must be unique")
         return self
 
     @model_validator(mode="before")
@@ -290,6 +360,12 @@ class WorkflowCreate(StrictModel):
             raise ValueError("Canvas layout must include one position for each condition")
         if len(self.canvas_layout.actions) != len(self.definition.actions):
             raise ValueError("Canvas layout must include one position for each action")
+        branch_ids = [branch.id for branch in self.definition.branches]
+        layout_branch_ids = [node.branch_id for node in self.canvas_layout.branch_nodes]
+        if len(layout_branch_ids) != len(set(layout_branch_ids)):
+            raise ValueError("Canvas layout branch IDs must be unique")
+        if layout_branch_ids and set(layout_branch_ids) != set(branch_ids):
+            raise ValueError("Canvas layout must reference the workflow's branch IDs")
         return self
 
 
@@ -313,6 +389,8 @@ class WorkflowUpdate(StrictModel):
 class AutomationPreviewRequest(StrictModel):
     definition: WorkflowDefinition
     sample_message: str = Field(min_length=1, max_length=5000)
+    sample_ai_agent_id: UUID | None = None
+    sample_integration_connection_id: UUID | None = None
     sample_ticket_priority: Literal["low", "normal", "high", "urgent"] | None = None
     sample_ticket_status: str | None = Field(default=None, max_length=40)
     sample_channel: str | None = Field(default=None, max_length=40)
@@ -355,7 +433,8 @@ class AutomationPreviewOut(StrictModel):
     conditions: list[AutomationPreviewConditionOut]
     planned_actions: list[AutomationPreviewActionOut]
     steps: list[AutomationPreviewStepOut]
-    selected_branch: Literal["match", "no_match"] | None = None
+    selected_branch: str | None = None
+    assumptions: list[str] = Field(default_factory=list, max_length=12)
 
 
 class WorkflowOut(StrictModel):

@@ -27,6 +27,7 @@ from app.schemas.knowledge import (
     KnowledgeDocumentMove,
     KnowledgeDocumentOut,
     KnowledgeDocumentPage,
+    KnowledgeSourcePreviewOut,
     KnowledgeSearchPage,
     KnowledgeSearchResult,
 )
@@ -36,6 +37,7 @@ from app.workers.domain.ingestion_errors import requires_replacement
 router = APIRouter(prefix="/knowledge/documents", tags=["knowledge"], responses=COMMON_ERROR_RESPONSES)
 INGESTION_HISTORY_LIMIT = 20
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+SOURCE_PREVIEW_MAX_BYTES = 32 * 1024
 ALLOWED_TYPES = {".pdf": "application/pdf", ".txt": "text/plain", ".md": "text/markdown"}
 
 
@@ -302,6 +304,47 @@ async def get_document(
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found")
     return await document_out(db, document)
+
+
+@router.get("/{document_id}/source-preview", response_model=KnowledgeSourcePreviewOut)
+async def preview_document_source(
+    document_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> KnowledgeSourcePreviewOut:
+    document = await db.scalar(
+        select(KnowledgeDocument).where(
+            KnowledgeDocument.id == document_id,
+            KnowledgeDocument.organization_id == user.organization_id,
+            KnowledgeDocument.deleted_at.is_(None),
+        )
+    )
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if document.content_type not in {"text/plain", "text/markdown"}:
+        raise HTTPException(status_code=415, detail="Source preview is available for text and Markdown documents")
+
+    preview_bytes = await db.scalar(
+        select(
+            func.substring(
+                KnowledgeDocumentSource.content,
+                1,
+                SOURCE_PREVIEW_MAX_BYTES + 1,
+            )
+        ).where(
+            KnowledgeDocumentSource.organization_id == user.organization_id,
+            KnowledgeDocumentSource.document_id == document.id,
+        )
+    )
+    if preview_bytes is None:
+        raise HTTPException(status_code=410, detail="The retained source file is no longer available")
+    truncated = len(preview_bytes) > SOURCE_PREVIEW_MAX_BYTES
+    content = bytes(preview_bytes[:SOURCE_PREVIEW_MAX_BYTES]).decode("utf-8", errors="replace")
+    return KnowledgeSourcePreviewOut(
+        content=content,
+        truncated=truncated,
+        max_bytes=SOURCE_PREVIEW_MAX_BYTES,
+    )
 
 
 @router.put("/{document_id}/knowledge-base", response_model=KnowledgeDocumentOut)

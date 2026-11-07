@@ -6,12 +6,12 @@ export type WidgetRoutingPreview = components["schemas"]["WidgetRoutingPreviewOu
 export const widgetConfigKey = ["storefront-widget-config"] as const;
 
 export const getWidgetConfig = () => api<WidgetConfig | null>("/integrations/widget");
-export const createWidgetConfig = (config: Pick<WidgetConfig, "allowed_origins" | "ai_enabled" | "ai_reply_mode"> & { ai_agent_id?: string; ai_agent_ids?: string[] }) =>
+export const createWidgetConfig = (config: Pick<WidgetConfig, "allowed_origins" | "ai_enabled" | "ai_reply_mode" | "assistant_name" | "welcome_message"> & { ai_agent_id?: string; ai_agent_ids?: string[] }) =>
   api<WidgetConfig>("/integrations/widget", {
     method: "POST",
     body: JSON.stringify({ ...config, collect_contact: true }),
   });
-export const updateWidgetConfig = (config: Pick<WidgetConfig, "allowed_origins" | "enabled" | "collect_contact" | "ai_enabled" | "ai_reply_mode"> & { ai_agent_id?: string; ai_agent_ids?: string[] }) =>
+export const updateWidgetConfig = (config: Pick<WidgetConfig, "allowed_origins" | "enabled" | "collect_contact" | "ai_enabled" | "ai_reply_mode" | "assistant_name" | "welcome_message"> & { ai_agent_id?: string; ai_agent_ids?: string[] }) =>
   api<WidgetConfig>("/integrations/widget", {
     method: "PUT",
     body: JSON.stringify(config),

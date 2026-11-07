@@ -8,6 +8,8 @@ const NODE_WIDTH = WORKFLOW_CANVAS.nodeWidth;
 const NODE_X_MAX = CANVAS_WIDTH - NODE_WIDTH;
 const NODE_Y_MAX = 1800;
 const CANVAS_BOTTOM_PADDING = 120;
+const BRANCH_NODE_WIDTH = 220;
+const BRANCH_NODE_HEIGHT = 152;
 /** Grid lines for the scroll region (same tint as node cards’ canvas area). */
 const CANVAS_GRID_BG =
   "linear-gradient(#e2e8f0 1px, transparent 1px), linear-gradient(90deg, #e2e8f0 1px, transparent 1px)";
@@ -27,12 +29,16 @@ type CanvasNode =
   | { kind: "trigger" }
   | { kind: "condition"; index: number }
   | { kind: "action"; index: number }
+  | { kind: "branch"; branchId: string; index: number; count: number }
   | { kind: "else_action" };
 
 type DragState = { node: CanvasNode; clientX: number; clientY: number; initialLayout: WorkflowCanvasLayout };
 
 function connectorNodeKey(node: CanvasNode): string {
-  return node.kind === "trigger" ? "trigger" : node.kind === "else_action" ? "else-action" : `${node.kind}-${node.index}`;
+  if (node.kind === "trigger") return "trigger";
+  if (node.kind === "else_action") return "else-action";
+  if (node.kind === "branch") return `branch-${node.branchId}`;
+  return `${node.kind}-${node.index}`;
 }
 
 function isSameConnectorOpen(open: CanvasNode | null, node: CanvasNode): boolean {
@@ -41,6 +47,7 @@ function isSameConnectorOpen(open: CanvasNode | null, node: CanvasNode): boolean
   if (open.kind === "condition" && node.kind === "condition") return open.index === node.index;
   if (open.kind === "action" && node.kind === "action") return open.index === node.index;
   if (open.kind === "else_action" && node.kind === "else_action") return true;
+  if (open.kind === "branch" && node.kind === "branch") return open.branchId === node.branchId;
   return false;
 }
 
@@ -61,6 +68,12 @@ function nodePosition(layout: WorkflowCanvasLayout, node: CanvasNode): CanvasPos
     const lastY = 48 + WORKFLOW_CANVAS.verticalStep * (1 + layout.conditions.length);
     return layout.else_action ?? { x: 32, y: lastY };
   }
+  if (node.kind === "branch") {
+    const saved = layout.branch_nodes?.find((item) => item.branch_id === node.branchId);
+    const fallbackIds = Array.from({ length: node.count }, (_, index) => index === node.index ? node.branchId : `branch-${index}`);
+    const fallback = defaultCanvasLayout(conds.length, acts.length, fallbackIds).branch_nodes?.[node.index];
+    return saved ?? (fallback ? { x: fallback.x, y: fallback.y } : { x: fallbackX, y: 500 });
+  }
   return layout.trigger;
 }
 
@@ -75,13 +88,20 @@ function withNodePosition(layout: WorkflowCanvasLayout, node: CanvasNode, positi
     actions[node.index] = position;
     return { ...layout, actions };
   }
+  if (node.kind === "branch") {
+    const branch_nodes = [...(layout.branch_nodes ?? [])];
+    const index = branch_nodes.findIndex((item) => item.branch_id === node.branchId);
+    if (index >= 0) branch_nodes[index] = { ...branch_nodes[index]!, ...position };
+    else branch_nodes.push({ branch_id: node.branchId, ...position });
+    return { ...layout, branch_nodes };
+  }
   if (node.kind === "else_action") return { ...layout, else_action: position };
   return { ...layout, trigger: position };
 }
 
-function boundedPosition(position: CanvasPosition): CanvasPosition {
+function boundedPosition(position: CanvasPosition, node: CanvasNode): CanvasPosition {
   return {
-    x: Math.max(0, Math.min(NODE_X_MAX, Math.round(position.x))),
+    x: Math.max(0, Math.min(node.kind === "branch" ? CANVAS_WIDTH - BRANCH_NODE_WIDTH : NODE_X_MAX, Math.round(position.x))),
     y: Math.max(0, Math.min(NODE_Y_MAX, Math.round(position.y))),
   };
 }
@@ -95,7 +115,11 @@ function stepMatches(selected: DraftStep | null, node: CanvasNode): boolean {
 }
 
 function issueClass(issues: Set<string>, node: CanvasNode) {
-  const key = node.kind === "trigger" ? "trigger" : `${node.kind}-${node.index}`;
+  const key = node.kind === "trigger"
+    ? "trigger"
+    : node.kind === "branch"
+      ? `branch-${node.branchId}`
+      : `${node.kind}-${node.index}`;
   return issues.has(key) ? "border-red-300 ring-1 ring-red-200" : "";
 }
 
@@ -188,6 +212,7 @@ export function AutomationNodeCanvas({
   onRemoveAction,
   onMoveCondition,
   onMoveAction,
+  onSelectBranch,
 }: {
   draft: WorkflowDraft;
   canvasLayout: WorkflowCanvasLayout;
@@ -207,6 +232,7 @@ export function AutomationNodeCanvas({
   onRemoveAction: (index: number) => void;
   onMoveCondition: (index: number, delta: -1 | 1) => void;
   onMoveAction: (index: number, delta: -1 | 1) => void;
+  onSelectBranch: (branchId: string) => void;
 }) {
   const [zoom, setZoom] = useState(1);
   const [openAddStepFor, setOpenAddStepFor] = useState<CanvasNode | null>(null);
@@ -260,6 +286,7 @@ export function AutomationNodeCanvas({
       || drag.node.kind !== node.kind
       || (node.kind === "condition" && drag.node.kind === "condition" && drag.node.index !== node.index)
       || (node.kind === "action" && drag.node.kind === "action" && drag.node.index !== node.index)
+      || (node.kind === "branch" && drag.node.kind === "branch" && drag.node.branchId !== node.branchId)
     ) {
       return;
     }
@@ -268,7 +295,7 @@ export function AutomationNodeCanvas({
     const nextPosition = boundedPosition({
       x: initial.x + (event.clientX - drag.clientX) / scale,
       y: initial.y + (event.clientY - drag.clientY) / scale,
-    });
+    }, node);
     const nextLayout = withNodePosition(drag.initialLayout, node, nextPosition);
     layoutRef.current = nextLayout;
     onLayoutChange(nextLayout);
@@ -300,7 +327,21 @@ export function AutomationNodeCanvas({
     commitLayout(withNodePosition(layoutRef.current, node, boundedPosition({
       x: current.x + direction[0],
       y: current.y + direction[1],
-    })));
+    }, node)));
+  }
+
+  function arrangeNodes() {
+    const branchIds = (draft.branches ?? []).map((branch) => branch.id);
+    const arranged = defaultCanvasLayout(draft.conditions.length, draft.actions.length, branchIds);
+    if (draft.elseNote) {
+      const branchRowY = arranged.branch_nodes?.[0]?.y;
+      const primaryFlowEnd = 48 + WORKFLOW_CANVAS.verticalStep * (1 + draft.conditions.length + draft.actions.length);
+      arranged.else_action = {
+        x: 24,
+        y: Math.min(NODE_Y_MAX, branchRowY === undefined ? primaryFlowEnd + 32 : branchRowY + BRANCH_NODE_HEIGHT + 24),
+      };
+    }
+    commitLayout(arranged);
   }
 
   function positionStyle(node: CanvasNode) {
@@ -331,8 +372,7 @@ export function AutomationNodeCanvas({
   }
 
   function nodeHeight(node: CanvasNode) {
-    void node;
-    return canvasNodeHeight;
+    return node.kind === "branch" ? BRANCH_NODE_HEIGHT : canvasNodeHeight;
   }
 
   const orderedNodes: CanvasNode[] = [
@@ -353,17 +393,50 @@ export function AutomationNodeCanvas({
 
   const canvasHeight = Math.max(560, ...orderedNodes.map((node) => nodePosition(canvasLayout, node).y + CANVAS_BOTTOM_PADDING));
   const elseActionNode: CanvasNode = { kind: "else_action" };
-  const contentHeight = draft.elseNote
-    ? Math.max(canvasHeight, nodePosition(canvasLayout, elseActionNode).y + CANVAS_BOTTOM_PADDING)
-    : canvasHeight;
+  const elsePathBottom = draft.elseNote ? nodePosition(canvasLayout, elseActionNode).y + canvasNodeHeight + CANVAS_BOTTOM_PADDING : 0;
+  const branchNodes = (draft.branches ?? []).map((branch, index): CanvasNode => ({
+    kind: "branch",
+    branchId: branch.id,
+    index,
+    count: draft.branches?.length ?? 0,
+  }));
+  const branchNodesBottom = Math.max(0, ...branchNodes.map((node) => nodePosition(canvasLayout, node).y + BRANCH_NODE_HEIGHT + CANVAS_BOTTOM_PADDING));
+  const contentHeight = Math.max(canvasHeight, elsePathBottom, branchNodesBottom);
   /** Unscaled layout height (`transform: scale` does not affect scroll overflow; outer wrapper uses scaled size). */
   const layoutCanvasHeight = Math.max(520, contentHeight);
   const scaledCanvasWidth = CANVAS_WIDTH * zoom;
   const scaledCanvasHeight = layoutCanvasHeight * zoom;
 
-  const ch = draft.trigger.channel?.trim();
-  const triggerSubtitle = ch ? `${ch} · filtered` : "Any channel · every message";
+  const conversationStartTrigger = draft.trigger.kind === "conversation_started";
+  const ch = draft.trigger.kind === "customer_message_received" ? draft.trigger.channel?.trim() : null;
+  const triggerSubtitle = conversationStartTrigger
+    ? "First customer message · once per conversation"
+    : ch
+      ? `${ch} · filtered`
+      : "Any channel · every message";
+  const triggerTitle = conversationStartTrigger
+    ? "When a conversation starts"
+    : "When a customer messages you";
   const matchLabel = draft.conditionMode === "any" ? "Match any" : "Match all";
+  const branchGap = 12;
+
+  function branchPosition(index: number) {
+    const node = branchNodes[index];
+    return node ? nodePosition(canvasLayout, node) : { x: fallbackX, y: canvasHeight + branchGap };
+  }
+
+  function branchConnectorPath(index: number): string {
+    const lastConditionIndex = draft.conditions.length - 1;
+    if (lastConditionIndex < 0) return "";
+    const start = nodePosition(canvasLayout, { kind: "condition", index: lastConditionIndex });
+    const target = branchPosition(index);
+    const startX = start.x + NODE_WIDTH / 2;
+    const startY = start.y + canvasNodeHeight;
+    const endX = target.x + BRANCH_NODE_WIDTH / 2;
+    const endY = target.y;
+    const bend = Math.max(28, (endY - startY) / 2);
+    return `M ${startX} ${startY} C ${startX} ${startY + bend}, ${endX} ${endY - bend}, ${endX} ${endY}`;
+  }
 
   /** Smooth vertical flow between nodes (original canvas style). */
   function connectorPath(from: CanvasNode, to: CanvasNode): string {
@@ -454,6 +527,16 @@ export function AutomationNodeCanvas({
       <div className="absolute right-2 top-2 z-20 flex items-center gap-0.5 rounded-md border border-slate-200/80 bg-white/95 px-1 py-0.5 text-slate-600 shadow-sm backdrop-blur-sm">
         <button
           type="button"
+          aria-label="Auto arrange workflow nodes"
+          title="Reset nodes to a clean, non-overlapping layout"
+          onClick={arrangeNodes}
+          className="rounded px-2 py-1 text-[10px] font-medium hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/20"
+        >
+          Arrange
+        </button>
+        <span className="mx-0.5 h-3.5 w-px bg-slate-200" aria-hidden />
+        <button
+          type="button"
           aria-label="Zoom out workflow canvas"
           onClick={() => setZoom((value) => Math.max(0.7, Number((value - 0.1).toFixed(2))))}
           className="rounded px-1.5 py-0.5 text-xs font-medium hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/20"
@@ -533,6 +616,28 @@ export function AutomationNodeCanvas({
                 >
                   <path d="M1 1 L11 6 L1 11 Z" fill="#64748b" />
                 </marker>
+                <marker
+                  id="automation-canvas-branch-arrow"
+                  markerWidth="12"
+                  markerHeight="12"
+                  refX="11"
+                  refY="6"
+                  orient="auto"
+                  markerUnits="userSpaceOnUse"
+                >
+                  <path d="M1 1 L11 6 L1 11 Z" fill="#d97706" />
+                </marker>
+                <marker
+                  id="automation-canvas-conditional-arrow"
+                  markerWidth="12"
+                  markerHeight="12"
+                  refX="11"
+                  refY="6"
+                  orient="auto"
+                  markerUnits="userSpaceOnUse"
+                >
+                  <path d="M1 1 L11 6 L1 11 Z" fill="#6366f1" />
+                </marker>
               </defs>
               {orderedNodes.slice(0, -1).map((from, index) => {
                 const to = orderedNodes[index + 1]!;
@@ -549,7 +654,31 @@ export function AutomationNodeCanvas({
                   </g>
                 );
               })}
-              {draft.elseNote && draft.conditions.length > 0 && <path d={connectorPath({ kind: "condition", index: draft.conditions.length - 1 }, elseActionNode)} fill="none" stroke="#d97706" strokeWidth={1.75} strokeDasharray="6 5" strokeLinecap="round" markerEnd="url(#automation-canvas-arrow)" aria-hidden="true"/>}
+              {draft.elseNote && draft.conditions.length > 0 && (
+                <path
+                  d={connectorPath({ kind: "condition", index: draft.conditions.length - 1 }, elseActionNode)}
+                  fill="none"
+                  stroke="#d97706"
+                  strokeWidth={1.75}
+                  strokeDasharray="6 5"
+                  strokeLinecap="round"
+                  markerEnd="url(#automation-canvas-branch-arrow)"
+                  aria-hidden="true"
+                />
+              )}
+              {(draft.branches ?? []).map((branch, index) => (
+                <path
+                  key={`branch-${branch.id}-connector`}
+                  d={branchConnectorPath(index)}
+                  fill="none"
+                  stroke="#6366f1"
+                  strokeWidth={1.75}
+                  strokeDasharray="5 5"
+                  strokeLinecap="round"
+                  markerEnd="url(#automation-canvas-conditional-arrow)"
+                  aria-hidden="true"
+                />
+              ))}
             </svg>
 
             <div
@@ -560,7 +689,7 @@ export function AutomationNodeCanvas({
               <div className="flex h-full items-start gap-3">
                 <button
                   type="button"
-                  aria-label="Configure trigger: incoming customer message"
+                  aria-label={`Configure trigger: ${triggerTitle.toLowerCase()}`}
                   className="flex min-w-0 flex-1 items-start gap-3 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/30"
                   onClick={() => onSelectStep({ type: "trigger" })}
                 >
@@ -569,9 +698,9 @@ export function AutomationNodeCanvas({
                   </span>
                   <span className="block min-w-0">
                     <span className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Trigger</span>
-                    <span className="mt-0.5 block text-[15px] font-semibold text-slate-900">When a customer messages you</span>
+                    <span className="mt-0.5 block text-[15px] font-semibold text-slate-900">{triggerTitle}</span>
                     <span className="mt-1 block text-xs text-slate-500">{triggerSubtitle}</span>
-                    {draft.trigger.first_message_only && (
+                    {draft.trigger.kind === "customer_message_received" && draft.trigger.first_message_only && (
                       <span className="mt-1 block text-xs font-medium text-amber-800">First message in conversation only</span>
                     )}
                   </span>
@@ -717,6 +846,33 @@ export function AutomationNodeCanvas({
                 </div>
               </div>
             )}
+            {(draft.branches ?? []).map((branch, index) => {
+              const node = branchNodes[index]!;
+              const conditionDescription = branch.conditions.map((condition, conditionIndex) => conditionSummary(condition, conditionIndex)).join(branch.condition_mode === "all" ? " · AND · " : " · OR · ");
+              const actionsDescription = branch.actions.map((action) => actionSummary(action, memberNamesById, aiAgentNamesById)).join(" → ");
+              return <div
+                key={branch.id}
+                data-automation-branch={branch.id}
+                className={`absolute z-10 flex min-h-[152px] flex-col rounded-lg border p-3 text-left shadow-sm ${issueClass(validationIssueKeys, node) || "border-indigo-300"} bg-indigo-50/95`}
+                style={{ ...positionStyle(node), width: BRANCH_NODE_WIDTH }}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <button
+                    type="button"
+                    aria-label={`Edit ordered branch ${index + 1}: ${branch.name}`}
+                    onClick={() => onSelectBranch(branch.id)}
+                    className="min-w-0 flex-1 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/30"
+                  >
+                    <span className="flex items-center justify-between gap-2 text-[10px] font-semibold uppercase tracking-wide text-indigo-700"><span>Ordered branch {index + 1}</span><span className="rounded-full bg-indigo-100 px-1.5 py-0.5">{branch.condition_mode === "all" ? "AND" : "OR"}</span></span>
+                    <span className="mt-1 block text-sm font-semibold text-slate-900">{branch.name}</span>
+                    <span className="mt-2 block line-clamp-2 text-[11px] leading-4 text-slate-600">If: {conditionDescription}</span>
+                    <span className="mt-1 block line-clamp-2 text-[11px] leading-4 text-indigo-800">Then: {actionsDescription}</span>
+                    <span className="mt-2 block text-[10px] font-medium text-indigo-700">Click to edit path</span>
+                  </button>
+                  {renderMoveHandle(node, `branch ${index + 1}`)}
+                </div>
+              </div>;
+            })}
             </div>
 
             {draft.conditions.length === 0 && (

@@ -34,15 +34,19 @@ export function StorefrontWidgetCard({ onPreviewChange }: { onPreviewChange: (dr
   const [enabledDraft, setEnabledDraft] = useState<boolean>();
   const [aiEnabledDraft, setAiEnabledDraft] = useState<boolean>();
   const [aiModeDraft, setAiModeDraft] = useState<"draft_only" | "auto_reply">();
+  const [assistantNameDraft, setAssistantNameDraft] = useState<string>();
+  const [welcomeMessageDraft, setWelcomeMessageDraft] = useState<string>();
   const [agentDraft, setAgentDraft] = useState<string[]>();
   const [sampleRoutingMessage, setSampleRoutingMessage] = useState("");
   const [copied, setCopied] = useState(false);
   const appBase = (process.env.NEXT_PUBLIC_SUPPORTPILOT_APP_URL || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
-  const widgetScriptVersion = "2026-11-01-recommendations-v1";
+  const widgetScriptVersion = "2026-11-07-branding-v1";
   const originsText = originsDraft ?? config.data?.allowed_origins.join("\n") ?? "";
   const enabled = enabledDraft ?? config.data?.enabled ?? true;
   const aiEnabled = aiEnabledDraft ?? config.data?.ai_enabled ?? false;
   const aiReplyMode = aiModeDraft ?? config.data?.ai_reply_mode ?? "draft_only";
+  const assistantName = assistantNameDraft ?? config.data?.assistant_name ?? "SupportPilot AI";
+  const welcomeMessage = welcomeMessageDraft ?? config.data?.welcome_message ?? "Hi! How can we help?";
   const storefrontOrigin = config.data?.allowed_origins.find(isSafeStorefrontOrigin);
   const defaultAgentId = agents.data?.items.find((agent) => agent.is_default && agent.status === "active")?.id;
   const configuredAgentIds = config.data?.ai_agent_ids ?? (config.data?.ai_agent_id ? [config.data.ai_agent_id] : defaultAgentId ? [defaultAgentId] : []);
@@ -70,6 +74,8 @@ export function StorefrontWidgetCard({ onPreviewChange }: { onPreviewChange: (dr
       aiEnabled,
       replyMode: aiReplyMode,
       botNames: selectedAgentNamesKey ? selectedAgentNamesKey.split("\u001f") : [],
+      assistantName,
+      welcomeMessage,
     });
   }, [
     config.data,
@@ -78,19 +84,23 @@ export function StorefrontWidgetCard({ onPreviewChange }: { onPreviewChange: (dr
     enabled,
     aiEnabled,
     aiReplyMode,
+    assistantName,
+    welcomeMessage,
     selectedAgentNamesKey,
     onPreviewChange,
   ]);
   const save = useMutation({
     mutationFn: () => config.data
-      ? updateWidgetConfig({ allowed_origins: origins, enabled, collect_contact: config.data.collect_contact, ai_enabled: aiEnabled, ai_reply_mode: aiReplyMode, ai_agent_id: selectedAgents[0], ai_agent_ids: selectedAgents })
-      : createWidgetConfig({ allowed_origins: origins, ai_enabled: aiEnabled, ai_reply_mode: aiReplyMode, ai_agent_id: selectedAgents[0], ai_agent_ids: selectedAgents }),
+      ? updateWidgetConfig({ allowed_origins: origins, enabled, collect_contact: config.data.collect_contact, ai_enabled: aiEnabled, ai_reply_mode: aiReplyMode, assistant_name: assistantName, welcome_message: welcomeMessage, ai_agent_id: selectedAgents[0], ai_agent_ids: selectedAgents })
+      : createWidgetConfig({ allowed_origins: origins, ai_enabled: aiEnabled, ai_reply_mode: aiReplyMode, assistant_name: assistantName, welcome_message: welcomeMessage, ai_agent_id: selectedAgents[0], ai_agent_ids: selectedAgents }),
     onSuccess: async (saved) => {
       client.setQueryData(widgetConfigKey, saved);
       setOriginsDraft(undefined);
       setEnabledDraft(undefined);
       setAiEnabledDraft(undefined);
       setAiModeDraft(undefined);
+      setAssistantNameDraft(undefined);
+      setWelcomeMessageDraft(undefined);
       setAgentDraft(undefined);
       await client.invalidateQueries({ queryKey: widgetConfigKey });
     },
@@ -123,6 +133,11 @@ export function StorefrontWidgetCard({ onPreviewChange }: { onPreviewChange: (dr
           {config.data.enabled && storefrontOrigin && <a href={storefrontOrigin} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex min-h-9 items-center rounded-lg border border-slate-200 px-3 text-xs font-semibold text-blue-700 hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600">Open storefront to verify</a>}
         </div>
       </section>}
+      <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-4" aria-labelledby="widget-branding-title">
+        <div><h3 id="widget-branding-title" className="text-sm font-semibold text-slate-900">Widget greeting</h3><p className="mt-1 text-xs leading-5 text-slate-600">Customize the assistant name and the first message shoppers see.</p></div>
+        <label className="block space-y-1.5 text-sm font-medium text-slate-700"><span>Assistant name</span><input aria-label="Assistant name" value={assistantName} maxLength={60} onChange={(event) => setAssistantNameDraft(event.target.value)} placeholder="Support assistant" className="min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm"/></label>
+        <label className="block space-y-1.5 text-sm font-medium text-slate-700"><span>Welcome message</span><textarea aria-label="Welcome message" value={welcomeMessage} maxLength={240} rows={2} onChange={(event) => setWelcomeMessageDraft(event.target.value)} placeholder="Hi! How can we help?" className="w-full rounded-lg border border-slate-200 bg-white p-3 text-sm"/><span className="text-xs font-normal text-slate-500">{welcomeMessage.length}/240 characters</span></label>
+      </section>
       <section className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4" aria-labelledby="widget-ai-title">
         <div><h3 id="widget-ai-title" className="text-sm font-semibold text-slate-900">AI replies</h3><p className="mt-1 text-xs leading-5 text-slate-600">Choose multiple bots. New messages are routed to the selected bot whose assigned knowledge best matches the question. Sensitive requests still go to a teammate.</p></div>
         {inactiveConfiguredAgentCount > 0 && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">{inactiveConfiguredAgentCount} configured {inactiveConfiguredAgentCount === 1 ? "bot is" : "bots are"} inactive and cannot handle new widget messages. They are omitted from this active selection{activeConfiguredAgentIds.length === 0 && defaultAgentId ? "; the active default bot is selected as a replacement" : ""}. Saving updates widget routing.</p>}
@@ -143,7 +158,7 @@ export function StorefrontWidgetCard({ onPreviewChange }: { onPreviewChange: (dr
         {aiEnabled && aiReplyMode === "auto_reply" && <p className="text-xs font-medium text-amber-800">Greetings and safe next steps can be answered automatically. Store-specific answers require published knowledge; order details require shopper verification, and order changes require human review.</p>}
       </section>
       {save.isError && <p role="alert" className="text-sm text-red-700">{save.error instanceof ApiError ? save.error.message : "Widget settings could not be saved."}</p>}
-      <Button type="button" disabled={config.isPending || config.isError || agents.isPending || agents.isError || save.isPending || origins.length === 0 || selectedAgents.length === 0} onClick={() => save.mutate()}>{save.isPending ? "Saving…" : config.data ? "Save widget settings" : "Create storefront widget"}</Button>
+      <Button type="button" disabled={config.isPending || config.isError || agents.isPending || agents.isError || save.isPending || origins.length === 0 || selectedAgents.length === 0 || !assistantName.trim() || !welcomeMessage.trim()} onClick={() => save.mutate()}>{save.isPending ? "Saving…" : config.data ? "Save widget settings" : "Create storefront widget"}</Button>
       {save.isSuccess && <p role="status" className="text-sm text-emerald-700">Widget settings saved.</p>}
       {config.data && <div className="space-y-2 border-t border-slate-100 pt-4"><div className="flex items-center justify-between gap-3"><h3 className="text-sm font-semibold">Shopify theme embed</h3><Button size="sm" variant="secondary" onClick={copySnippet}>{copied ? <Check size={14}/> : <Copy size={14}/>} {copied ? "Copied" : "Copy snippet"}</Button></div><pre className="overflow-x-auto rounded-xl bg-slate-950 p-3 text-xs leading-5 text-slate-100"><code>{embed || "Set NEXT_PUBLIC_SUPPORTPILOT_APP_URL to the public app URL before installing outside localhost."}</code></pre><p className="text-xs leading-5 text-slate-500">In Shopify Admin, open **Online Store → Themes → Edit code**, paste this before <code>&lt;/body&gt;</code> in <code>layout/theme.liquid</code>, and save. Replace any older SupportPilot script tag with this versioned snippet so the browser loads the latest widget. For a local app, use an HTTPS tunnel URL in <code>NEXT_PUBLIC_SUPPORTPILOT_APP_URL</code>; localhost is not reachable from Shopify shoppers.</p><p className="text-xs text-slate-500">Widget ID: <code>{config.data.public_id}</code></p></div>}
     </PanelBody>

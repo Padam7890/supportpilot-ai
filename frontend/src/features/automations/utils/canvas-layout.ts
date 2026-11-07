@@ -10,9 +10,14 @@ export const WORKFLOW_CANVAS = {
 
 const NODE_X = Math.round((WORKFLOW_CANVAS.contentWidth - WORKFLOW_CANVAS.nodeWidth) / 2);
 
-export function defaultCanvasLayout(conditionCount: number, actionCount: number): WorkflowCanvasLayout {
+export function defaultCanvasLayout(conditionCount: number, actionCount: number, branchIds: string[] = []): WorkflowCanvasLayout {
   const triggerY = 48;
   const { verticalStep: step } = WORKFLOW_CANVAS;
+  const branchWidth = 220;
+  const branchGap = 12;
+  const totalBranchWidth = branchIds.length * branchWidth + Math.max(0, branchIds.length - 1) * branchGap;
+  const branchStartX = Math.max(16, (WORKFLOW_CANVAS.contentWidth - totalBranchWidth) / 2);
+  const branchY = Math.min(1800, triggerY + step * (1 + conditionCount + actionCount) + 180);
   return {
     trigger: { x: NODE_X, y: triggerY },
     conditions: Array.from({ length: conditionCount }, (_, index) => ({
@@ -23,6 +28,13 @@ export function defaultCanvasLayout(conditionCount: number, actionCount: number)
       x: NODE_X,
       y: triggerY + step * (1 + conditionCount + index),
     })),
+    ...(branchIds.length > 0 ? {
+      branch_nodes: branchIds.map((branch_id, index) => ({
+        branch_id,
+        x: branchStartX + index * (branchWidth + branchGap),
+        y: branchY,
+      })),
+    } : {}),
   };
 }
 
@@ -30,12 +42,15 @@ export function fitCanvasLayout(
   layout: ApiWorkflowCanvasLayout | null | undefined,
   conditionCount: number,
   actionCount: number,
+  branchIds: string[] = [],
 ): WorkflowCanvasLayout {
-  const defaults = defaultCanvasLayout(conditionCount, actionCount);
+  const defaults = defaultCanvasLayout(conditionCount, actionCount, branchIds);
   const existingConds = layout?.conditions ?? [];
   const existingActs = layout?.actions ?? [];
+  const existingBranches = new Map((layout?.branch_nodes ?? []).map((node) => [node.branch_id, node]));
   return {
     trigger: layout?.trigger ?? defaults.trigger,
+    else_action: layout?.else_action,
     conditions: Array.from(
       { length: conditionCount },
       (_, index) => existingConds[index] ?? defaults.conditions[index] ?? {
@@ -50,5 +65,8 @@ export function fitCanvasLayout(
         y: 48 + WORKFLOW_CANVAS.verticalStep * (1 + conditionCount + index),
       },
     ),
+    ...(branchIds.length > 0 ? {
+      branch_nodes: (defaults.branch_nodes ?? []).map((node) => existingBranches.get(node.branch_id) ?? node),
+    } : {}),
   };
 }

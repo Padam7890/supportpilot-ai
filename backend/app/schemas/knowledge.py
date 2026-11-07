@@ -34,6 +34,12 @@ class KnowledgeDocumentOut(BaseModel):
     jobs: list[IngestionJobOut]
 
 
+class KnowledgeSourcePreviewOut(BaseModel):
+    content: str
+    truncated: bool
+    max_bytes: int
+
+
 class KnowledgeDocumentPage(BaseModel):
     items: list[KnowledgeDocumentOut]
     total: int

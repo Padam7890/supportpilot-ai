@@ -1,5 +1,5 @@
 import { api } from "@/lib/api/client";
-import type { KnowledgeDocument, KnowledgeDocumentPage, KnowledgeSearchPage } from "../types/knowledge.types";
+import type { KnowledgeDocument, KnowledgeDocumentPage, KnowledgeSearchPage, KnowledgeSourcePreview } from "../types/knowledge.types";
 
 export const KNOWLEDGE_DOCUMENT_PAGE_SIZE = 50;
 export const KNOWLEDGE_PROCESSING_POLL_INTERVAL_MS = 3000;
@@ -19,6 +19,8 @@ export const listKnowledgeDocuments = (knowledgeBaseId?: string, offset = 0) => 
   return api<KnowledgeDocumentPage>(`/knowledge/documents?${params}`);
 };
 export const getKnowledgeDocument = (id: string) => api<KnowledgeDocument>(`/knowledge/documents/${encodeURIComponent(id)}`);
+export const getKnowledgeSourcePreview = (id: string) =>
+  api<KnowledgeSourcePreview>(`/knowledge/documents/${encodeURIComponent(id)}/source-preview`);
 export const moveKnowledgeDocument = (id: string, knowledgeBaseId: string) =>
   api<KnowledgeDocument>(`/knowledge/documents/${encodeURIComponent(id)}/knowledge-base`, {
     method: "PUT",

@@ -29,6 +29,10 @@ export function KnowledgeLibrary() {
   const [documentPage, setDocumentPage] = useState({ baseId: "", offset: 0 });
   const [archiveBaseId, setArchiveBaseId] = useState<string>();
   const [newBaseName, setNewBaseName] = useState("");
+  const [articleEditorOpen, setArticleEditorOpen] = useState(false);
+  const [articleTitle, setArticleTitle] = useState("");
+  const [articleContent, setArticleContent] = useState("");
+  const [articleSuccess, setArticleSuccess] = useState("");
   const user = useQuery({ queryKey: currentUserQueryKey, queryFn: getCurrentUser });
   const canManage = ["owner", "admin"].includes(user.data?.role ?? "");
   const bases = useQuery({ queryKey: knowledgeBaseKey, queryFn: listKnowledgeBases });
@@ -82,7 +86,45 @@ export function KnowledgeLibrary() {
     queryFn: () => searchKnowledge(searchTerm, searchBaseId),
     enabled: bases.isSuccess && searchTerm.length >= 2 && (searchAllBases || Boolean(effectiveBaseId)),
   });
-  const upload = useMutation({ mutationFn: uploadKnowledgeDocument, onSuccess: async () => { if (fileInput.current) fileInput.current.value = ""; setDocumentPage({ baseId: effectiveBaseId ?? "", offset: 0 }); await client.invalidateQueries({ queryKey: knowledgeKeys.documents }); } });
+  const upload = useMutation({
+    mutationFn: uploadKnowledgeDocument,
+    onSuccess: async (_document, variables) => {
+      if (fileInput.current) fileInput.current.value = "";
+      const uploadedBaseId = variables.knowledgeBaseId ?? effectiveBaseId ?? "";
+      setSelectedBaseId(uploadedBaseId);
+      setDocumentPage({ baseId: uploadedBaseId, offset: 0 });
+      await Promise.all([
+        client.invalidateQueries({ queryKey: knowledgeKeys.documents }),
+        client.invalidateQueries({ queryKey: knowledgeBaseKey }),
+        client.invalidateQueries({ queryKey: ["knowledge-base-audit"] }),
+      ]);
+    },
+  });
+  const createArticle = useMutation({
+    mutationFn: async ({ title: rawTitle, content: rawContent, knowledgeBaseId }: { title: string; content: string; knowledgeBaseId: string }) => {
+      const title = rawTitle.trim();
+      const content = rawContent.trim();
+      if (!title || !content) throw new Error("Add a title and article content first.");
+      const safeStem = title.replace(/[\\/:*?\"<>|]/g, "-").replace(/\s+/g, " ").slice(0, 180).trim();
+      const file = new File([content], `${safeStem || "Knowledge article"}.md`, { type: "text/markdown" });
+      await uploadKnowledgeDocument({ file, knowledgeBaseId });
+      return { title, knowledgeBaseId };
+    },
+    onSuccess: async ({ title, knowledgeBaseId }) => {
+      setArticleTitle("");
+      setArticleContent("");
+      setArticleEditorOpen(false);
+      setArticleSuccess(`“${title}” was added and is being processed for AI search.`);
+      setSelectedBaseId(knowledgeBaseId);
+      setHistoryBaseId(knowledgeBaseId);
+      setDocumentPage({ baseId: knowledgeBaseId, offset: 0 });
+      await Promise.all([
+        client.invalidateQueries({ queryKey: knowledgeKeys.documents }),
+        client.invalidateQueries({ queryKey: knowledgeBaseKey }),
+        client.invalidateQueries({ queryKey: ["knowledge-base-audit"] }),
+      ]);
+    },
+  });
   const refreshBaseAudit = () => client.invalidateQueries({ queryKey: ["knowledge-base-audit"] });
   const createBase = useMutation({ mutationFn: () => createKnowledgeBase({ name: newBaseName.trim(), description: null }), onSuccess: async (base) => { setNewBaseName(""); setHistoryOffset(0); await client.invalidateQueries({ queryKey: knowledgeBaseKey }); setSelectedBaseId(base.id); setHistoryBaseId(base.id); await refreshBaseAudit(); } });
   const archiveBase = useMutation({ mutationFn: archiveKnowledgeBase, onSuccess: async (_, baseId) => { setSelectedBaseId(undefined); setHistoryBaseId(baseId); setHistoryOffset(0); setArchiveBaseId(undefined); await client.invalidateQueries({ queryKey: knowledgeBaseKey }); await refreshBaseAudit(); } });
@@ -114,7 +156,7 @@ export function KnowledgeLibrary() {
       ]);
     },
   });
-  const writeError = upload.error ?? reprocess.error ?? remove.error ?? move.error ?? createBase.error ?? archiveBase.error ?? restoreBase.error ?? makeDefaultBase.error ?? updateBase.error;
+  const writeError = upload.error ?? createArticle.error ?? reprocess.error ?? remove.error ?? move.error ?? createBase.error ?? archiveBase.error ?? restoreBase.error ?? makeDefaultBase.error ?? updateBase.error;
 
   useEffect(() => {
     const visibilityChanged = () => {
@@ -139,9 +181,37 @@ export function KnowledgeLibrary() {
   return <div className="space-y-6">
     <header className="flex flex-wrap items-end justify-between gap-4">
       <div><p className="text-sm font-semibold text-blue-700">Knowledge library</p><h1 className="mt-1 text-3xl font-bold tracking-tight">Knowledge bases</h1><p className="mt-2 max-w-2xl text-sm text-slate-500">Organize support documents into libraries and assign them to AI bots.</p></div>
-      {canManage && <Button onClick={() => fileInput.current?.click()} disabled={upload.isPending || !bases.isSuccess || !selectedBase || !effectiveBaseId}><Upload size={16}/>{upload.isPending ? "Uploading…" : "Upload document"}</Button>}
+      {canManage && <div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => setArticleEditorOpen((open) => !open)} disabled={!bases.isSuccess || !selectedBase || !effectiveBaseId}><Plus size={16}/>{articleEditorOpen ? "Close article editor" : "Write article"}</Button><Button onClick={() => fileInput.current?.click()} disabled={upload.isPending || !bases.isSuccess || !selectedBase || !effectiveBaseId}><Upload size={16}/>{upload.isPending ? "Uploading…" : "Upload document"}</Button></div>}
       {canManage && <input ref={fileInput} type="file" accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown" className="sr-only" aria-label="Choose a PDF, text, or Markdown document" onChange={(event) => { const file = event.target.files?.[0]; if (file && bases.isSuccess && selectedBase && effectiveBaseId) upload.mutate({ file, knowledgeBaseId: effectiveBaseId }); }}/>}
     </header>
+    {articleSuccess && <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">{articleSuccess}</p>}
+    {canManage && articleEditorOpen && <Panel>
+      <PanelHeader title="Write a knowledge article" description={`This Markdown article will be added to ${selectedBase?.name ?? "the selected knowledge base"} and processed for bot retrieval.`}/>
+      <PanelBody>
+        <form className="space-y-4" onSubmit={(event) => {
+          event.preventDefault();
+          if (articleTitle.trim() && articleContent.trim() && effectiveBaseId) {
+            createArticle.mutate({ title: articleTitle, content: articleContent, knowledgeBaseId: effectiveBaseId });
+          }
+        }}>
+          <label className="block space-y-1.5 text-sm font-medium text-slate-700">
+            <span>Article title</span>
+            <Input aria-label="Article title" maxLength={180} value={articleTitle} onChange={(event) => { setArticleSuccess(""); setArticleTitle(event.target.value); }} placeholder="e.g. Shipping and delivery policy"/>
+          </label>
+          <label className="block space-y-1.5 text-sm font-medium text-slate-700">
+            <span>Article content</span>
+            <textarea aria-label="Article content" maxLength={50000} rows={10} value={articleContent} onChange={(event) => { setArticleSuccess(""); setArticleContent(event.target.value); }} placeholder="Write the verified support information your AI bot should use…" className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm leading-6 text-slate-900 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30"/>
+            <span className="text-xs font-normal text-slate-500">{articleContent.length}/50,000 characters · Markdown headings and lists are supported.</span>
+          </label>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button type="submit" disabled={!articleTitle.trim() || !articleContent.trim() || !effectiveBaseId || createArticle.isPending}>
+              {createArticle.isPending ? <><LoaderCircle size={16} className="animate-spin"/>Adding article…</> : "Add to knowledge base"}
+            </Button>
+            <p className="text-xs text-slate-500">The article becomes searchable after ingestion completes.</p>
+          </div>
+        </form>
+      </PanelBody>
+    </Panel>}
     {!user.isPending && user.data && !canManage && <p role="status" className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600">Your role has read-only access to knowledge settings.</p>}
     {writeError && <StatusAlert tone="error">{writeError.message}</StatusAlert>}
     <Panel><PanelHeader title="Knowledge bases" description="Each bot can use one or more active bases." action={<BookOpen size={17} className="text-slate-400"/>}/><PanelBody className="space-y-4">

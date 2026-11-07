@@ -13,8 +13,20 @@ class WidgetConfigCreate(BaseModel):
     collect_contact: bool = True
     ai_enabled: bool = False
     ai_reply_mode: Literal["draft_only", "auto_reply"] = "draft_only"
+    assistant_name: str = Field(default="SupportPilot AI", min_length=1, max_length=60)
+    welcome_message: str = Field(default="Hi! How can we help?", min_length=1, max_length=240)
     ai_agent_id: UUID | None = None
     ai_agent_ids: list[UUID] | None = Field(default=None, min_length=1, max_length=10)
+
+    @field_validator("assistant_name", "welcome_message")
+    @classmethod
+    def normalize_widget_copy(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = " ".join(value.split())
+        if not cleaned:
+            raise ValueError("Widget text cannot be blank")
+        return cleaned
 
 
 class WidgetConfigUpdate(BaseModel):
@@ -24,8 +36,20 @@ class WidgetConfigUpdate(BaseModel):
     collect_contact: bool = True
     ai_enabled: bool = False
     ai_reply_mode: Literal["draft_only", "auto_reply"] = "draft_only"
+    assistant_name: str | None = Field(default=None, min_length=1, max_length=60)
+    welcome_message: str | None = Field(default=None, min_length=1, max_length=240)
     ai_agent_id: UUID | None = None
     ai_agent_ids: list[UUID] | None = Field(default=None, min_length=1, max_length=10)
+
+    @field_validator("assistant_name", "welcome_message")
+    @classmethod
+    def normalize_widget_copy(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = " ".join(value.split())
+        if not cleaned:
+            raise ValueError("Widget text cannot be blank")
+        return cleaned
 
 
 class WidgetConfigOut(BaseModel):
@@ -37,6 +61,8 @@ class WidgetConfigOut(BaseModel):
     collect_contact: bool
     ai_enabled: bool = False
     ai_reply_mode: Literal["draft_only", "auto_reply"] = "draft_only"
+    assistant_name: str = "SupportPilot AI"
+    welcome_message: str = "Hi! How can we help?"
     last_widget_load_at: datetime | None = None
     last_customer_message_at: datetime | None = None
     created_at: datetime

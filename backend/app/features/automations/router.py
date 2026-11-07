@@ -30,6 +30,7 @@ from app.features.automations.contracts import (
     WorkflowVersionOut,
     WorkflowTemplateCreate,
     default_canvas_layout,
+    fit_canvas_layout,
 )
 from app.features.automations.capabilities import missing_capabilities, organization_capabilities
 from app.features.automations.approvals import (
@@ -44,10 +45,12 @@ from app.features.automations.service import (
 )
 from app.features.automations.template_catalog import get_template, list_templates, materialize_template
 from app.models import (
+    AIAgent,
     AutomationExecution,
     AutomationExecutionApproval,
     AutomationWorkflow,
     AutomationWorkflowVersion,
+    IntegrationConnection,
     Ticket,
     TicketActivity,
     User,
@@ -60,13 +63,33 @@ def _definition_from_row(draft_definition: dict) -> WorkflowDefinition:
     return WorkflowDefinition.model_validate(draft_definition)
 
 
+def _validate_canvas_layout(layout: WorkflowCanvasLayout, definition: WorkflowDefinition) -> None:
+    if len(layout.conditions) != len(definition.conditions):
+        raise HTTPException(status_code=422, detail="Canvas layout must include one position for each condition")
+    if len(layout.actions) != len(definition.actions):
+        raise HTTPException(status_code=422, detail="Canvas layout must include one position for each action")
+    branch_ids = [branch.id for branch in definition.branches]
+    layout_ids = [node.branch_id for node in layout.branch_nodes]
+    if len(layout_ids) != len(set(layout_ids)):
+        raise HTTPException(status_code=422, detail="Canvas layout branch IDs must be unique")
+    if layout_ids and set(layout_ids) != set(branch_ids):
+        raise HTTPException(status_code=422, detail="Canvas layout must reference the workflow's branch IDs")
+
+
 def _canvas_layout_for_workflow(draft_definition: dict, draft_canvas_layout: dict | None) -> WorkflowCanvasLayout:
     definition = _definition_from_row(draft_definition)
-    if draft_canvas_layout is not None:
-        return WorkflowCanvasLayout.model_validate(draft_canvas_layout)
-    return default_canvas_layout(
+    defaults = default_canvas_layout(
         len(definition.conditions),
         len(definition.actions),
+        [branch.id for branch in definition.branches],
+    )
+    if draft_canvas_layout is None:
+        return defaults
+    return fit_canvas_layout(
+        WorkflowCanvasLayout.model_validate(draft_canvas_layout),
+        len(definition.conditions),
+        len(definition.actions),
+        [branch.id for branch in definition.branches],
     )
 
 
@@ -357,7 +380,7 @@ async def create_workflow_from_template(
             detail=f"This workspace is missing capabilities required by this template: {', '.join(missing)}",
         )
     try:
-        definition, layout_raw = materialize_template(template_id=payload.template_id)
+        definition, _ = materialize_template(template_id=payload.template_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
@@ -375,13 +398,14 @@ async def create_workflow_from_template(
     name = payload.name.strip() if payload.name else meta["title"]
     description = payload.description if payload.description is not None else meta["description"]
     if payload.canvas_layout is not None:
-        if len(payload.canvas_layout.conditions) != len(definition.conditions):
-            raise HTTPException(status_code=422, detail="Canvas layout must include one position for each condition")
-        if len(payload.canvas_layout.actions) != len(definition.actions):
-            raise HTTPException(status_code=422, detail="Canvas layout must include one position for each action")
+        _validate_canvas_layout(payload.canvas_layout, definition)
         canvas = payload.canvas_layout.model_dump(mode="json")
     else:
-        canvas = layout_raw
+        canvas = default_canvas_layout(
+            len(definition.conditions),
+            len(definition.actions),
+            [branch.id for branch in definition.branches],
+        ).model_dump(mode="json")
     workflow = AutomationWorkflow(
         organization_id=user.organization_id,
         created_by_user_id=user.id,
@@ -516,6 +540,29 @@ async def preview_automation(
     user: User = Depends(get_current_user),
 ) -> AutomationPreviewOut:
     """Evaluate a sample message and proposed actions without changing ticket data."""
+    if payload.sample_ai_agent_id is not None:
+        active_agent = await db.scalar(
+            select(AIAgent.id).where(
+                AIAgent.organization_id == user.organization_id,
+                AIAgent.id == payload.sample_ai_agent_id,
+                AIAgent.status == "active",
+            )
+        )
+        if active_agent is None:
+            raise HTTPException(status_code=422, detail="Sample AI bot must be active in this workspace")
+    if payload.sample_integration_connection_id is not None:
+        active_connection = await db.scalar(
+            select(IntegrationConnection.id).where(
+                IntegrationConnection.organization_id == user.organization_id,
+                IntegrationConnection.id == payload.sample_integration_connection_id,
+                IntegrationConnection.status == "connected",
+            )
+        )
+        if active_connection is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Sample connection must be connected in this workspace",
+            )
     try:
         await validate_assignment_targets(db, user.organization_id, payload.definition)
         await validate_team_assignment_targets(db, user.organization_id, payload.definition)
@@ -531,6 +578,8 @@ async def preview_automation(
         assignee_present=payload.sample_assignee_present,
         conversation_ai_mode=payload.sample_conversation_ai_mode,
         shopify_connected=payload.sample_shopify_connected,
+        conversation_ai_agent_id=payload.sample_ai_agent_id,
+        conversation_integration_connection_id=payload.sample_integration_connection_id,
     )
 
 
@@ -555,7 +604,11 @@ async def create_workflow(
         draft_definition=payload.definition.model_dump(mode="json"),
         draft_canvas_layout=(
             payload.canvas_layout
-            or default_canvas_layout(len(payload.definition.conditions), len(payload.definition.actions))
+            or default_canvas_layout(
+                len(payload.definition.conditions),
+                len(payload.definition.actions),
+                [branch.id for branch in payload.definition.branches],
+            )
         ).model_dump(mode="json"),
     )
     db.add(workflow)
@@ -593,12 +646,11 @@ async def update_workflow(
             workflow.draft_version = workflow.published_version + 1
     if "canvas_layout" in supplied:
         layout = payload.canvas_layout or default_canvas_layout(
-            len(next_definition.conditions), len(next_definition.actions)
+            len(next_definition.conditions),
+            len(next_definition.actions),
+            [branch.id for branch in next_definition.branches],
         )
-        if len(layout.conditions) != len(next_definition.conditions):
-            raise HTTPException(status_code=422, detail="Canvas layout must include one position for each condition")
-        if len(layout.actions) != len(next_definition.actions):
-            raise HTTPException(status_code=422, detail="Canvas layout must include one position for each action")
+        _validate_canvas_layout(layout, next_definition)
         workflow.draft_canvas_layout = layout.model_dump(mode="json")
     elif payload.definition is not None:
         current_layout = (
@@ -612,7 +664,9 @@ async def update_workflow(
             or len(current_layout.actions) != len(next_definition.actions)
         ):
             workflow.draft_canvas_layout = default_canvas_layout(
-                len(next_definition.conditions), len(next_definition.actions)
+                len(next_definition.conditions),
+                len(next_definition.actions),
+                [branch.id for branch in next_definition.branches],
             ).model_dump(mode="json")
     await db.flush()
     return workflow_output(workflow)
@@ -641,7 +695,11 @@ async def publish_workflow(
         canvas_layout=(
             WorkflowCanvasLayout.model_validate(workflow.draft_canvas_layout)
             if workflow.draft_canvas_layout is not None
-            else default_canvas_layout(len(definition.conditions), len(definition.actions))
+            else default_canvas_layout(
+                len(definition.conditions),
+                len(definition.actions),
+                [branch.id for branch in definition.branches],
+            )
         ).model_dump(mode="json"),
         published_by_user_id=user.id,
     )
@@ -711,7 +769,11 @@ async def restore_workflow_version(
     workflow.draft_canvas_layout = (
         WorkflowCanvasLayout.model_validate(source.canvas_layout)
         if source.canvas_layout is not None
-        else default_canvas_layout(len(definition.conditions), len(definition.actions))
+        else default_canvas_layout(
+            len(definition.conditions),
+            len(definition.actions),
+            [branch.id for branch in definition.branches],
+        )
     ).model_dump(mode="json")
     workflow.draft_version = max(workflow.draft_version, workflow.published_version or 0) + 1
     await db.flush()
