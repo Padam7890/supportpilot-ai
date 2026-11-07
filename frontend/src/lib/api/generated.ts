@@ -4434,7 +4434,7 @@ export interface components {
              * Job Kind
              * @enum {string}
              */
-            job_kind: "ai_execution" | "automation_execution" | "catalog_sync" | "catalog_webhook" | "document_ingestion" | "commerce_action" | "outbound_delivery";
+            job_kind: "ai_execution" | "automation_execution" | "document_ingestion" | "commerce_action" | "catalog_sync" | "catalog_webhook" | "outbound_delivery";
             /**
              * Manual Retry Available
              * @default false
@@ -4601,6 +4601,8 @@ export interface components {
             attempt_count: number;
             /** Completed At */
             completed_at: string | null;
+            /** Correlation Id */
+            correlation_id?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -5055,7 +5057,7 @@ export interface components {
              */
             job_kind: "ai_execution" | "automation_execution" | "catalog_sync" | "catalog_webhook" | "outbound_delivery";
             /** Max Attempts */
-            max_attempts: number;
+            max_attempts: number | null;
             /** Status */
             status: string;
         };

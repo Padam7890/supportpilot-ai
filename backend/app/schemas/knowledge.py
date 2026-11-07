@@ -9,6 +9,7 @@ class IngestionJobOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    correlation_id: str | None = None
     status: Literal["queued", "running", "succeeded", "failed", "cancelled"]
     attempt_count: int
     max_attempts: int

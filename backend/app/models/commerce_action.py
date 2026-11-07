@@ -104,6 +104,7 @@ class CommerceAction(TimestampMixin, UUIDPrimaryKey, Base):
             "created_at",
             "id",
         ),
+        Index("ix_commerce_actions_org_correlation", "organization_id", "correlation_id"),
         Index(
             "uq_commerce_actions_pending_shopify_cancel_order",
             "organization_id",
@@ -139,6 +140,7 @@ class CommerceAction(TimestampMixin, UUIDPrimaryKey, Base):
     cancelled_by_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True))
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     execution_status: Mapped[str] = mapped_column(String(20), default="not_started", nullable=False)
+    correlation_id: Mapped[str | None] = mapped_column(String(64))
     execution_attempt_count: Mapped[int] = mapped_column(default=0, nullable=False)
     execution_result: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     execution_error_code: Mapped[str | None] = mapped_column(String(80))

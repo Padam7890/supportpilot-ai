@@ -54,6 +54,7 @@ async def request_verified_shopify_cancellation(
     message: str,
     execution_id: UUID,
     action_index: int,
+    correlation_id: str | None,
 ) -> tuple[str, str, UUID | None]:
     """Queue a cancellation review only for an OTP-verified order in this conversation."""
     ticket = await db.scalar(
@@ -186,6 +187,7 @@ async def request_verified_shopify_cancellation(
         approval_status="pending",
         expires_at=datetime.now(UTC) + ACTION_TTL,
         execution_status="not_started",
+        correlation_id=correlation_id,
     )
     db.add(action)
     await db.flush()

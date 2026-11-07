@@ -2,7 +2,7 @@ import re
 from datetime import UTC, date, datetime, time, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import String, func, literal, select, union_all
+from sqlalchemy import Integer, String, func, literal, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_roles
@@ -799,6 +799,20 @@ async def job_trace(
     trace_rows = union_all(
         trace_row(AIExecution, "ai_execution", AIExecution.error_code),
         trace_row(AutomationExecution, "automation_execution", AutomationExecution.error_code),
+        trace_row(DocumentIngestionJob, "document_ingestion", literal(None, type_=String(80))),
+        select(
+            literal("commerce_action", type_=String(32)).label("job_kind"),
+            CommerceAction.id.label("job_id"),
+            func.concat(CommerceAction.approval_status, "/", CommerceAction.execution_status).label("status"),
+            CommerceAction.created_at.label("created_at"),
+            CommerceAction.execution_completed_at.label("completed_at"),
+            CommerceAction.execution_attempt_count.label("attempts"),
+            literal(None, type_=Integer()).label("max_attempts"),
+            CommerceAction.execution_error_code.label("error_code"),
+        ).where(
+            CommerceAction.organization_id == user.organization_id,
+            CommerceAction.correlation_id == correlation_id,
+        ),
         trace_row(CatalogSyncJob, "catalog_sync", CatalogSyncJob.last_error_code),
         trace_row(CatalogWebhookEvent, "catalog_webhook", CatalogWebhookEvent.last_error_code),
         trace_row(IntegrationDeliveryJob, "outbound_delivery", IntegrationDeliveryJob.last_error_code),

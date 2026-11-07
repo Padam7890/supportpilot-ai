@@ -10,6 +10,8 @@ import { getJobTrace, type JobTrace } from "../api/analytics-api";
 const jobLabels: Record<JobTrace["events"][number]["job_kind"], string> = {
   ai_execution: "AI execution",
   automation_execution: "Automation",
+  commerce_action: "Commerce approval/execution",
+  document_ingestion: "Document ingestion",
   catalog_sync: "Catalog sync",
   catalog_webhook: "Catalog webhook",
   outbound_delivery: "Outbound delivery",
@@ -76,7 +78,7 @@ function TraceResult({ result }: { result: JobTrace }) {
                 <p className="font-medium text-slate-900">{jobLabels[event.job_kind]}</p>
                 <p className="mt-1 break-all font-mono text-xs text-slate-500">{event.job_id}</p>
                 <p className="mt-1 text-xs text-slate-500">Created {new Date(event.created_at).toLocaleString()}{event.completed_at ? ` · completed ${new Date(event.completed_at).toLocaleString()}` : ""}</p>
-                <p className="mt-1 text-xs text-slate-500">{event.attempts}/{event.max_attempts} attempts{event.error_code ? ` · ${event.error_code}` : ""}</p>
+                <p className="mt-1 text-xs text-slate-500">{event.max_attempts === null ? `${event.attempts} execution attempt${event.attempts === 1 ? "" : "s"}` : `${event.attempts}/${event.max_attempts} attempts`}{event.error_code ? ` · ${event.error_code}` : ""}</p>
               </div>
               <span className={`rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${tone}`}>{event.status.replaceAll("_", " ")}</span>
             </li>

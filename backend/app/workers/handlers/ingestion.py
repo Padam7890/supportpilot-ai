@@ -187,6 +187,7 @@ async def fail_exhausted_leases(organization_id: UUID) -> bool:
 
 
 async def process_job(organization_id: UUID, job_id: UUID, document_id: UUID) -> None:
+    correlation_id: str | None = None
     try:
         async with SessionLocal() as db:
             await set_tenant_context(db, organization_id)
@@ -208,6 +209,7 @@ async def process_job(organization_id: UUID, job_id: UUID, document_id: UUID) ->
             if job is None:
                 await db.rollback()
                 return
+            correlation_id = job.correlation_id
             if document is None:
                 await db.rollback()
                 return
@@ -277,7 +279,15 @@ async def process_job(organization_id: UUID, job_id: UUID, document_id: UUID) ->
             job.last_error = None
             await db.commit()
     except Exception as exc:
-        logger.exception("Document ingestion failed", extra={"job_id": str(job_id)})
+        logger.exception(
+            "Document ingestion failed",
+            extra={
+                "job_id": str(job_id),
+                "organization_id": str(organization_id),
+                "correlation_id": correlation_id,
+                "error_type": type(exc).__name__,
+            },
+        )
         async with SessionLocal() as db:
             await set_tenant_context(db, organization_id)
             document = await db.scalar(

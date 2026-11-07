@@ -175,6 +175,7 @@ async def fail_exhausted_action_leases(organization_id: UUID) -> bool:
 
 
 async def process_commerce_action(organization_id: UUID, action_id: UUID) -> None:
+    correlation_id: str | None = None
     async with SessionLocal() as db:
         await set_tenant_context(db, organization_id)
         action = await db.scalar(
@@ -188,6 +189,7 @@ async def process_commerce_action(organization_id: UUID, action_id: UUID) -> Non
         if action is None:
             await db.rollback()
             return
+        correlation_id = action.correlation_id
         operation = {
             "idempotency_key_hash": action.idempotency_key_hash,
             "action_type": action.action_type,
@@ -285,7 +287,15 @@ async def process_commerce_action(organization_id: UUID, action_id: UUID) -> Non
         error_code = exc.code if isinstance(exc, ShopifyOrderActionError) else (
             "mock_commerce_failed" if operation["provider"] == "mock" else "shopify_cancel_provider_error"
         )
-        logger.warning("Commerce action execution failed", extra={"commerce_action_id": str(action_id), "error_type": type(exc).__name__})
+        logger.warning(
+            "Commerce action execution failed",
+            extra={
+                "commerce_action_id": str(action_id),
+                "organization_id": str(organization_id),
+                "correlation_id": correlation_id,
+                "error_type": type(exc).__name__,
+            },
+        )
         async with SessionLocal() as db:
             await set_tenant_context(db, organization_id)
             action = await db.scalar(

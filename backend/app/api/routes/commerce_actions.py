@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.api.deps import get_current_user, require_roles
+from app.core.observability import current_correlation_id
 from app.db.session import get_db, set_tenant_context
 from app.integrations.providers.shopify.actions import (
     ShopifyOrderActionError,
@@ -230,6 +231,7 @@ async def create_commerce_action(
         approval_status="pending",
         expires_at=now + ACTION_TTL,
         execution_status="not_started",
+        correlation_id=current_correlation_id(),
     )
     db.add(action)
     try:

@@ -4131,10 +4131,10 @@
             "enum": [
               "ai_execution",
               "automation_execution",
-              "catalog_sync",
-              "catalog_webhook",
               "document_ingestion",
               "commerce_action",
+              "catalog_sync",
+              "catalog_webhook",
               "outbound_delivery"
             ],
             "title": "Job Kind",
@@ -4575,6 +4575,17 @@
               }
             ],
             "title": "Completed At"
+          },
+          "correlation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correlation Id"
           },
           "created_at": {
             "format": "date-time",
@@ -5690,8 +5701,15 @@
             "type": "string"
           },
           "max_attempts": {
-            "title": "Max Attempts",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Attempts"
           },
           "status": {
             "title": "Status",

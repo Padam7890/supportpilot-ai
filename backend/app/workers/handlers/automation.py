@@ -838,6 +838,7 @@ async def _apply_actions(
                 message=message_content,
                 execution_id=execution_id,
                 action_index=index,
+                correlation_id=execution.correlation_id,
             )
             if outcome == "applied":
                 note_lines = [f"[Commerce approval] {action.summary}", detail]

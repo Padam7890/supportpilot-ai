@@ -157,6 +157,8 @@ class FailedBackgroundJobOut(BaseModel):
     job_kind: Literal[
         "ai_execution",
         "automation_execution",
+        "document_ingestion",
+        "commerce_action",
         "catalog_sync",
         "catalog_webhook",
         "document_ingestion",
@@ -189,7 +191,7 @@ class JobTraceEventOut(BaseModel):
     created_at: datetime
     completed_at: datetime | None
     attempts: int
-    max_attempts: int
+    max_attempts: int | None
     error_code: str | None
 
 

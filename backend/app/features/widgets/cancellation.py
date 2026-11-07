@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.observability import current_correlation_id
 from app.db.session import get_db, set_tenant_context
 from app.features.widgets.shared import require_visitor_conversation
 from app.integrations.providers.shopify.actions import (
@@ -188,6 +189,7 @@ async def request_widget_order_cancellation(
         approval_status="pending",
         expires_at=now + timedelta(days=7),
         execution_status="not_started",
+        correlation_id=current_correlation_id(),
     )
     db.add(action)
     try:

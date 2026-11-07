@@ -8,6 +8,7 @@ from sqlalchemy import delete, func, literal_column, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_roles
+from app.core.observability import current_correlation_id
 from app.db.session import get_db
 from app.services.knowledge_base_audit import record_knowledge_base_audit
 from app.models import (
@@ -128,6 +129,7 @@ async def upload_document(
             DocumentIngestionJob(
                 organization_id=user.organization_id,
                 document_id=document.id,
+                correlation_id=current_correlation_id(),
                 status="queued",
             ),
         ]
@@ -348,7 +350,13 @@ async def reprocess_document(
     )
     if active_job is not None:
         raise HTTPException(status_code=409, detail="Document ingestion is already queued or running")
-    db.add(DocumentIngestionJob(organization_id=user.organization_id, document_id=document.id))
+    db.add(
+        DocumentIngestionJob(
+            organization_id=user.organization_id,
+            document_id=document.id,
+            correlation_id=current_correlation_id(),
+        )
+    )
     document.status = "queued"
     await db.flush()
     record_knowledge_base_audit(
