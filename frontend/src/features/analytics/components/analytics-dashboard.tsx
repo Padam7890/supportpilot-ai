@@ -258,6 +258,23 @@ export function AnalyticsDashboard() {
                 : formatDuration(supportResponses.data.p95_first_response_seconds)}
             />
           </div>}
+        {!supportResponses.isError && supportResponses.data?.sla && supportResponses.data.sla.tickets > 0 && (
+          <section className="mt-5 rounded-xl border border-slate-200 bg-slate-50/70 p-4" aria-labelledby="first-response-sla-title">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h3 id="first-response-sla-title" className="text-sm font-semibold text-slate-800">First-response SLA · ticket level</h3>
+              <p className="text-xs text-slate-500">Compliance is met ÷ replied; open overdue and at-risk tickets are counted separately.</p>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
+              <AutomationMetric label="Compliance" value={supportResponses.data.sla.compliance_rate == null ? "—" : `${supportResponses.data.sla.compliance_rate}%`} tone="green"/>
+              <AutomationMetric label="Met" value={supportResponses.data.sla.met.toLocaleString()} tone="green"/>
+              <AutomationMetric label="Breached" value={supportResponses.data.sla.breached.toLocaleString()} tone={supportResponses.data.sla.breached > 0 ? "blue" : "neutral"}/>
+              <AutomationMetric label="Overdue" value={supportResponses.data.sla.overdue.toLocaleString()} tone={supportResponses.data.sla.overdue > 0 ? "blue" : "neutral"}/>
+              <AutomationMetric label="At risk" value={supportResponses.data.sla.at_risk.toLocaleString()} tone={supportResponses.data.sla.at_risk > 0 ? "blue" : "neutral"}/>
+              <AutomationMetric label="On track" value={supportResponses.data.sla.on_track.toLocaleString()}/>
+              <AutomationMetric label="Awaiting" value={supportResponses.data.sla.awaiting.toLocaleString()}/>
+            </div>
+          </section>
+        )}
         {!supportResponses.isError && supportResponses.data?.longest_unanswered_seconds != null && (
           <p className="mt-4 text-xs text-slate-600">
             Longest current wait in this range{" "}
@@ -299,12 +316,15 @@ export function AnalyticsDashboard() {
             </table>
           </div>
         )}
-        <Link
-          href="/dashboard/inbox?overdue_only=true"
-          className="mt-4 inline-flex text-sm font-semibold text-blue-700 underline-offset-4 hover:underline"
-        >
-          View overdue first replies in Inbox
-        </Link>
+        <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-sm font-semibold">
+          {([
+            ["breached", "View breached"], ["overdue", "View overdue"], ["at_risk", "View at risk"],
+          ] as const).map(([status, label]) => (
+            <Link key={status} href={`/dashboard/inbox?sla_status=${status}`} className="text-blue-700 underline-offset-4 hover:underline">
+              {label} first replies in Inbox
+            </Link>
+          ))}
+        </div>
         {supportResponses.data && supportResponses.data.daily.length > 0 && <SupportResponseTrend daily={supportResponses.data.daily}/>}
       </section>
 
@@ -454,6 +474,10 @@ function RecommendationInsights({ data, loading, error }: { data: import("@/feat
         <Metric title="Comparisons" value={data.comparisons.toLocaleString()} detail={`${data.rejected_recommendations} rejected · ${data.no_result_searches} no-result`} icon={<ThumbsDown size={18}/>}/>
         <Metric title="Recommendation AI cost" value={data.estimated_cost_usd == null ? "Not configured" : `$${data.estimated_cost_usd.toFixed(4)}`} detail={`${data.prompt_tokens + data.completion_tokens} tokens · ${data.failed_executions} failed`} icon={<CircleDollarSign size={18}/>}/>
       </div>
+      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white" aria-labelledby="recommendation-bot-performance-title">
+        <div className="border-b border-slate-100 p-4"><h3 id="recommendation-bot-performance-title" className="font-semibold">Performance by AI bot</h3><p className="mt-1 text-xs text-slate-500">Counts are attributed through the persisted widget execution that handled each recommendation.</p></div>
+        {data.bots.length ? <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-sm"><thead className="bg-slate-50 text-xs text-slate-500"><tr><th scope="col" className="px-4 py-2.5">Bot</th><th scope="col" className="px-4 py-2.5">Shown</th><th scope="col" className="px-4 py-2.5">Clicks</th><th scope="col" className="px-4 py-2.5">Comparisons</th><th scope="col" className="px-4 py-2.5">No results</th><th scope="col" className="px-4 py-2.5">Handoffs</th></tr></thead><tbody>{data.bots.map((bot) => <tr key={bot.bot_id} className="border-t border-slate-100"><th scope="row" className="px-4 py-3 font-semibold text-slate-800">{bot.bot_name}</th><td className="px-4 py-3 tabular-nums">{bot.impressions.toLocaleString()}</td><td className="px-4 py-3 tabular-nums">{bot.product_clicks.toLocaleString()}</td><td className="px-4 py-3 tabular-nums">{bot.comparisons.toLocaleString()}</td><td className="px-4 py-3 tabular-nums">{bot.no_results.toLocaleString()}</td><td className="px-4 py-3 tabular-nums">{bot.human_handoffs.toLocaleString()}</td></tr>)}</tbody></table></div> : <p className="p-4 text-sm text-slate-500">No bot-attributed recommendation events in this date range.</p>}
+      </section>
       <div className="grid gap-5 xl:grid-cols-[1.4fr_1fr]">
         <section className="rounded-2xl border border-slate-200 bg-white p-5" aria-label="Recommendation trend"><h3 className="font-semibold">Recommendation funnel and trend</h3><p className="mt-1 text-xs text-slate-500">Daily product impressions and clicks. Mean generation time: {data.average_latency_ms == null ? "no completed samples" : `${data.average_latency_ms} ms`}.</p>
           <div className="mt-4 grid grid-cols-5 gap-2 text-center text-xs"><Funnel label="Shown" count={data.impressions}/><Funnel label="Clicked" count={data.product_clicks}/><Funnel label="Compared" count={data.comparisons}/><Funnel label="No result" count={data.no_result_searches}/><Funnel label="Handoff" count={data.human_handoffs}/></div>

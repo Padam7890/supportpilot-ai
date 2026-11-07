@@ -4322,6 +4322,61 @@
         "title": "FailedBackgroundJobsOut",
         "type": "object"
       },
+      "FirstResponseSLAAnalytics": {
+        "properties": {
+          "at_risk": {
+            "title": "At Risk",
+            "type": "integer"
+          },
+          "awaiting": {
+            "title": "Awaiting",
+            "type": "integer"
+          },
+          "breached": {
+            "title": "Breached",
+            "type": "integer"
+          },
+          "compliance_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Compliance Rate"
+          },
+          "met": {
+            "title": "Met",
+            "type": "integer"
+          },
+          "on_track": {
+            "title": "On Track",
+            "type": "integer"
+          },
+          "overdue": {
+            "title": "Overdue",
+            "type": "integer"
+          },
+          "tickets": {
+            "title": "Tickets",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tickets",
+          "met",
+          "breached",
+          "awaiting",
+          "overdue",
+          "at_risk",
+          "on_track",
+          "compliance_rate"
+        ],
+        "title": "FirstResponseSLAAnalytics",
+        "type": "object"
+      },
       "FirstResponseSlaOut": {
         "properties": {
           "due_at": {
@@ -7262,6 +7317,13 @@
             ],
             "title": "Average Latency Ms"
           },
+          "bots": {
+            "items": {
+              "$ref": "#/components/schemas/RecommendationBotFunnel"
+            },
+            "title": "Bots",
+            "type": "array"
+          },
           "comparisons": {
             "title": "Comparisons",
             "type": "integer"
@@ -7429,6 +7491,55 @@
           "failed_executions"
         ],
         "title": "RecommendationAnalyticsOut",
+        "type": "object"
+      },
+      "RecommendationBotFunnel": {
+        "properties": {
+          "bot_id": {
+            "format": "uuid",
+            "title": "Bot Id",
+            "type": "string"
+          },
+          "bot_name": {
+            "title": "Bot Name",
+            "type": "string"
+          },
+          "comparisons": {
+            "title": "Comparisons",
+            "type": "integer"
+          },
+          "human_handoffs": {
+            "title": "Human Handoffs",
+            "type": "integer"
+          },
+          "impressions": {
+            "title": "Impressions",
+            "type": "integer"
+          },
+          "no_results": {
+            "title": "No Results",
+            "type": "integer"
+          },
+          "product_clicks": {
+            "title": "Product Clicks",
+            "type": "integer"
+          },
+          "rejections": {
+            "title": "Rejections",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "bot_id",
+          "bot_name",
+          "impressions",
+          "product_clicks",
+          "comparisons",
+          "rejections",
+          "no_results",
+          "human_handoffs"
+        ],
+        "title": "RecommendationBotFunnel",
         "type": "object"
       },
       "RecommendationEventIn": {
@@ -9368,6 +9479,16 @@
             "title": "Responded",
             "type": "integer"
           },
+          "sla": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FirstResponseSLAAnalytics"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "start_date": {
             "format": "date",
             "title": "Start Date",
@@ -11256,6 +11377,16 @@
             "maxItems": 10,
             "title": "Conditions",
             "type": "array"
+          },
+          "else_action": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CanvasPosition"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "trigger": {
             "$ref": "#/components/schemas/CanvasPosition"
@@ -22595,6 +22726,23 @@
               "default": false,
               "title": "Overdue Only",
               "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sla_status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^(met|breached|overdue|at_risk|on_track)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sla Status"
             }
           },
           {

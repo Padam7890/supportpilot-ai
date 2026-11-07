@@ -9,6 +9,7 @@ from app.api.deps import get_current_user, require_roles
 from app.core.config import settings
 from app.db.session import get_db
 from app.features.conversations.response_metrics import first_reply_source
+from app.features.analytics.sla_service import get_first_response_sla_analytics
 from app.features.automations.policy import MAX_TOTAL_EXECUTION_ATTEMPTS
 from app.models import (
     AIAgent,
@@ -469,6 +470,12 @@ async def support_response_analytics(
         )
     total_count = int(total or 0)
     response_count = int(responded or 0)
+    sla_summary = await get_first_response_sla_analytics(
+        db,
+        organization_id=user.organization_id,
+        start=start,
+        end=end,
+    )
     return SupportResponseAnalyticsOut(
         start_date=start,
         end_date=end,
@@ -490,6 +497,7 @@ async def support_response_analytics(
         ),
         daily=daily,
         by_channel=by_channel,
+        sla=sla_summary,
     )
 
 

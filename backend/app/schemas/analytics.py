@@ -135,6 +135,17 @@ class SupportResponseChannel(BaseModel):
     p95_first_response_seconds: float | None
 
 
+class FirstResponseSLAAnalytics(BaseModel):
+    tickets: int
+    met: int
+    breached: int
+    awaiting: int
+    overdue: int
+    at_risk: int
+    on_track: int
+    compliance_rate: float | None
+
+
 class SupportResponseAnalyticsOut(BaseModel):
     start_date: date
     end_date: date
@@ -147,6 +158,7 @@ class SupportResponseAnalyticsOut(BaseModel):
     longest_unanswered_seconds: float | None = None
     daily: list[SupportResponseDay]
     by_channel: list[SupportResponseChannel] = Field(default_factory=list)
+    sla: FirstResponseSLAAnalytics | None = None
 
 
 class OperationalAlertOut(BaseModel):

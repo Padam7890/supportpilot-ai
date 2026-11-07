@@ -2,7 +2,8 @@ import { api } from "@/lib/api/client";
 import type { components } from "@/lib/api/generated";
 import { mapInboxItem, type InboxScope, type InboxWirePage } from "../types/inbox.types";
 
-export type InboxFilters = { scope: InboxScope; status: string; priority: string; channel?: string; teamId?: string; search: string; needsApproval: boolean; unreadOnly: boolean; overdueOnly?: boolean };
+export type InboxSlaStatus = "met" | "breached" | "overdue" | "at_risk" | "on_track";
+export type InboxFilters = { scope: InboxScope; status: string; priority: string; channel?: string; teamId?: string; search: string; needsApproval: boolean; unreadOnly: boolean; slaStatus?: InboxSlaStatus };
 export type InboxPage = { items: ReturnType<typeof mapInboxItem>[]; limit: number; nextCursor: string | null };
 
 export const inboxQueryKeys = {
@@ -14,7 +15,7 @@ export const inboxQueryKeys = {
 export async function getInbox(filters: InboxFilters, cursor?: string): Promise<InboxPage> {
   const params = new URLSearchParams({ scope: filters.scope, limit: "30" });
   if (filters.status) params.set("status", filters.status);
-  if (filters.overdueOnly) params.set("overdue_only", "true");
+  if (filters.slaStatus) params.set("sla_status", filters.slaStatus);
   if (filters.priority) params.set("priority", filters.priority);
   if (filters.channel) params.set("channel", filters.channel);
   if (filters.teamId) params.set("team_id", filters.teamId);

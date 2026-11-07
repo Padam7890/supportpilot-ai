@@ -3,16 +3,20 @@
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import String, cast, func, or_, select
+from sqlalchemy import String, and_, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.core.config import settings
 from app.db.session import get_db
 from app.features.analytics.router import date_predicate, date_window
-from app.models import AIExecution, CatalogProduct, RecommendationEvent, User
+from app.models import AIAgent, AIExecution, CatalogProduct, Message, RecommendationEvent, User
 from app.schemas.errors import COMMON_ERROR_RESPONSES
-from app.schemas.recommendation_settings import RecommendationAnalyticsOut, RecommendationTrendPoint
+from app.schemas.recommendation_settings import (
+    RecommendationAnalyticsOut,
+    RecommendationBotFunnel,
+    RecommendationTrendPoint,
+)
 
 recommendations_router = APIRouter(prefix="/analytics", tags=["analytics"], responses=COMMON_ERROR_RESPONSES)
 
@@ -67,6 +71,47 @@ async def recommendation_analytics(
         .where(*event_scope, RecommendationEvent.event_type == "no_result", RecommendationEvent.query_category.is_not(None))
         .group_by(RecommendationEvent.query_category).order_by(func.count(RecommendationEvent.id).desc()).limit(10)
     )
+    bot_rows = await db.execute(
+        select(
+            AIAgent.id,
+            AIAgent.name,
+            func.count(RecommendationEvent.id).filter(RecommendationEvent.event_type == "impression"),
+            func.count(RecommendationEvent.id).filter(RecommendationEvent.event_type == "product_click"),
+            func.count(RecommendationEvent.id).filter(RecommendationEvent.event_type == "comparison"),
+            func.count(RecommendationEvent.id).filter(RecommendationEvent.event_type == "rejection"),
+            func.count(RecommendationEvent.id).filter(RecommendationEvent.event_type == "no_result"),
+            func.count(RecommendationEvent.id).filter(RecommendationEvent.event_type == "human_handoff"),
+        )
+        .join(
+            Message,
+            and_(
+                Message.organization_id == RecommendationEvent.organization_id,
+                Message.id == RecommendationEvent.message_id,
+            ),
+        )
+        .join(
+            AIExecution,
+            and_(
+                AIExecution.organization_id == Message.organization_id,
+                or_(
+                    AIExecution.id == Message.source_ai_execution_id,
+                    AIExecution.source_message_id == Message.id,
+                ),
+                AIExecution.kind == "widget_reply",
+            ),
+        )
+        .join(
+            AIAgent,
+            and_(
+                AIAgent.organization_id == AIExecution.organization_id,
+                AIAgent.id == AIExecution.ai_agent_id,
+            ),
+        )
+        .where(*event_scope, AIAgent.organization_id == user.organization_id)
+        .group_by(AIAgent.id, AIAgent.name)
+        .order_by(func.count(RecommendationEvent.id).desc(), AIAgent.name.asc())
+        .limit(50)
+    )
     execution_scope = (
         AIExecution.organization_id == user.organization_id,
         or_(
@@ -111,5 +156,19 @@ async def recommendation_analytics(
         trends=trends, top_recommended_products=await product_leaders("impression"),
         top_clicked_products=await product_leaders("product_click"),
         no_result_categories=[{"category": str(category), "count": int(count)} for category, count in category_rows.all()],
+        bots=[
+            RecommendationBotFunnel(
+                bot_id=bot_id,
+                bot_name=bot_name,
+                impressions=int(impressions),
+                product_clicks=int(clicks),
+                comparisons=int(comparisons),
+                rejections=int(rejections),
+                no_results=int(no_results),
+                human_handoffs=int(handoffs),
+            )
+            for bot_id, bot_name, impressions, clicks, comparisons, rejections, no_results, handoffs
+            in bot_rows.all()
+        ],
     )
 

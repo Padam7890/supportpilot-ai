@@ -4482,6 +4482,25 @@ export interface components {
             /** Total Failed */
             total_failed: number;
         };
+        /** FirstResponseSLAAnalytics */
+        FirstResponseSLAAnalytics: {
+            /** At Risk */
+            at_risk: number;
+            /** Awaiting */
+            awaiting: number;
+            /** Breached */
+            breached: number;
+            /** Compliance Rate */
+            compliance_rate: number | null;
+            /** Met */
+            met: number;
+            /** On Track */
+            on_track: number;
+            /** Overdue */
+            overdue: number;
+            /** Tickets */
+            tickets: number;
+        };
         /** FirstResponseSlaOut */
         FirstResponseSlaOut: {
             /**
@@ -5677,6 +5696,8 @@ export interface components {
             attribution_window_days: number;
             /** Average Latency Ms */
             average_latency_ms: number | null;
+            /** Bots */
+            bots?: components["schemas"]["RecommendationBotFunnel"][];
             /** Comparisons */
             comparisons: number;
             /** Completion Tokens */
@@ -5726,6 +5747,28 @@ export interface components {
             }[];
             /** Trends */
             trends?: components["schemas"]["RecommendationTrendPoint"][];
+        };
+        /** RecommendationBotFunnel */
+        RecommendationBotFunnel: {
+            /**
+             * Bot Id
+             * Format: uuid
+             */
+            bot_id: string;
+            /** Bot Name */
+            bot_name: string;
+            /** Comparisons */
+            comparisons: number;
+            /** Human Handoffs */
+            human_handoffs: number;
+            /** Impressions */
+            impressions: number;
+            /** No Results */
+            no_results: number;
+            /** Product Clicks */
+            product_clicks: number;
+            /** Rejections */
+            rejections: number;
         };
         /** RecommendationEventIn */
         RecommendationEventIn: {
@@ -6532,6 +6575,7 @@ export interface components {
             p95_first_response_seconds?: number | null;
             /** Responded */
             responded: number;
+            sla?: components["schemas"]["FirstResponseSLAAnalytics"] | null;
             /**
              * Start Date
              * Format: date
@@ -7267,6 +7311,7 @@ export interface components {
             actions?: components["schemas"]["CanvasPosition"][];
             /** Conditions */
             conditions?: components["schemas"]["CanvasPosition"][];
+            else_action?: components["schemas"]["CanvasPosition"] | null;
             trigger: components["schemas"]["CanvasPosition"];
         };
         /** WorkflowCreate */
@@ -15570,6 +15615,7 @@ export interface operations {
                 needs_approval?: boolean;
                 unread_only?: boolean;
                 overdue_only?: boolean;
+                sla_status?: string | null;
                 search?: string | null;
                 limit?: number;
                 cursor?: string | null;

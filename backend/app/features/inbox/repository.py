@@ -7,11 +7,12 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import Integer, and_, case, cast, exists, func, or_, select, tuple_
+from sqlalchemy import and_, exists, func, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.features.conversations.response_metrics import first_reply_source
+from app.features.inbox.sla_policy import sla_target_minutes_expression
 from app.models import (
     CommerceAction,
     Conversation,
@@ -24,9 +25,6 @@ from app.models import (
     TeamMember,
     User,
 )
-
-DEFAULT_FIRST_RESPONSE_SLA_MINUTES = {"low": 1440, "normal": 480, "high": 120, "urgent": 30}
-
 
 def _filter_fingerprint(filters: dict[str, str | None]) -> str:
     encoded = json.dumps(filters, sort_keys=True, separators=(",", ":")).encode()
@@ -94,6 +92,7 @@ class InboxRepository:
         limit: int,
         cursor: str | None,
         overdue_only: bool = False,
+        sla_status: str | None = None,
     ) -> tuple[list[dict], str | None]:
         normalized_search = search.strip() if search else ""
         filters = {
@@ -105,8 +104,8 @@ class InboxRepository:
             "unread_only": str(unread_only),
             "search": normalized_search.casefold() or None,
         }
-        if overdue_only:
-            filters["overdue_only"] = "True"
+        effective_sla_status = sla_status or ("overdue" if overdue_only else None)
+        filters["sla_status"] = effective_sla_status
         if channel:
             filters["channel"] = channel
         fingerprint = _filter_fingerprint(filters)
@@ -338,25 +337,40 @@ class InboxRepository:
             )
 
         now = datetime.now(UTC)
-        raw_sla = Organization.first_response_sla_minutes[Ticket.priority]
-        raw_minutes = raw_sla.as_string()
-        parsed_minutes = case(
-            (
-                (func.jsonb_typeof(raw_sla) == "number") & raw_minutes.op("~")(r"^[0-9]{1,5}$"),
-                cast(raw_minutes, Integer),
-            ),
-            else_=None,
+        target_minutes = sla_target_minutes_expression(
+            Organization.first_response_sla_minutes,
+            Ticket.priority,
         )
-        target_minutes = case(
-            (parsed_minutes.between(5, 10080), parsed_minutes),
-            else_=case(DEFAULT_FIRST_RESPONSE_SLA_MINUTES, value=Ticket.priority),
-        )
-        if overdue_only:
-            conditions.extend((
-                first_responses.c.first_customer_at.is_not(None),
-                first_responses.c.first_response_at.is_(None),
-                func.extract("epoch", now - first_responses.c.first_customer_at) >= target_minutes * 60,
-            ))
+        if effective_sla_status:
+            first_customer_at = first_responses.c.first_customer_at
+            first_response_at = first_responses.c.first_response_at
+            elapsed_seconds = func.extract("epoch", now - first_customer_at)
+            remaining_seconds = target_minutes * 60 - elapsed_seconds
+            at_risk_threshold_seconds = func.least(60, func.greatest(5, target_minutes * 0.25)) * 60
+            conditions.append(first_customer_at.is_not(None))
+            if effective_sla_status == "met":
+                conditions.extend((
+                    first_response_at.is_not(None),
+                    func.extract("epoch", first_response_at - first_customer_at) <= target_minutes * 60,
+                ))
+            elif effective_sla_status == "breached":
+                conditions.extend((
+                    first_response_at.is_not(None),
+                    func.extract("epoch", first_response_at - first_customer_at) > target_minutes * 60,
+                ))
+            elif effective_sla_status == "overdue":
+                conditions.extend((first_response_at.is_(None), elapsed_seconds >= target_minutes * 60))
+            elif effective_sla_status == "at_risk":
+                conditions.extend((
+                    first_response_at.is_(None),
+                    elapsed_seconds < target_minutes * 60,
+                    remaining_seconds <= at_risk_threshold_seconds,
+                ))
+            else:
+                conditions.extend((
+                    first_response_at.is_(None),
+                    remaining_seconds > at_risk_threshold_seconds,
+                ))
 
         statement = (
             select(

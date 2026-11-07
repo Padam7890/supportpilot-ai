@@ -13,7 +13,7 @@ import { sendMessageSchema } from "@/features/conversations/schemas/conversation
 import { getCurrentUser } from "@/features/auth/api/auth-api";
 import { aiAgentsKey, listAIAgents } from "@/features/ai/api/ai-agent-api";
 import { getInbox, inboxQueryKeys, markConversationRead } from "../api/inbox-api";
-import type { InboxFilters } from "../api/inbox-api";
+import type { InboxFilters, InboxSlaStatus } from "../api/inbox-api";
 import type { InboxItem } from "../types/inbox.types";
 import { formatDateTime } from "@/lib/utils";
 import { CustomerContextPanel } from "./customer-context-panel";
@@ -29,10 +29,18 @@ import { expandSavedReplyAtCursor } from "@/features/saved-replies/utils/expand-
 import { getAttachmentValidationError } from "@/features/attachments/utils/validate-attachment";
 
 const initialFilters: InboxFilters = { scope: "all", status: "", priority: "", channel: "", teamId: "", search: "", needsApproval: false, unreadOnly: false };
+const slaStatuses: Array<{ value: InboxSlaStatus; label: string }> = [
+  { value: "met", label: "Met" }, { value: "breached", label: "Breached" },
+  { value: "overdue", label: "Overdue" }, { value: "at_risk", label: "At risk" },
+  { value: "on_track", label: "On track" },
+];
+function isInboxSlaStatus(value: string | undefined): value is InboxSlaStatus {
+  return slaStatuses.some((status) => status.value === value);
+}
 
-export function InboxWorkspace({ initialOverdueOnly = false, initialChannel = "" }: { initialOverdueOnly?: boolean; initialChannel?: string }) {
+export function InboxWorkspace({ initialOverdueOnly = false, initialSlaStatus, initialChannel = "" }: { initialOverdueOnly?: boolean; initialSlaStatus?: string; initialChannel?: string }) {
   const client = useQueryClient();
-  const [filters, setFilters] = useState<InboxFilters>(() => ({ ...initialFilters, overdueOnly: initialOverdueOnly, channel: initialChannel }));
+  const [filters, setFilters] = useState<InboxFilters>(() => ({ ...initialFilters, slaStatus: isInboxSlaStatus(initialSlaStatus) ? initialSlaStatus : initialOverdueOnly ? "overdue" : undefined, channel: initialChannel }));
   const [searchDraft, setSearchDraft] = useState("");
   const [selectedTicket, setSelectedTicket] = useState<InboxItem | null>(null);
   const [selectedConversation, setSelectedConversation] = useState("");
@@ -66,7 +74,7 @@ export function InboxWorkspace({ initialOverdueOnly = false, initialChannel = ""
     || Boolean(filters.search)
     || filters.needsApproval
     || filters.unreadOnly
-    || filters.overdueOnly
+    || Boolean(filters.slaStatus)
     || Boolean(searchDraft);
   const activeTicket = selectedTicket ? rows.find((item) => item.ticketId === selectedTicket.ticketId) ?? selectedTicket : null;
   const conversations = useQuery({
@@ -339,18 +347,7 @@ export function InboxWorkspace({ initialOverdueOnly = false, initialChannel = ""
             <button aria-pressed={filters.needsApproval} onClick={() => changeFilters((value) => ({ ...value, needsApproval: !value.needsApproval, unreadOnly: false }))} className={`shrink-0 rounded-full px-3 py-1.5 text-[11px] font-semibold transition ${filters.needsApproval ? "bg-amber-50 text-amber-700" : "bg-white text-slate-600 hover:bg-slate-100"}`}>Needs approval</button>
             <button aria-pressed={filters.unreadOnly} onClick={() => changeFilters((value) => ({ ...value, unreadOnly: !value.unreadOnly, needsApproval: false }))} className={`shrink-0 rounded-full px-3 py-1.5 text-[11px] font-semibold transition ${filters.unreadOnly ? "bg-blue-50 text-blue-700" : "bg-white text-slate-600 hover:bg-slate-100"}`}>Unread</button>
           </div>
-          <label className="flex items-center gap-2 text-xs">
-            <input
-              type="checkbox"
-              checked={Boolean(filters.overdueOnly)}
-              onChange={(event) => {
-                const overdueOnly = event.target.checked;
-                changeFilters((value) => ({ ...value, overdueOnly }));
-              }}
-            />
-            Overdue first reply
-          </label>
-          <div className="flex flex-wrap items-center gap-2"><Select aria-label="Filter by status" className="py-1.5 text-xs" value={filters.status} onChange={(e) => changeFilters((value) => ({ ...value, status: e.target.value }))}><option value="">All statuses</option>{["open", "pending", "resolved", "closed"].map((s) => <option key={s} value={s}>{titleCase(s)}</option>)}</Select><Select aria-label="Filter by priority" className="py-1.5 text-xs" value={filters.priority} onChange={(e) => changeFilters((value) => ({ ...value, priority: e.target.value }))}><option value="">Any priority</option>{["low", "normal", "high", "urgent"].map((s) => <option key={s} value={s}>{titleCase(s)}</option>)}</Select><Select aria-label="Filter by channel" className="py-1.5 text-xs" value={filters.channel ?? ""} onChange={(e) => changeFilters((value) => ({ ...value, channel: e.target.value }))}><option value="">All channels</option>{[["shopify_widget", "Shopify widget"], ["web", "Web"], ["chat", "Chat"], ["email", "Email"], ["api", "API"]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select><Select aria-label="Filter by team" className="py-1.5 text-xs" value={filters.teamId ?? ""} onChange={(e) => changeFilters((value) => ({ ...value, teamId: e.target.value }))}><option value="">All teams</option>{teams.data?.filter((team) => team.is_active).map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</Select>{teams.isPending && <span role="status" className="text-xs text-slate-500">Loading teams…</span>}{teams.isError && <span role="status" className="text-xs text-amber-700">Team filter unavailable</span>}{hasActiveFilters && <button type="button" onClick={clearFilters} className="shrink-0 rounded-lg px-2 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-50">Clear</button>}</div>
+          <div className="flex flex-wrap items-center gap-2"><Select aria-label="Filter by status" className="py-1.5 text-xs" value={filters.status} onChange={(e) => changeFilters((value) => ({ ...value, status: e.target.value }))}><option value="">All statuses</option>{["open", "pending", "resolved", "closed"].map((s) => <option key={s} value={s}>{titleCase(s)}</option>)}</Select><Select aria-label="Filter by priority" className="py-1.5 text-xs" value={filters.priority} onChange={(e) => changeFilters((value) => ({ ...value, priority: e.target.value }))}><option value="">Any priority</option>{["low", "normal", "high", "urgent"].map((s) => <option key={s} value={s}>{titleCase(s)}</option>)}</Select><Select aria-label="Filter first-response SLA" className="py-1.5 text-xs" value={filters.slaStatus ?? ""} onChange={(e) => changeFilters((value) => ({ ...value, slaStatus: isInboxSlaStatus(e.target.value) ? e.target.value : undefined }))}><option value="">Any SLA</option>{slaStatuses.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}</Select><Select aria-label="Filter by channel" className="py-1.5 text-xs" value={filters.channel ?? ""} onChange={(e) => changeFilters((value) => ({ ...value, channel: e.target.value }))}><option value="">All channels</option>{[["shopify_widget", "Shopify widget"], ["web", "Web"], ["chat", "Chat"], ["email", "Email"], ["api", "API"]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select><Select aria-label="Filter by team" className="py-1.5 text-xs" value={filters.teamId ?? ""} onChange={(e) => changeFilters((value) => ({ ...value, teamId: e.target.value }))}><option value="">All teams</option>{teams.data?.filter((team) => team.is_active).map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</Select>{teams.isPending && <span role="status" className="text-xs text-slate-500">Loading teams…</span>}{teams.isError && <span role="status" className="text-xs text-amber-700">Team filter unavailable</span>}{hasActiveFilters && <button type="button" onClick={clearFilters} className="shrink-0 rounded-lg px-2 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-50">Clear</button>}</div>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto" aria-live="polite">
           {inbox.isPending && <div className="space-y-3 p-4">{[1,2,3,4].map((i) => <div key={i} className="h-24 animate-pulse rounded-xl bg-slate-100"/>)}</div>}

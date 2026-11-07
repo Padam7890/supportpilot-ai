@@ -76,6 +76,17 @@ class RecommendationTrendPoint(BaseModel):
     handoffs: int
 
 
+class RecommendationBotFunnel(BaseModel):
+    bot_id: UUID
+    bot_name: str
+    impressions: int
+    product_clicks: int
+    comparisons: int
+    rejections: int
+    no_results: int
+    human_handoffs: int
+
+
 class RecommendationAnalyticsOut(BaseModel):
     start_date: str
     end_date: str
@@ -101,3 +112,4 @@ class RecommendationAnalyticsOut(BaseModel):
     top_recommended_products: list[dict[str, str | int]] = Field(default_factory=list)
     top_clicked_products: list[dict[str, str | int]] = Field(default_factory=list)
     no_result_categories: list[dict[str, str | int]] = Field(default_factory=list)
+    bots: list[RecommendationBotFunnel] = Field(default_factory=list)

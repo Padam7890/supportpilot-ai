@@ -26,12 +26,13 @@ const addStepPopoverItemClass =
 type CanvasNode =
   | { kind: "trigger" }
   | { kind: "condition"; index: number }
-  | { kind: "action"; index: number };
+  | { kind: "action"; index: number }
+  | { kind: "else_action" };
 
 type DragState = { node: CanvasNode; clientX: number; clientY: number; initialLayout: WorkflowCanvasLayout };
 
 function connectorNodeKey(node: CanvasNode): string {
-  return node.kind === "trigger" ? "trigger" : `${node.kind}-${node.index}`;
+  return node.kind === "trigger" ? "trigger" : node.kind === "else_action" ? "else-action" : `${node.kind}-${node.index}`;
 }
 
 function isSameConnectorOpen(open: CanvasNode | null, node: CanvasNode): boolean {
@@ -39,6 +40,7 @@ function isSameConnectorOpen(open: CanvasNode | null, node: CanvasNode): boolean
   if (open.kind === "trigger" && node.kind === "trigger") return true;
   if (open.kind === "condition" && node.kind === "condition") return open.index === node.index;
   if (open.kind === "action" && node.kind === "action") return open.index === node.index;
+  if (open.kind === "else_action" && node.kind === "else_action") return true;
   return false;
 }
 
@@ -55,6 +57,10 @@ function nodePosition(layout: WorkflowCanvasLayout, node: CanvasNode): CanvasPos
     const fallback = defaultCanvasLayout(conds.length, node.index + 1).actions[node.index];
     return acts[node.index] ?? fallback ?? { x: fallbackX, y: 352 };
   }
+  if (node.kind === "else_action") {
+    const lastY = 48 + WORKFLOW_CANVAS.verticalStep * (1 + layout.conditions.length);
+    return layout.else_action ?? { x: 32, y: lastY };
+  }
   return layout.trigger;
 }
 
@@ -69,6 +75,7 @@ function withNodePosition(layout: WorkflowCanvasLayout, node: CanvasNode, positi
     actions[node.index] = position;
     return { ...layout, actions };
   }
+  if (node.kind === "else_action") return { ...layout, else_action: position };
   return { ...layout, trigger: position };
 }
 
@@ -345,8 +352,12 @@ export function AutomationNodeCanvas({
   }
 
   const canvasHeight = Math.max(560, ...orderedNodes.map((node) => nodePosition(canvasLayout, node).y + CANVAS_BOTTOM_PADDING));
+  const elseActionNode: CanvasNode = { kind: "else_action" };
+  const contentHeight = draft.elseNote
+    ? Math.max(canvasHeight, nodePosition(canvasLayout, elseActionNode).y + CANVAS_BOTTOM_PADDING)
+    : canvasHeight;
   /** Unscaled layout height (`transform: scale` does not affect scroll overflow; outer wrapper uses scaled size). */
-  const layoutCanvasHeight = Math.max(520, canvasHeight);
+  const layoutCanvasHeight = Math.max(520, contentHeight);
   const scaledCanvasWidth = CANVAS_WIDTH * zoom;
   const scaledCanvasHeight = layoutCanvasHeight * zoom;
 
@@ -538,6 +549,7 @@ export function AutomationNodeCanvas({
                   </g>
                 );
               })}
+              {draft.elseNote && draft.conditions.length > 0 && <path d={connectorPath({ kind: "condition", index: draft.conditions.length - 1 }, elseActionNode)} fill="none" stroke="#d97706" strokeWidth={1.75} strokeDasharray="6 5" strokeLinecap="round" markerEnd="url(#automation-canvas-arrow)" aria-hidden="true"/>}
             </svg>
 
             <div
@@ -690,6 +702,21 @@ export function AutomationNodeCanvas({
                 </div>
               );
             })}
+            {draft.elseNote && (
+              <div
+                data-automation-step="else-action"
+                role="group"
+                aria-label="No-match branch: add an internal note"
+                className={`${nodeClass} border-amber-300 bg-amber-50/80`}
+                style={positionStyle(elseActionNode)}
+              >
+                <div className="flex items-start gap-3">
+                  <span className="grid size-8 shrink-0 place-items-center rounded-md bg-amber-100 text-amber-800" aria-hidden="true"><Filter size={16}/></span>
+                  <span className="min-w-0 flex-1"><span className="block text-[10px] font-semibold uppercase tracking-wide text-amber-800">No-match branch</span><span className="mt-0.5 block text-sm font-semibold text-slate-900">Add internal note</span><span className="mt-1 block line-clamp-2 text-xs text-slate-600">{draft.elseNote}</span></span>
+                  {renderMoveHandle(elseActionNode, "no-match branch")}
+                </div>
+              </div>
+            )}
             </div>
 
             {draft.conditions.length === 0 && (

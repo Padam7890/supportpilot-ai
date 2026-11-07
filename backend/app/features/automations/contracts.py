@@ -220,6 +220,7 @@ class WorkflowCanvasLayout(StrictModel):
     trigger: CanvasPosition
     conditions: list[CanvasPosition] = Field(default_factory=list, max_length=10)
     actions: list[CanvasPosition] = Field(default_factory=list, max_length=10)
+    else_action: CanvasPosition | None = None
 
     @model_validator(mode="before")
     @classmethod
