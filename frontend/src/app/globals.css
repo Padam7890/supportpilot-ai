@@ -15,6 +15,7 @@
   --text-muted: #64748b;
   --text-disabled: #94a3b8;
   --text-accent: #2563eb;
+  --text-on-accent: #ffffff;
 }
 
 @theme inline {
@@ -33,6 +34,7 @@ html[data-theme="dark"] {
   --text-muted: #94a3b8;
   --text-disabled: #64748b;
   --text-accent: #60a5fa;
+  --text-on-accent: #0b1120;
   --color-white: #111827;
   --color-slate-50: #0b1120;
   --color-slate-100: #172033;
@@ -99,8 +101,8 @@ html[data-typography-scale="comfortable"] {
 }
 
 :focus-visible {
-  outline: 3px solid color-mix(in srgb, var(--accent), transparent 35%);
-  outline-offset: 2px;
+  outline: 2px solid color-mix(in srgb, var(--accent), transparent 25%);
+  outline-offset: 1px;
 }
 
 @media (prefers-reduced-motion: reduce) {

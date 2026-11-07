@@ -3,45 +3,39 @@ from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
 from app.api.deps import get_current_user, require_roles
 from app.db.session import get_db
+from app.features.attachments.policy import (
+    ALLOWED_ATTACHMENT_TYPES,
+    MAX_ATTACHMENT_BYTES,
+    MAX_ATTACHMENTS_PER_CONVERSATION,
+    MAX_CONVERSATION_ATTACHMENT_BYTES,
+)
+from app.features.attachments.schemas import ConversationAttachmentOut
 from app.models import Conversation, ConversationAttachment, TicketActivity, User
 from app.schemas.errors import COMMON_ERROR_RESPONSES
-from app.features.attachments.schemas import ConversationAttachmentOut
 
 router = APIRouter(tags=["attachments"], responses=COMMON_ERROR_RESPONSES)
-MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 
 
-def _is_utf8_text(data: bytes) -> bool:
-    try:
-        return b"\x00" not in data and data.decode("utf-8") is not None
-    except UnicodeDecodeError:
-        return False
-
-
-ALLOWED_ATTACHMENT_TYPES = {
-    ".png": ("image/png", lambda data: data.startswith(b"\x89PNG\r\n\x1a\n")),
-    ".jpg": ("image/jpeg", lambda data: data.startswith(b"\xff\xd8\xff")),
-    ".jpeg": ("image/jpeg", lambda data: data.startswith(b"\xff\xd8\xff")),
-    ".webp": ("image/webp", lambda data: len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP"),
-    ".pdf": ("application/pdf", lambda data: data.startswith(b"%PDF-")),
-    ".txt": ("text/plain", _is_utf8_text),
-    ".md": ("text/markdown", _is_utf8_text),
-}
-
-
-async def _owned_conversation(db: AsyncSession, organization_id: UUID, conversation_id: UUID) -> Conversation:
-    conversation = await db.scalar(
-        select(Conversation).where(
-            Conversation.organization_id == organization_id,
-            Conversation.id == conversation_id,
-        )
+async def _owned_conversation(
+    db: AsyncSession,
+    organization_id: UUID,
+    conversation_id: UUID,
+    *,
+    lock: bool = False,
+) -> Conversation:
+    statement = select(Conversation).where(
+        Conversation.organization_id == organization_id,
+        Conversation.id == conversation_id,
     )
+    if lock:
+        statement = statement.with_for_update()
+    conversation = await db.scalar(statement)
     if conversation is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return conversation
@@ -85,13 +79,25 @@ async def upload_conversation_attachment(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_roles("owner", "admin", "agent")),
 ) -> ConversationAttachmentOut:
-    conversation = await _owned_conversation(db, user.organization_id, conversation_id)
+    conversation = await _owned_conversation(db, user.organization_id, conversation_id, lock=True)
     filename = PurePath(name.replace("\\", "/")).name.strip()
     suffix = PurePath(filename).suffix.casefold()
     file_rule = ALLOWED_ATTACHMENT_TYPES.get(suffix)
     mime = request.headers.get("content-type", "").split(";", 1)[0].strip().casefold()
     if not filename or file_rule is None or mime != file_rule[0]:
         raise HTTPException(status_code=415, detail="Attach a PNG, JPEG, WebP, PDF, TXT, or Markdown file")
+
+    attachment_count = await db.scalar(
+        select(func.count(ConversationAttachment.id)).where(
+            ConversationAttachment.organization_id == user.organization_id,
+            ConversationAttachment.conversation_id == conversation.id,
+        )
+    )
+    if (attachment_count or 0) >= MAX_ATTACHMENTS_PER_CONVERSATION:
+        raise HTTPException(
+            status_code=409,
+            detail=f"This conversation already has the maximum of {MAX_ATTACHMENTS_PER_CONVERSATION} team files",
+        )
 
     content = bytearray()
     async for chunk in request.stream():
@@ -103,6 +109,16 @@ async def upload_conversation_attachment(
         raise HTTPException(status_code=400, detail="Attachment is empty")
     if not file_rule[1](payload):
         raise HTTPException(status_code=415, detail="File content does not match its declared type")
+
+    total_size = await db.scalar(
+        select(func.coalesce(func.sum(ConversationAttachment.size_bytes), 0)).where(
+            ConversationAttachment.organization_id == user.organization_id,
+            ConversationAttachment.conversation_id == conversation.id,
+        )
+    )
+    if (total_size or 0) + len(payload) > MAX_CONVERSATION_ATTACHMENT_BYTES:
+        total_limit_mb = MAX_CONVERSATION_ATTACHMENT_BYTES // (1024 * 1024)
+        raise HTTPException(status_code=413, detail=f"Team files for this conversation are limited to {total_limit_mb} MB total")
 
     item = ConversationAttachment(
         organization_id=user.organization_id,

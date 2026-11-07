@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import Link from "next/link";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Bot, Check, CheckCircle2, Download, LoaderCircle, Paperclip, PanelRight, RefreshCw, Search, Send, Sparkles, Trash2, UserRoundPlus, UserRound } from "lucide-react";
@@ -24,6 +24,8 @@ import { inboxQueryRetryDelay, shouldRetryInboxQuery } from "../utils/query-retr
 import { activeTeamsQueryKey, listActiveTeams } from "@/features/organization/api/team-api";
 import { listSavedReplies, savedRepliesQueryKey } from "@/features/saved-replies/api/saved-replies-api";
 import { conversationAttachmentsKey, deleteConversationAttachment, downloadConversationAttachment, listConversationAttachments, uploadConversationAttachment } from "@/features/attachments/api/conversation-attachment-api";
+import { expandSavedReplyAtCursor } from "@/features/saved-replies/utils/expand-shortcut";
+import { getAttachmentValidationError } from "@/features/attachments/utils/validate-attachment";
 
 const initialFilters: InboxFilters = { scope: "all", status: "", priority: "", teamId: "", search: "", needsApproval: false, unreadOnly: false };
 
@@ -35,7 +37,10 @@ export function InboxWorkspace() {
   const [selectedConversation, setSelectedConversation] = useState("");
   const [showDetails, setShowDetails] = useState(false);
   const [reply, setReply] = useState("");
+  const replyInputRef = useRef<HTMLTextAreaElement>(null);
   const [attachmentValidationError, setAttachmentValidationError] = useState<string | null>(null);
+  const [fileDropActive, setFileDropActive] = useState(false);
+  const attachmentDetailsRef = useRef<HTMLDetailsElement>(null);
   const [shopifyOrderNumber, setShopifyOrderNumber] = useState("");
   const [composeMode, setComposeMode] = useState<"reply" | "note">("reply");
   const [draftExecutionId, setDraftExecutionId] = useState<string>();
@@ -220,6 +225,8 @@ export function InboxWorkspace() {
   function chooseConversation(id: string) {
     setReply("");
     setSelectedConversation(id);
+    setAttachmentValidationError(null);
+    setFileDropActive(false);
     setComposeMode("reply");
     setDraftExecutionId(undefined);
     createDraft.reset();
@@ -230,6 +237,8 @@ export function InboxWorkspace() {
     setSelectedConversation("");
     setShowDetails(false);
     setReply("");
+    setAttachmentValidationError(null);
+    setFileDropActive(false);
     setShopifyOrderNumber("");
     setDraftExecutionId(undefined);
     setComposeMode("reply");
@@ -244,6 +253,8 @@ export function InboxWorkspace() {
     setComposeMode("reply");
     setSelectedTicket(item);
     setSelectedConversation("");
+    setAttachmentValidationError(null);
+    setFileDropActive(false);
     setShopifyOrderNumber("");
     setDraftExecutionId(undefined);
     createDraft.reset();
@@ -264,15 +275,19 @@ export function InboxWorkspace() {
     enabled: Boolean(activeConversationId && me.data?.organization_id),
   });
   const uploadAttachment = useMutation({
-    mutationFn: (file: File) => uploadConversationAttachment(activeConversationId, file),
-    onSuccess: async () => client.invalidateQueries({ queryKey: attachmentsKey }),
+    mutationFn: ({ conversationId, file }: { conversationId: string; file: File }) => uploadConversationAttachment(conversationId, file),
+    onSuccess: async (_attachment, variables) => client.invalidateQueries({
+      queryKey: conversationAttachmentsKey(me.data?.organization_id, variables.conversationId),
+    }),
   });
   const removeAttachment = useMutation({
-    mutationFn: deleteConversationAttachment,
-    onSuccess: async () => client.invalidateQueries({ queryKey: attachmentsKey }),
+    mutationFn: ({ attachmentId }: { attachmentId: string; conversationId: string }) => deleteConversationAttachment(attachmentId),
+    onSuccess: async (_result, variables) => client.invalidateQueries({
+      queryKey: conversationAttachmentsKey(me.data?.organization_id, variables.conversationId),
+    }),
   });
   const downloadAttachment = useMutation({
-    mutationFn: downloadConversationAttachment,
+    mutationFn: ({ attachmentId }: { attachmentId: string; conversationId: string }) => downloadConversationAttachment(attachmentId),
     onSuccess: ({ blob, filename }) => {
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
@@ -282,6 +297,28 @@ export function InboxWorkspace() {
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     },
   });
+  const handleAttachmentDrop = (event: DragEvent<HTMLDivElement>) => {
+    if (!canReply || !activeConversationId || !Array.from(event.dataTransfer.types).includes("Files")) return;
+    event.preventDefault();
+    setFileDropActive(false);
+    attachmentDetailsRef.current?.setAttribute("open", "");
+    const files = Array.from(event.dataTransfer.files);
+    if (files.length !== 1) {
+      setAttachmentValidationError("Drop one file at a time.");
+      return;
+    }
+    if (uploadAttachment.isPending) {
+      setAttachmentValidationError("Wait for the current upload to finish before adding another file.");
+      return;
+    }
+    const validationError = getAttachmentValidationError(files[0]);
+    if (validationError) {
+      setAttachmentValidationError(validationError);
+      return;
+    }
+    setAttachmentValidationError(null);
+    uploadAttachment.mutate({ conversationId: activeConversationId, file: files[0] });
+  };
   const refreshTicket = async () => {
     await Promise.all([client.invalidateQueries({ queryKey: ["inbox"] }), client.invalidateQueries({ queryKey: ["ticket-activity", activeTicket?.ticketId] })]);
   };
@@ -293,9 +330,9 @@ export function InboxWorkspace() {
       <section aria-label="Inbox tickets" className={`${activeTicket ? "hidden lg:flex" : "flex"} w-full flex-col border-r border-slate-200 lg:w-[300px] lg:shrink-0 2xl:w-[340px]`}>
         <header className="space-y-4 border-b border-slate-200 bg-slate-50 px-4 pb-4 pt-5">
           <div className="flex items-center justify-between"><div><h1 className="text-[21px] font-bold tracking-tight text-slate-900">Inbox</h1><p className="mt-1 text-xs text-slate-500">Showing {rows.length}{inbox.hasNextPage ? "+" : ""} tickets</p></div><Button size="sm" variant="secondary" aria-label="Refresh inbox" title="Refresh inbox" onClick={() => inbox.refetch()}><RefreshCw size={15}/></Button></div>
-          <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-3 shadow-sm focus-within:border-blue-500/50 focus-within:ring-4 focus-within:ring-blue-500/10"><Search size={16} className="shrink-0 text-slate-400"/><span className="sr-only">Search inbox</span><input className="min-w-0 flex-1 bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-500" placeholder="Search customers or messages" value={searchDraft} onChange={(e) => setSearchDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") changeFilters((value) => ({ ...value, search: searchDraft })); }}/><button type="button" aria-label="Apply inbox search" className="text-xs font-semibold text-blue-700" onClick={() => changeFilters((value) => ({ ...value, search: searchDraft }))}>Search</button></label>
+          <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-3 shadow-sm focus-within:border-blue-500/50 focus-within:ring-2 focus-within:ring-blue-500/10"><Search size={16} className="shrink-0 text-slate-400"/><span className="sr-only">Search inbox</span><input className="min-w-0 flex-1 bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-500" placeholder="Search customers or messages" value={searchDraft} onChange={(e) => setSearchDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") changeFilters((value) => ({ ...value, search: searchDraft })); }}/><button type="button" aria-label="Apply inbox search" className="text-xs font-semibold text-blue-700" onClick={() => changeFilters((value) => ({ ...value, search: searchDraft }))}>Search</button></label>
           <div className="flex flex-wrap gap-1.5 pb-0.5" aria-label="Inbox views">
-            {(["all", "mine", "unassigned", "my_teams"] as const).map((scope) => <button key={scope} aria-pressed={filters.scope === scope && !filters.needsApproval && !filters.unreadOnly} onClick={() => changeFilters((value) => ({ ...value, scope, needsApproval: false, unreadOnly: false }))} className={`shrink-0 rounded-full px-3 py-1.5 text-[11px] font-semibold transition ${filters.scope === scope && !filters.needsApproval && !filters.unreadOnly ? "bg-blue-700 text-white shadow-sm" : "bg-white text-slate-600 hover:bg-slate-100"}`}>{scope === "mine" ? "Mine" : scope === "all" ? "All" : scope === "unassigned" ? "Unassigned" : "My teams"}</button>)}
+            {(["all", "mine", "unassigned", "my_teams"] as const).map((scope) => <button key={scope} aria-pressed={filters.scope === scope && !filters.needsApproval && !filters.unreadOnly} onClick={() => changeFilters((value) => ({ ...value, scope, needsApproval: false, unreadOnly: false }))} className={`shrink-0 rounded-full px-3 py-1.5 text-[11px] font-semibold transition ${filters.scope === scope && !filters.needsApproval && !filters.unreadOnly ? "bg-blue-700 text-[var(--text-on-accent)] shadow-sm" : "bg-white text-slate-600 hover:bg-slate-100"}`}>{scope === "mine" ? "Mine" : scope === "all" ? "All" : scope === "unassigned" ? "Unassigned" : "My teams"}</button>)}
             <button aria-pressed={filters.needsApproval} onClick={() => changeFilters((value) => ({ ...value, needsApproval: !value.needsApproval, unreadOnly: false }))} className={`shrink-0 rounded-full px-3 py-1.5 text-[11px] font-semibold transition ${filters.needsApproval ? "bg-amber-50 text-amber-700" : "bg-white text-slate-600 hover:bg-slate-100"}`}>Needs approval</button>
             <button aria-pressed={filters.unreadOnly} onClick={() => changeFilters((value) => ({ ...value, unreadOnly: !value.unreadOnly, needsApproval: false }))} className={`shrink-0 rounded-full px-3 py-1.5 text-[11px] font-semibold transition ${filters.unreadOnly ? "bg-blue-50 text-blue-700" : "bg-white text-slate-600 hover:bg-slate-100"}`}>Unread</button>
           </div>
@@ -305,7 +342,7 @@ export function InboxWorkspace() {
           {inbox.isPending && <div className="space-y-3 p-4">{[1,2,3,4].map((i) => <div key={i} className="h-24 animate-pulse rounded-xl bg-slate-100"/>)}</div>}
           {inbox.isError && <div role="alert" className="m-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><p className="font-semibold">Could not load the inbox</p><p className="mt-1 break-words text-xs">{formatInboxRequestError(inbox.error, "The inbox request failed.")}</p><button className="mt-2 font-semibold underline" onClick={() => inbox.refetch()}>Try again</button></div>}
           {!inbox.isPending && !inbox.isError && rows.length === 0 && <div className="p-8 text-center"><p className="font-semibold">No tickets match</p><p className="mt-1 text-sm text-slate-500">Change a filter or clear your search.</p></div>}
-          {rows.map((item) => <button key={item.ticketId} onClick={() => selectTicket(item)} aria-pressed={activeTicket?.ticketId === item.ticketId} className={`mx-2 my-1.5 w-[calc(100%-1rem)] rounded-xl border border-transparent px-3 py-3.5 text-left transition hover:border-slate-200 hover:bg-white ${activeTicket?.ticketId === item.ticketId ? "border-slate-200 bg-white shadow-sm" : "bg-transparent"}`}><div className="flex items-start gap-3"><Avatar name={item.customer.name}/><div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-2"><p className={`truncate text-sm ${item.unreadCount ? "font-bold text-slate-950" : "font-semibold text-slate-700"}`}>{item.customer.name}</p><time className="shrink-0 text-[11px] text-slate-500">{relative(item.updatedAt)}</time></div><p className="mt-1 truncate text-[13px] font-medium text-slate-800">{item.subject}</p><p className="mt-1 truncate text-xs text-slate-500">{item.latestMessage?.preview ?? "No messages yet"}</p><div className="mt-2 flex flex-wrap items-center gap-2"><StatusPill value={item.status}/><span className="text-[11px] capitalize text-slate-500">{item.priority}</span>{item.firstResponseSla && <SlaPill sla={item.firstResponseSla}/>}{item.team && <span className={`max-w-28 truncate rounded-full px-2 py-0.5 text-[10px] font-medium ${item.team.is_active ? "bg-violet-50 text-violet-700" : "bg-slate-100 text-slate-500"}`} title={item.team.is_active ? `Team: ${item.team.name}` : `Inactive team: ${item.team.name}`}>{item.team.name}{item.team.is_active ? "" : " · inactive"}</span>}{item.assignee && <span className="ml-auto max-w-24 truncate text-[10px] text-slate-500">{item.assignee.name}</span>}{item.unreadCount > 0 && <span aria-label={`${item.unreadCount} unread customer messages`} title={`${item.unreadCount} unread customer messages`} className="ml-auto rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-bold text-slate-50">{item.unreadCount}</span>}</div></div></div></button>)}
+          {rows.map((item) => <button key={item.ticketId} onClick={() => selectTicket(item)} aria-pressed={activeTicket?.ticketId === item.ticketId} className={`mx-2 my-1.5 w-[calc(100%-1rem)] rounded-xl border border-transparent px-3 py-3.5 text-left transition hover:border-slate-200 hover:bg-white ${activeTicket?.ticketId === item.ticketId ? "border-slate-200 bg-white shadow-sm" : "bg-transparent"}`}><div className="flex items-start gap-3"><Avatar name={item.customer.name}/><div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-2"><p className={`truncate text-sm ${item.unreadCount ? "font-bold text-slate-950" : "font-semibold text-slate-700"}`}>{item.customer.name}</p><time className="shrink-0 text-[11px] text-slate-500">{relative(item.updatedAt)}</time></div><p className="mt-1 truncate text-[13px] font-medium text-slate-800">{item.subject}</p><p className="mt-1 truncate text-xs text-slate-500">{item.latestMessage?.preview ?? "No messages yet"}</p><div className="mt-2 flex flex-wrap items-center gap-2"><StatusPill value={item.status}/><span className="text-[11px] capitalize text-slate-500">{item.priority}</span>{item.firstResponseSla && <SlaPill sla={item.firstResponseSla}/>}{item.team && <span className={`max-w-28 truncate rounded-full px-2 py-0.5 text-[10px] font-medium ${item.team.is_active ? "bg-violet-50 text-violet-700" : "bg-slate-100 text-slate-500"}`} title={item.team.is_active ? `Team: ${item.team.name}` : `Inactive team: ${item.team.name}`}>{item.team.name}{item.team.is_active ? "" : " · inactive"}</span>}{item.assignee && <span className="ml-auto max-w-24 truncate text-[10px] text-slate-500">{item.assignee.name}</span>}{item.unreadCount > 0 && <span aria-label={`${item.unreadCount} unread customer messages`} title={`${item.unreadCount} unread customer messages`} className="ml-auto rounded-full bg-[var(--accent)] px-2 py-0.5 text-[10px] font-bold text-[var(--text-on-accent)]">{item.unreadCount}</span>}</div></div></div></button>)}
           {inbox.hasNextPage && <div className="p-4"><Button variant="secondary" className="w-full" disabled={inbox.isFetchingNextPage} onClick={() => inbox.fetchNextPage()}>{inbox.isFetchingNextPage ? "Loading…" : "Load more"}</Button></div>}
         </div>
       </section>
@@ -327,7 +364,7 @@ export function InboxWorkspace() {
               <div className="min-w-0 flex-1"><p className="text-xs font-semibold text-slate-700">Reply mode</p><p className="text-[11px] text-slate-500">{selectedThread.ai_mode === "ai" ? "AI handles new messages; sensitive requests can still need review." : "AI is paused. Your team handles this thread."}</p><p className="mt-1 text-[11px] text-slate-500">Routed bot: <span className="font-medium text-slate-700">{aiAgents.data?.items.find((agent) => agent.id === selectedThread.ai_agent_id)?.name ?? "Configured AI bot"}</span>{selectedThread.ai_agent_override ? " · manually selected" : " · automatic routing"}</p></div>
               <label className="block min-w-44 text-[11px] font-semibold text-slate-600">Bot for this conversation<Select aria-label="Bot for this conversation" className="mt-1 min-h-9 w-full px-2 text-xs" value={selectedThread.ai_agent_override ? selectedThread.ai_agent_id : ""} disabled={!canReply || aiAgents.isPending || aiAgents.isError || changeConversationAgent.isPending} onChange={(event) => changeConversationAgent.mutate(event.target.value || null)}><option value="">Automatic routing</option>{aiAgents.data?.items.filter((agent) => agent.status === "active").map((agent) => <option key={agent.id} value={agent.id}>{agent.name}{agent.is_default ? " · default" : ""}</option>)}</Select></label>
               <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1" role="group" aria-label="Conversation reply mode">
-                <button type="button" aria-pressed={selectedThread.ai_mode === "ai"} disabled={!canReply || changeAIMode.isPending} onClick={() => changeAIMode.mutate("ai")} className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition ${selectedThread.ai_mode === "ai" ? "bg-indigo-600 text-slate-50 shadow-sm" : "text-slate-600 hover:bg-white"}`}><Bot size={14}/>AI mode</button>
+                <button type="button" aria-pressed={selectedThread.ai_mode === "ai"} disabled={!canReply || changeAIMode.isPending} onClick={() => changeAIMode.mutate("ai")} className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition ${selectedThread.ai_mode === "ai" ? "bg-[var(--accent)] text-[var(--text-on-accent)] shadow-sm" : "text-slate-600 hover:bg-white"}`}><Bot size={14}/>AI mode</button>
                 <button type="button" aria-pressed={selectedThread.ai_mode === "human"} disabled={!canReply || changeAIMode.isPending} onClick={() => changeAIMode.mutate("human")} className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition ${selectedThread.ai_mode === "human" ? "bg-slate-800 text-slate-50 shadow-sm" : "text-slate-600 hover:bg-white"}`}><UserRound size={14}/>Human mode</button>
               </div>
               {changeAIMode.isError && <p role="alert" className="w-full text-xs text-red-700">{changeAIMode.error instanceof Error ? changeAIMode.error.message : "Reply mode could not be changed."}</p>}
@@ -337,15 +374,26 @@ export function InboxWorkspace() {
           {(claimTicket.isError || resolveTicket.isError) && <p role="alert" className="border-b border-red-100 bg-red-50 px-4 py-2 text-xs text-red-700">{claimTicket.error instanceof Error ? claimTicket.error.message : resolveTicket.error instanceof Error ? resolveTicket.error.message : "Ticket update failed."}</p>}
           <div
             ref={transcriptRef}
+            onDragOver={(event) => {
+              if (!canReply || !activeConversationId || !Array.from(event.dataTransfer.types).includes("Files")) return;
+              event.preventDefault();
+              setFileDropActive(true);
+            }}
+            onDragLeave={(event) => {
+              if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
+              setFileDropActive(false);
+            }}
+            onDrop={handleAttachmentDrop}
             onScroll={() => {
               const element = transcriptRef.current;
               if (!element) return;
               const distanceFromLatest = element.scrollHeight - element.scrollTop - element.clientHeight;
               followLatestMessage.current = distanceFromLatest < 120;
             }}
-            className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain bg-slate-50 p-4 sm:p-6"
+            className="relative min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain bg-slate-50 p-4 sm:p-6"
             aria-live="polite"
           >
+            {fileDropActive && <div aria-hidden="true" className="pointer-events-none absolute inset-3 z-20 grid place-items-center rounded-2xl border-2 border-dashed border-blue-500 bg-blue-50/95 text-center text-sm font-semibold text-blue-800 shadow-lg">Drop one supported file to add it privately to this conversation</div>}
             {conversations.isPending && <p className="text-sm text-slate-500">Loading conversations…</p>}
             {conversations.isError && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><p className="font-semibold">Could not load this ticket’s conversations</p><p className="mt-1 break-words text-xs">{formatInboxRequestError(conversations.error, "Conversation request failed.")}</p><button className="mt-2 font-semibold underline" onClick={() => conversations.refetch()}>Try again</button></div>}
             {conversations.data?.length === 0 && <div className="mx-auto max-w-xl rounded-2xl border border-slate-200 bg-white p-6 text-center"><p className="font-semibold">No conversation yet</p><p className="mt-1 text-sm text-slate-500">Start a thread to reply to this customer from the inbox.</p>{canReply && <Button className="mt-4" disabled={startThread.isPending} onClick={() => startThread.mutate()}>{startThread.isPending ? "Starting…" : "Start conversation"}</Button>}{startThread.isError && <p role="alert" className="mt-3 text-sm text-red-700">{startThread.error instanceof Error ? startThread.error.message : "Could not start a conversation."}</p>}</div>}
@@ -393,22 +441,22 @@ export function InboxWorkspace() {
             </div>}
             <form onSubmit={(event) => { event.preventDefault(); if (reply.trim()) send.mutate(); }} className={`shrink-0 border-t p-3 sm:p-4 ${composeMode === "note" ? "border-amber-200 bg-amber-50/60" : "border-slate-200 bg-white"}`}>
               <div className="mb-3 flex gap-2" role="group" aria-label="Message type"><Button type="button" size="sm" variant={composeMode === "reply" ? "primary" : "secondary"} aria-pressed={composeMode === "reply"} onClick={() => setComposeMode("reply")}>Reply</Button><Button type="button" size="sm" variant={composeMode === "note" ? "primary" : "secondary"} aria-pressed={composeMode === "note"} onClick={() => { setComposeMode("note"); setDraftExecutionId(undefined); }}>Internal note</Button></div>
-              <details className="mb-3 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2 text-xs text-slate-600">
+              <details ref={attachmentDetailsRef} className="mb-3 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2 text-xs text-slate-600">
                 <summary className="flex cursor-pointer list-none items-center gap-2 font-medium"><Paperclip size={14}/>Team files <span className="text-slate-400">({attachments.data?.length ?? 0})</span></summary>
-                <p className="mt-2">Files are private to this workspace. They are not sent to the customer.</p>
+                <p className="mt-2">Files are private to this workspace. They are not sent to the customer. Up to 20 files and 100 MB total per conversation; each file can be 10 MB.</p>
                 {attachments.isPending && <p className="mt-2 text-slate-500">Loading files…</p>}
                 {attachments.isError && <div className="mt-2 text-red-700"><span>Files could not be loaded. </span><button type="button" className="font-medium underline" onClick={() => attachments.refetch()}>Try again</button></div>}
-                {attachments.data && attachments.data.length > 0 && <ul className="mt-2 divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">{attachments.data.map((attachment) => <li key={attachment.id} className="flex items-center gap-2 px-2.5 py-2"><span className="min-w-0 flex-1"><span className="block truncate font-medium text-slate-800">{attachment.original_filename}</span><span className="text-[11px] text-slate-500">{formatBytes(attachment.size_bytes)} · {attachment.uploaded_by_name}</span></span><Button type="button" variant="ghost" size="sm" aria-label={`Download ${attachment.original_filename}`} disabled={downloadAttachment.isPending} onClick={() => downloadAttachment.mutate(attachment.id)}><Download size={14}/></Button>{canReply && (attachment.uploaded_by_user_id === me.data?.id || me.data?.role === "owner" || me.data?.role === "admin") && <Button type="button" variant="ghost" size="sm" aria-label={`Remove ${attachment.original_filename}`} disabled={removeAttachment.isPending} onClick={() => removeAttachment.mutate(attachment.id)}><Trash2 size={14}/></Button>}</li>)}</ul>}
-                {canReply && <label className="mt-2 inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"><Paperclip size={14}/>{uploadAttachment.isPending ? "Uploading…" : "Add a file"}<input type="file" className="sr-only" accept=".png,.jpg,.jpeg,.webp,.pdf,.txt,.md" disabled={!canReply || uploadAttachment.isPending} onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (!file) return; if (file.size > 10 * 1024 * 1024) { setAttachmentValidationError("Attachments are limited to 10 MB."); return; } setAttachmentValidationError(null); uploadAttachment.mutate(file); }}/></label>}
+                {attachments.data && attachments.data.length > 0 && <ul className="mt-2 divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">{attachments.data.map((attachment) => <li key={attachment.id} className="flex items-center gap-2 px-2.5 py-2"><span className="min-w-0 flex-1"><span className="block truncate font-medium text-slate-800">{attachment.original_filename}</span><span className="text-[11px] text-slate-500">{formatBytes(attachment.size_bytes)} · {attachment.uploaded_by_name}</span></span><Button type="button" variant="ghost" size="sm" aria-label={`Download ${attachment.original_filename}`} disabled={downloadAttachment.isPending} onClick={() => downloadAttachment.mutate({ attachmentId: attachment.id, conversationId: attachment.conversation_id })}><Download size={14}/></Button>{canReply && (attachment.uploaded_by_user_id === me.data?.id || me.data?.role === "owner" || me.data?.role === "admin") && <Button type="button" variant="ghost" size="sm" aria-label={`Remove ${attachment.original_filename}`} disabled={removeAttachment.isPending} onClick={() => removeAttachment.mutate({ attachmentId: attachment.id, conversationId: attachment.conversation_id })}><Trash2 size={14}/></Button>}</li>)}</ul>}
+                {canReply && <label className="mt-2 inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"><Paperclip size={14}/>{uploadAttachment.isPending ? "Uploading…" : "Add a file"}<input type="file" className="sr-only" accept=".png,.jpg,.jpeg,.webp,.pdf,.txt,.md" disabled={!canReply || uploadAttachment.isPending} onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (!file || !activeConversationId) return; const validationError = getAttachmentValidationError(file); if (validationError) { setAttachmentValidationError(validationError); return; } setAttachmentValidationError(null); uploadAttachment.mutate({ conversationId: activeConversationId, file }); }}/></label>}
                 {attachmentValidationError && <p role="alert" className="mt-2 text-red-700">{attachmentValidationError}</p>}
-                {uploadAttachment.isError && <p role="alert" className="mt-2 text-red-700">{uploadAttachment.error.message}</p>}
-                {removeAttachment.isError && <p role="alert" className="mt-2 text-red-700">File could not be removed.</p>}
-                {downloadAttachment.isError && <p role="alert" className="mt-2 text-red-700">File could not be downloaded.</p>}
+                {uploadAttachment.isError && uploadAttachment.variables?.conversationId === activeConversationId && <p role="alert" className="mt-2 text-red-700">{uploadAttachment.error.message}</p>}
+                {removeAttachment.isError && removeAttachment.variables?.conversationId === activeConversationId && <p role="alert" className="mt-2 text-red-700">File could not be removed.</p>}
+                {downloadAttachment.isError && downloadAttachment.variables?.conversationId === activeConversationId && <p role="alert" className="mt-2 text-red-700">File could not be downloaded.</p>}
               </details>
               {composeMode === "note" && <p className="mb-2 text-xs font-medium text-amber-700">Only workspace teammates can see this note. It will not be sent to the customer.</p>}
               {composeMode === "reply" && <details className="mb-3 text-xs text-slate-500"><summary className="cursor-pointer font-medium">Shopify order context (optional)</summary><label className="mt-2 block max-w-xs text-xs font-medium text-slate-600">Verified order for this draft <input aria-label="Shopify order number for AI draft" value={shopifyOrderNumber} onChange={(event) => setShopifyOrderNumber(event.target.value)} placeholder="#1001 (optional)" className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"/></label></details>}
-              {composeMode === "reply" && canReply && (savedReplies.data?.length ? <label className="mb-3 block max-w-sm text-xs font-medium text-slate-600">Insert saved reply <Select aria-label="Insert saved reply" value="" onChange={(event) => { const item = savedReplies.data?.find((entry) => entry.id === event.target.value); if (!item) return; setReply((current) => current.trim() ? `${current.trim()}\n\n${item.body}` : item.body); }} className="mt-1 min-h-9 rounded-lg text-sm"><option value="">Choose a reply…</option>{savedReplies.data.map((item) => <option key={item.id} value={item.id}>{item.title} · /{item.shortcut}</option>)}</Select></label> : savedReplies.isError ? <p role="status" className="mb-3 text-xs text-amber-700">Saved replies unavailable. You can still write a reply.</p> : savedReplies.isSuccess ? <p className="mb-3 text-xs text-slate-500">No saved replies yet · <Link className="font-medium text-blue-700 underline" href="/dashboard/settings#saved-replies">Create one in Settings</Link></p> : null)}
-              <Textarea aria-label={composeMode === "note" ? "Write an internal note" : "Write a reply"} placeholder={!canReply ? "Your role has read-only access" : composeMode === "note" ? "Write a private note for your team…" : "Reply to the customer…"} value={reply} disabled={!canReply || send.isPending} onChange={(event) => setReply(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); if (reply.trim() && canReply && !send.isPending) send.mutate(); } }} className="min-h-20 max-h-40 resize-y rounded-xl border-slate-200 bg-slate-50/60 focus:bg-white"/>
+              {composeMode === "reply" && canReply && (savedReplies.data?.length ? <div className="mb-3 max-w-sm"><label className="block text-xs font-medium text-slate-600">Insert saved reply <Select aria-label="Insert saved reply" value="" onChange={(event) => { const item = savedReplies.data?.find((entry) => entry.id === event.target.value); if (!item) return; setReply((current) => current.trim() ? `${current.trim()}\n\n${item.body}` : item.body); }} className="mt-1 min-h-9 rounded-lg text-sm"><option value="">Choose a reply…</option>{savedReplies.data.map((item) => <option key={item.id} value={item.id}>{item.title} · /{item.shortcut}</option>)}</Select></label><p className="mt-1 text-[11px] text-slate-500">Or type <kbd className="rounded border border-slate-300 bg-slate-50 px-1">/shortcut</kbd> in your reply and press Tab.</p></div> : savedReplies.isError ? <p role="status" className="mb-3 text-xs text-amber-700">Saved replies unavailable. You can still write a reply.</p> : savedReplies.isSuccess ? <p className="mb-3 text-xs text-slate-500">No saved replies yet · <Link className="font-medium text-blue-700 underline" href="/dashboard/settings#saved-replies">Create one in Settings</Link></p> : null)}
+              <Textarea ref={replyInputRef} aria-label={composeMode === "note" ? "Write an internal note" : "Write a reply"} placeholder={!canReply ? "Your role has read-only access" : composeMode === "note" ? "Write a private note for your team…" : "Reply to the customer…"} value={reply} disabled={!canReply || send.isPending} onChange={(event) => setReply(event.target.value)} onKeyDown={(event) => { if (event.key === "Tab" && composeMode === "reply" && savedReplies.data?.length) { const expansion = expandSavedReplyAtCursor(event.currentTarget.value, event.currentTarget.selectionStart, savedReplies.data); if (expansion) { event.preventDefault(); setReply(expansion.value); requestAnimationFrame(() => replyInputRef.current?.setSelectionRange(expansion.cursor, expansion.cursor)); return; } } if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); if (reply.trim() && canReply && !send.isPending) send.mutate(); } }} className="min-h-20 max-h-40 resize-y rounded-xl border-slate-200 bg-slate-50/60 focus:bg-white"/>
               <div className="mt-3 flex flex-wrap items-center justify-between gap-2"><span className="text-xs text-slate-500">{composeMode === "note" ? "Private to your workspace" : "Messages are sent as you."} <span className="ml-1 text-slate-400">· Ctrl/⌘+Enter to {composeMode === "note" ? "add note" : "send"}</span></span><div className="flex gap-2">{composeMode === "reply" && <Button type="button" variant="secondary" disabled={!canReply || createDraft.isPending || Boolean(draftExecution.data && ["queued", "running"].includes(draftExecution.data.status))} onClick={() => createDraft.mutate()}><Sparkles size={15}/>{createDraft.isPending ? "Starting…" : "Draft with AI"}</Button>}<Button type="submit" disabled={!canReply || !reply.trim() || send.isPending}>{send.isPending ? composeMode === "note" ? "Saving…" : "Sending…" : composeMode === "note" ? "Add note" : "Send reply"}{composeMode === "reply" && <Send size={15}/>}</Button></div></div>
               {send.isError && <p role="alert" className="mt-2 text-sm text-red-700">{send.error instanceof Error ? send.error.message : "Message could not be sent."}</p>}
             </form>
