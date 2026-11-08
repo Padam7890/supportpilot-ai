@@ -5,6 +5,10 @@ import { CommandSearch } from "./command-search";
 
 const { searchWorkspace } = vi.hoisted(() => ({ searchWorkspace: vi.fn() }));
 vi.mock("../api/search-api", () => ({ searchWorkspace }));
+vi.mock("@/features/auth/api/auth-api", () => ({
+  currentUserQueryKey: ["me"],
+  getCurrentUser: vi.fn().mockResolvedValue({ id: "user-1", organization_id: "org-1", email: "agent@example.com", full_name: "Agent", role: "owner", is_active: true, organization: { id: "org-1", name: "Support", slug: "support" } }),
+}));
 vi.mock("next/link", () => ({ default: ({ href, children, onClick, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }) => <a href={href} {...props} onClick={(event) => { event.preventDefault(); onClick?.(event); }}>{children}</a> }));
 
 describe("command search", () => {
@@ -22,11 +26,12 @@ describe("command search", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}><CommandSearch/></QueryClientProvider>);
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
-    const input = screen.getByLabelText("Search tickets, customers, or documents");
+    const input = screen.getByLabelText("Search pages, tickets, customers, and documents");
     fireEvent.change(input, { target: { value: "delivery" } });
-    expect(await screen.findByRole("link", { name: /Order delivery question/ })).toHaveAttribute("href", "/dashboard/tickets/ticket-id");
+    const result = await screen.findByRole("option", { name: /Order delivery question/ });
+    expect(result).toHaveAttribute("aria-selected", "true");
     expect(searchWorkspace).toHaveBeenCalledWith("delivery");
-    fireEvent.click(screen.getByRole("link", { name: /Order delivery question/ }));
+    fireEvent.click(result);
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 });

@@ -137,7 +137,7 @@ export default function SettingsPage() {
                 const sharedClass = `flex min-h-10 items-center gap-3 whitespace-nowrap rounded-xl px-3 py-2.5 text-sm font-medium transition-colors ${selected ? "bg-slate-200 text-slate-950" : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"}`;
                 if (item.href) return <Link key={item.href} href={item.href} aria-current={selected ? "page" : undefined} className={`${sharedClass} w-full`}><Icon size={17}/><span>{item.label}</span></Link>;
                 if (!sectionId) return null;
-                return <button key={sectionId} type="button" aria-current={selected ? "page" : undefined} aria-controls="settings-content" onClick={() => selectSection(sectionId)} className={`${sharedClass} w-full text-left`}><Icon size={17}/><span>{item.label}</span></button>;
+                return <Button variant="unstyled" key={sectionId} type="button" aria-current={selected ? "page" : undefined} aria-controls="settings-content" onClick={() => selectSection(sectionId)} className={`${sharedClass} w-full text-left`}><Icon size={17}/><span>{item.label}</span></Button>;
               })}</div></div>)}
             </nav>
             {visibleGroups.length === 0 && <p role="status" className="px-3 py-2 text-sm text-slate-500">No implemented settings match “{settingsSearch}”.</p>}

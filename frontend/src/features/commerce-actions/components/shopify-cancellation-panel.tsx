@@ -1,5 +1,6 @@
 "use client";
 
+import { Checkbox } from "@/components/ui";
 import { useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, BadgeCheck, Ban, RefreshCw, ShieldCheck, XCircle } from "lucide-react";
@@ -151,7 +152,7 @@ export function ShopifyCancellationPanel({ ticketId, compact = false }: { ticket
       {actions.isError && <p role="alert" className="text-xs text-red-700">Cancellation requests for this ticket could not be loaded.</p>}
       {!actions.isPending && !actions.isError && rows.length === 0 && !canRequest && <p className="text-xs text-slate-500">No Shopify cancellation requests for this ticket.</p>}
       {historyRows.length > 0 && <details className="rounded-xl border border-slate-200 bg-white"><summary className="cursor-pointer list-none px-3 py-3 text-xs font-semibold text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">Completed request history <span className="ml-1 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px]">{historyRows.length}</span></summary><div className="space-y-2 border-t border-slate-100 p-3">
-        <ul aria-label="Completed Shopify cancellation requests" className="space-y-2">{historyRows.map((action) => <li key={action.id}><button type="button" aria-pressed={selected?.id === action.id} onClick={() => setSelectedId(action.id)} className={`w-full rounded-lg border p-3 text-left ${selected?.id === action.id ? "border-blue-300 bg-blue-50" : "border-slate-200 hover:bg-slate-50"}`}><span className="flex flex-wrap items-center justify-between gap-1"><strong className="text-xs">{action.order_number} · {titleCase(action.approval_status)}</strong><span className="text-[10px] capitalize text-slate-500">{action.execution_status === "running" ? "executing" : action.execution_status.replaceAll("_", " ")}</span></span><span className="mt-1 block text-[11px] text-slate-500">{formatDateTime(action.created_at)}</span></button></li>)}</ul>
+        <ul aria-label="Completed Shopify cancellation requests" className="space-y-2">{historyRows.map((action) => <li key={action.id}><Button variant="unstyled" type="button" aria-pressed={selected?.id === action.id} onClick={() => setSelectedId(action.id)} className={`w-full rounded-lg border p-3 text-left ${selected?.id === action.id ? "border-blue-300 bg-blue-50" : "border-slate-200 hover:bg-slate-50"}`}><span className="flex flex-wrap items-center justify-between gap-1"><strong className="text-xs">{action.order_number} · {titleCase(action.approval_status)}</strong><span className="text-[10px] capitalize text-slate-500">{action.execution_status === "running" ? "executing" : action.execution_status.replaceAll("_", " ")}</span></span><span className="mt-1 block text-[11px] text-slate-500">{formatDateTime(action.created_at)}</span></Button></li>)}</ul>
         {selected && <div className="rounded-lg bg-slate-50 p-3 text-xs">
           <p className="font-semibold text-slate-900">{selected.order_number} · {selected.order_total} {selected.currency}</p>
           <p className="mt-1 text-slate-600">{selected.reason}</p>
@@ -167,7 +168,7 @@ export function ShopifyCancellationPanel({ ticketId, compact = false }: { ticket
 }
 
 function Check({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
-  return <label className="flex items-start gap-2 text-xs font-medium text-slate-700"><input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="mt-0.5"/><span>{label}</span></label>;
+  return <label className="flex items-start gap-2 text-xs font-medium text-slate-700"><Checkbox checked={checked} onCheckedChange={(checked) => onChange(checked === true)} className="mt-0.5"/><span>{label}</span></label>;
 }
 
 function Fact({ label, value }: { label: string; value: string }) {

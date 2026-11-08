@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowDownRight, ArrowRight, ArrowUpRight, CircleAlert, Clock3, Inbox, Plus, Users } from "lucide-react";
 import { getDashboardStats, dashboardQueryKeys } from "../api/dashboard-api";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/page-header";
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
 import { StatusAlert } from "@/components/ui/status-alert";
 
@@ -15,10 +16,7 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-7">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div><p className="text-[13px] font-semibold text-[var(--text-accent)]">Workspace overview</p><h1 className="page-title mt-1">Good work starts here.</h1><p className="page-subtitle mt-2">A live view of your customer support operation.</p></div>
-        <div className="flex gap-2"><Link href="/dashboard/customers"><Button variant="secondary"><Users size={16}/> Add customer</Button></Link><Link href="/dashboard/tickets"><Button><Plus size={17}/> New ticket</Button></Link></div>
-      </div>
+      <PageHeader eyebrow="Workspace overview" title="Good work starts here." description="A live view of your customer support operation." actions={<><Link href="/dashboard/customers"><Button variant="secondary"><Users size={16}/> Add customer</Button></Link><Link href="/dashboard/tickets"><Button><Plus size={17}/> New ticket</Button></Link></>} />
       {stats.isError && (
         <StatusAlert tone="error" title="Could not load workspace statistics">
           Try refreshing the page.

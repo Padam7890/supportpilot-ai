@@ -107,7 +107,7 @@ export function CustomerContextPanel({ item, role }: { item: InboxItem; role: st
           {activity.isError && <p role="alert" className="text-xs text-red-700">Activity could not be loaded.</p>}
           {visibleActivity.map((entry) => <div key={entry.id} className="flex gap-2"><span className="mt-1 size-2 shrink-0 rounded-full bg-blue-500"/><div><p className="text-xs font-medium text-slate-700">{activityLabel(entry.activity_type, entry.details)}</p><p className="mt-1 text-[11px] text-slate-400">{entry.actor_name ?? "System"} · {formatDateTime(entry.created_at)}</p></div></div>)}
           {activity.data?.length === 0 && <p className="text-xs text-slate-500">No activity recorded yet.</p>}
-          {(activity.data?.length ?? 0) > 5 && <button type="button" aria-expanded={showAllActivity} onClick={() => setShowAllActivity((current) => !current)} className="rounded px-1 text-xs font-semibold text-blue-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">{showAllActivity ? "Show latest 5" : `View all ${activity.data?.length} events`}</button>}
+          {(activity.data?.length ?? 0) > 5 && <Button variant="unstyled" type="button" aria-expanded={showAllActivity} onClick={() => setShowAllActivity((current) => !current)} className="rounded px-1 text-xs font-semibold text-blue-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">{showAllActivity ? "Show latest 5" : `View all ${activity.data?.length} events`}</Button>}
         </div>
       </details>
 

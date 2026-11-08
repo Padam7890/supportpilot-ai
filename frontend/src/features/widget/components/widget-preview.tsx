@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@/components/ui";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { MessageCircle, Send, X } from "lucide-react";
@@ -32,9 +33,9 @@ export function WidgetPreview({ draftSettings }: { draftSettings?: WidgetPreview
         <h2 className="font-semibold text-slate-900">Storefront preview</h2>
         <p className="mt-1 text-sm text-slate-500">Updates as you edit the greeting, reply mode, and selected AI bots.</p>
       </div>
-      <button type="button" onClick={() => setIsOpen((value) => !value)} aria-pressed={isOpen} className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-blue-300 hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600">
+      <Button variant="unstyled" type="button" onClick={() => setIsOpen((value) => !value)} aria-pressed={isOpen} className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-blue-300 hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600">
         {isOpen ? "Preview launcher" : "Open preview"}
-      </button>
+      </Button>
     </div>
 
     {config.isSuccess && widgetEnabled === false && <p role="status" className="border-b border-amber-200 bg-amber-50 px-5 py-3 text-sm text-amber-900">The storefront widget is disabled. This preview is illustrative and will not appear to shoppers.</p>}
@@ -56,7 +57,7 @@ export function WidgetPreview({ draftSettings }: { draftSettings?: WidgetPreview
           <header className="flex items-center gap-3 bg-gradient-to-r from-blue-700 to-indigo-700 px-4 py-4 text-white">
             <span className="grid size-10 place-items-center rounded-2xl border border-white/30 bg-white/15 font-bold">S</span>
             <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{config.data?.store_name ?? "Your store"}</p><p className="text-xs text-blue-100">{assistantName}</p><p className="mt-1 flex items-center gap-1.5 text-[11px] text-blue-100"><span className="size-1.5 rounded-full bg-emerald-300"/>Chat available</p></div>
-            <button type="button" onClick={() => setIsOpen(false)} aria-label="Close widget preview" className="grid size-9 place-items-center rounded-xl bg-white/15 hover:bg-white/25 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"><X size={18}/></button>
+            <Button variant="unstyled" type="button" onClick={() => setIsOpen(false)} aria-label="Close widget preview" className="grid size-9 place-items-center rounded-xl bg-white/15 hover:bg-white/25 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"><X size={18}/></Button>
           </header>
           <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
             <div className="rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm"><p className="text-sm font-semibold text-slate-800">{welcomeMessage}</p><p className="mt-1 text-xs leading-5 text-slate-600">I’m here to help with products, orders, and any questions you have.</p></div>
@@ -75,7 +76,7 @@ export function WidgetPreview({ draftSettings }: { draftSettings?: WidgetPreview
           <div className="flex items-center gap-2 border-t border-slate-200 bg-white p-3"><div className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-400">Ask us anything…</div><span className="grid size-10 place-items-center rounded-xl bg-blue-700 text-white"><Send size={16}/></span></div>
           <div className="flex justify-between bg-white px-4 pb-3 text-[10px] text-slate-400"><span>Powered by SupportPilot AI</span><span>Replies may be reviewed</span></div>
         </section>}
-        <button type="button" onClick={() => setIsOpen((value) => !value)} aria-expanded={isOpen} className="flex items-center gap-2 rounded-full bg-gradient-to-r from-blue-700 to-indigo-700 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-900/20 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700"><MessageCircle size={18}/>{isOpen ? "Chat with us" : "Open chat"}</button>
+        <Button variant="unstyled" type="button" onClick={() => setIsOpen((value) => !value)} aria-expanded={isOpen} className="flex items-center gap-2 rounded-full bg-gradient-to-r from-blue-700 to-indigo-700 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-900/20 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700"><MessageCircle size={18}/>{isOpen ? "Chat with us" : "Open chat"}</Button>
       </div>
     </div>
   </section>;

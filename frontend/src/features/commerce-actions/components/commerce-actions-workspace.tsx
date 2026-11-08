@@ -74,11 +74,11 @@ export function CommerceActionsWorkspace() {
       <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(280px,.7fr)]">
         <ul aria-label="Commerce action requests" className="space-y-2">
           {actions.data.items.map((item) => <li key={item.id}>
-            <button type="button" aria-pressed={selectedId === item.id} onClick={() => setSelectedId(item.id)} className={`w-full rounded-2xl border p-4 text-left transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 ${selectedId === item.id ? "border-blue-400 bg-blue-50/60" : "border-slate-200 hover:border-blue-200 hover:bg-slate-50"}`}>
+            <Button variant="unstyled" type="button" aria-pressed={selectedId === item.id} onClick={() => setSelectedId(item.id)} className={`w-full rounded-2xl border p-4 text-left transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 ${selectedId === item.id ? "border-blue-400 bg-blue-50/60" : "border-slate-200 hover:border-blue-200 hover:bg-slate-50"}`}>
               <span className="flex flex-wrap items-center justify-between gap-2"><span className="font-semibold capitalize text-slate-900">{item.action_type} · {item.order_number}</span><span className="flex flex-wrap gap-1.5"><StatusBadge value={item.approval_status}/><StatusBadge value={item.execution_status}/></span></span>
               <span className="mt-2 block text-sm text-slate-600">{item.action_type === "refund" ? `${item.refund_amount} ${item.currency} of ${item.order_total} ${item.currency}` : `${item.order_total} ${item.currency} order`} · requested by {item.requested_by_name}</span>
               <span className="mt-1 block text-xs text-slate-500">{new Date(item.created_at).toLocaleString()} · {item.reason}</span>
-            </button>
+            </Button>
           </li>)}
         </ul>
         {selected && <ActionDetails action={selected} audit={audit.data?.items ?? []} auditLoading={audit.isPending} isReviewer={isReviewer} currentUserId={me.data?.id} busy={busyDecision} error={decisionError} onApprove={() => approve.mutate(selected.id)} onReject={() => reject.mutate(selected.id)} onCancel={() => cancel.mutate(selected.id)}/>}

@@ -6828,6 +6828,12 @@ export interface components {
         };
         /** TicketCreatedTriggerConfig */
         TicketCreatedTriggerConfig: {
+            /** Ai Agent Id */
+            ai_agent_id?: string | null;
+            /** Channel */
+            channel?: string | null;
+            /** Integration Connection Id */
+            integration_connection_id?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}

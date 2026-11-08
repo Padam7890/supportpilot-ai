@@ -44,7 +44,7 @@ export function validateWorkflowDraft(draft: WorkflowDraft): WorkflowDraftValida
     errors.push("Keep the description to 500 characters or fewer.");
   }
 
-  if (draft.trigger.kind === "customer_message_received") {
+  if (draft.trigger.kind === "customer_message_received" || draft.trigger.kind === "ticket_created") {
     if (draft.trigger.channel != null && draft.trigger.channel.trim().length === 0) {
       pushError(errors, issues, "Clear the channel filter or enter a channel name.", { type: "trigger" });
     }

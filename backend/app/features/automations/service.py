@@ -122,18 +122,26 @@ async def validate_definition_targets(
 
     caps = await organization_capabilities(db, organization_id)
 
-    if definition.trigger.kind == "customer_message_received" and definition.trigger.ai_agent_id is not None:
+    if definition.trigger.kind in ("customer_message_received", "ticket_created") and definition.trigger.ai_agent_id is not None:
+        agent_query = select(AIAgent.id).where(
+            AIAgent.organization_id == organization_id,
+            AIAgent.id == definition.trigger.ai_agent_id,
+        )
+        if definition.trigger.kind == "ticket_created":
+            agent_query = agent_query.where(AIAgent.status == "active")
         agent = await db.scalar(
-            select(AIAgent.id).where(
-                AIAgent.organization_id == organization_id,
-                AIAgent.id == definition.trigger.ai_agent_id,
-            )
+            agent_query
         )
         if agent is None:
-            raise ValueError("Trigger references an unknown AI agent for this workspace")
+            detail = (
+                "unknown or inactive AI bot"
+                if definition.trigger.kind == "ticket_created"
+                else "unknown AI bot"
+            )
+            raise ValueError(f"Trigger references an {detail} for this workspace")
 
     if (
-        definition.trigger.kind == "customer_message_received"
+        definition.trigger.kind in ("customer_message_received", "ticket_created")
         and definition.trigger.integration_connection_id is not None
     ):
         conn = await db.scalar(
@@ -234,8 +242,20 @@ async def enqueue_customer_message_workflows(
         trig = definition.trigger
         if trig.kind == "conversation_started" and not is_first_customer_message:
             continue
-        if trig.kind == "ticket_created" and not ticket_created:
-            continue
+        if trig.kind == "ticket_created":
+            if not ticket_created:
+                continue
+            if trig.channel is not None and _normalize_channel(trig.channel) != _normalize_channel(
+                conversation.channel
+            ):
+                continue
+            if trig.ai_agent_id is not None and trig.ai_agent_id != conversation.ai_agent_id:
+                continue
+            if (
+                trig.integration_connection_id is not None
+                and trig.integration_connection_id != conversation.integration_connection_id
+            ):
+                continue
         if trig.kind == "customer_message_received":
             if trig.channel is not None and _normalize_channel(trig.channel) != _normalize_channel(
                 conversation.channel

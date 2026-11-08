@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@/components/ui";
 import { useSyncExternalStore } from "react";
 import {
   readTypographyScale,
@@ -56,7 +57,7 @@ export function TypographyScalePicker() {
         {OPTIONS.map((option) => {
           const selected = scale === option.id;
           return (
-            <button
+            <Button variant="unstyled"
               key={option.id}
               type="button"
               aria-pressed={selected}
@@ -84,7 +85,7 @@ export function TypographyScalePicker() {
                   <dd className="font-medium tabular-nums">{option.preview.title}</dd>
                 </div>
               </dl>
-            </button>
+            </Button>
           );
         })}
       </div>

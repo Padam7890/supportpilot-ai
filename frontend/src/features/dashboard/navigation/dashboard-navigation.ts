@@ -1,5 +1,6 @@
 import {
   Activity,
+  BriefcaseBusiness,
   Workflow,
   BarChart3,
   BookOpen,
@@ -27,35 +28,36 @@ export type DashboardNavigationGroup = {
 
 const groups: DashboardNavigationGroup[] = [
   {
-    label: "Workspace",
+    label: "Main",
     links: [
       { href: "/dashboard", label: "Overview", icon: BarChart3, exact: true },
       { href: "/dashboard/inbox", label: "Inbox", icon: Inbox },
-      { href: "/dashboard/tickets", label: "Tickets", icon: Inbox },
       { href: "/dashboard/customers", label: "Customers", icon: Users },
-      { href: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },
     ],
   },
   {
-    label: "AI Studio",
+    label: "AI & automation",
     links: [
-      { href: "/dashboard/ai/agents", label: "AI Bots", icon: Bot },
-      { href: "/dashboard/knowledge", label: "Knowledge Library", icon: BookOpen },
+      { href: "/dashboard/ai/agents", label: "AI Agents", icon: Bot },
+      { href: "/dashboard/knowledge", label: "Knowledge", icon: BookOpen },
       { href: "/dashboard/automations", label: "Automations", icon: Workflow },
       { href: "/dashboard/ai", label: "AI Playground", icon: Sparkles },
     ],
   },
   {
-    label: "Connections",
+    label: "Insights",
     links: [
-      { href: "/dashboard/widget", label: "Widget", icon: MessageCircle },
-      { href: "/dashboard/orders", label: "Shopify orders", icon: PackageSearch },
+      { href: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },
+      { href: "/dashboard/operations", label: "Activity logs", icon: Activity },
     ],
   },
   {
-    label: "Administration",
+    label: "Workspace",
     links: [
-      { href: "/dashboard/operations", label: "Operations", icon: Activity },
+      { href: "/dashboard/tickets", label: "Tickets", icon: Inbox },
+      { href: "/dashboard/widget", label: "Channels", icon: MessageCircle },
+      { href: "/dashboard/settings#shopify", label: "Integrations", icon: BriefcaseBusiness },
+      { href: "/dashboard/orders", label: "Shopify orders", icon: PackageSearch },
       { href: "/dashboard/settings", label: "Settings", icon: Building2 },
     ],
   },
@@ -65,15 +67,16 @@ export function getDashboardNavigation(role: string): DashboardNavigationGroup[]
   const isWorkspaceManager = role === "owner" || role === "admin";
   return groups.map((group) => ({
     ...group,
-    links: group.links.map((link) =>
-      link.href === "/dashboard/settings"
+    links: group.links
+      .filter((link) => link.href !== "/dashboard/operations" || role !== "viewer")
+      .map((link) => link.href === "/dashboard/settings" && !link.href.includes("#")
         ? { ...link, label: isWorkspaceManager ? "Settings & team" : "Settings" }
-        : link,
-    ),
+        : link),
   }));
 }
 
 export function isDashboardNavigationLinkActive(pathname: string, link: DashboardNavigationLink): boolean {
-  if (link.exact) return pathname === link.href;
-  return pathname === link.href || pathname.startsWith(`${link.href}/`);
+  const route = link.href.split("#", 1)[0];
+  if (link.exact) return pathname === route;
+  return pathname === route || pathname.startsWith(`${route}/`);
 }

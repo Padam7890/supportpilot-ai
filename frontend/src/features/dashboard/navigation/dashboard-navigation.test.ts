@@ -5,17 +5,22 @@ import {
 } from "@/features/dashboard/navigation/dashboard-navigation";
 
 describe("dashboard navigation", () => {
-  it("groups implemented workspace routes without exposing security as a separate menu", () => {
+  it("groups implemented routes and keeps workspace security inside settings", () => {
     const groups = getDashboardNavigation("owner");
     expect(groups.map((group) => group.label)).toEqual([
+      "Main",
+      "AI & automation",
+      "Insights",
       "Workspace",
-      "AI Studio",
-      "Connections",
-      "Administration",
     ]);
     expect(groups.flatMap((group) => group.links).map((link) => link.href)).not.toContain(
       "/dashboard/security",
     );
+  });
+
+  it("hides operational activity from viewer navigation", () => {
+    const viewerRoutes = getDashboardNavigation("viewer").flatMap((group) => group.links);
+    expect(viewerRoutes.some((link) => link.href === "/dashboard/operations")).toBe(false);
   });
 
   it("uses role-aware settings labels", () => {
@@ -42,5 +47,12 @@ describe("dashboard navigation", () => {
     expect(isDashboardNavigationLinkActive("/dashboard/inbox/ticket-1", inbox)).toBe(true);
     expect(isDashboardNavigationLinkActive("/dashboard/inbox", overview)).toBe(false);
     expect(isDashboardNavigationLinkActive("/dashboard", overview)).toBe(true);
+  });
+
+  it("marks an integration subsection active on the settings route", () => {
+    const integration = getDashboardNavigation("owner").flatMap((group) => group.links).find((link) => link.label === "Integrations");
+    expect(integration).toBeDefined();
+    if (!integration) throw new Error("Expected an integration navigation entry");
+    expect(isDashboardNavigationLinkActive("/dashboard/settings", integration)).toBe(true);
   });
 });

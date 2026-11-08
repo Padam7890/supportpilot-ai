@@ -1,20 +1,25 @@
 "use client";
 
-import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, BellRing, Building2, CircleHelp, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, Sun, X } from "lucide-react";
+import { AppSidebar } from "@/components/app-sidebar";
+import { DashboardTopbar } from "@/components/dashboard-topbar";
 import { getCurrentUser, currentUserQueryKey, logout as logoutRequest } from "@/features/auth/api/auth-api";
+import { getOperationalAlerts, analyticsQueryKeys } from "@/features/analytics/api/analytics-api";
 import { getSystemReadiness, getWorkerHealth } from "@/features/dashboard/api/system-status-api";
-import { Button } from "@/components/ui/button";
-import { CommandSearch } from "@/features/search/components/command-search";
-import {
-  getDashboardNavigation,
-  isDashboardNavigationLinkActive,
-} from "@/features/dashboard/navigation/dashboard-navigation";
+import { getInbox } from "@/features/inbox/api/inbox-api";
+import type { InboxFilters } from "@/features/inbox/api/inbox-api";
 import { ensureTypographyScaleFromStorage } from "@/lib/typography-scale";
-import { analyticsQueryKeys, getOperationalAlerts } from "@/features/analytics/api/analytics-api";
+
+const sidebarUnreadFilters: InboxFilters = {
+  scope: "all",
+  status: "",
+  priority: "",
+  search: "",
+  needsApproval: false,
+  unreadOnly: true,
+};
 
 function subscribeTheme(callback: () => void) {
   window.addEventListener("supportpilot-theme-change", callback);
@@ -48,18 +53,12 @@ function getSidebarServerSnapshot() {
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const isInbox = pathname.startsWith("/dashboard/inbox");
-  const isFullBleed = isInbox || pathname.startsWith("/dashboard/automations");
   const router = useRouter();
   const queryClient = useQueryClient();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const sidebarCollapsed = useSyncExternalStore(subscribeSidebar, getSidebarSnapshot, getSidebarServerSnapshot);
   const dark = useSyncExternalStore(subscribeTheme, getThemeSnapshot, getThemeServerSnapshot);
-  const desktopSidebarOffset = sidebarCollapsed
-    ? isInbox ? "md:pl-[72px]" : "lg:pl-[72px]"
-    : isInbox
-      ? "md:pl-[72px] lg:pl-64"
-      : "lg:pl-64";
   const me = useQuery({ queryKey: currentUserQueryKey, queryFn: getCurrentUser });
   const readiness = useQuery({
     queryKey: ["system-readiness"],
@@ -67,17 +66,24 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     refetchInterval: () => typeof document !== "undefined" && document.visibilityState === "visible" ? 30_000 : false,
     refetchIntervalInBackground: false,
   });
-  const workerHealth = useQuery({
+  const worker = useQuery({
     queryKey: ["worker-health"],
     queryFn: getWorkerHealth,
     refetchInterval: () => typeof document !== "undefined" && document.visibilityState === "visible" ? 15_000 : false,
     refetchIntervalInBackground: false,
   });
-  const operationalAlerts = useQuery({
+  const alerts = useQuery({
     queryKey: analyticsQueryKeys.operationalAlerts(),
     queryFn: getOperationalAlerts,
     enabled: Boolean(me.data),
     refetchInterval: () => typeof document !== "undefined" && document.visibilityState === "visible" ? 60_000 : false,
+    refetchIntervalInBackground: false,
+  });
+  const unread = useQuery({
+    queryKey: ["sidebar-unread-inbox"],
+    queryFn: () => getInbox(sidebarUnreadFilters),
+    enabled: Boolean(me.data),
+    refetchInterval: () => typeof document !== "undefined" && document.visibilityState === "visible" ? 30_000 : false,
     refetchIntervalInBackground: false,
   });
   const logout = useMutation({
@@ -115,136 +121,48 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   }
 
   if (me.isPending || !me.data) {
-    return <div className="grid min-h-screen place-items-center bg-slate-50"><div className="space-y-3 text-center"><div className="mx-auto size-9 animate-spin rounded-full border-4 border-blue-100 border-t-blue-700"/><p className="text-sm text-slate-500">Loading your workspace…</p></div></div>;
+    return <div className="grid min-h-screen place-items-center bg-background text-foreground"><div role="status" className="flex items-center gap-3 text-sm text-muted-foreground"><span className="size-5 animate-spin rounded-full border-2 border-primary/20 border-t-primary"/>Loading your workspace…</div></div>;
   }
-  const user = me.data;
-  const operationalAttentionCount = operationalAlerts.data?.alerts.reduce((total, alert) => total + alert.count, 0) ?? 0;
-  const navigationGroups = getDashboardNavigation(user.role);
 
-  return (
-    <div className="flex min-h-screen bg-slate-50 text-slate-900">
-      {mobileOpen && <button aria-label="Close navigation" className="fixed inset-0 z-30 bg-slate-950/40 lg:hidden" onClick={() => setMobileOpen(false)} />}
-      <aside
-        className={`fixed inset-y-0 left-0 z-40 flex h-dvh max-h-dvh w-64 flex-col overflow-hidden border-r border-slate-200 bg-white shadow-xl transition-all duration-200 ${isInbox ? "md:translate-x-0" : "lg:translate-x-0"} lg:shadow-none ${sidebarCollapsed ? isInbox ? "md:w-[72px]" : "lg:w-[72px]" : isInbox ? "md:w-[72px] lg:w-64" : "lg:w-64"} ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}
-      >
-        <div className={`flex h-14 shrink-0 items-center gap-2 ${sidebarCollapsed ? "justify-center px-3" : isInbox ? "px-4 md:justify-center md:px-3 lg:justify-start lg:px-4" : "px-4"}`}>
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-blue-700 text-sm font-black text-white">S</span>
-          {!sidebarCollapsed && (
-            <span className={`min-w-0 ${isInbox ? "md:hidden lg:block" : ""}`}>
-              <span className="sidebar-brand block">SupportPilot AI</span>
-              <span className="sidebar-brand-tagline block">Professional workspace</span>
-            </span>
-          )}
-          <button className={`ml-auto rounded-lg p-2 text-slate-500 hover:bg-slate-100 ${isInbox ? "md:hidden" : "lg:hidden"}`} onClick={() => setMobileOpen(false)} aria-label="Close navigation"><X size={18}/></button>
-          <button type="button" onClick={toggleSidebar} aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"} title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"} className="ml-auto hidden size-9 shrink-0 place-items-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 lg:grid">{sidebarCollapsed ? <PanelLeftOpen size={18}/> : <PanelLeftClose size={18}/>}</button>
-        </div>
-        {!sidebarCollapsed && (
-          <div className={`mx-3 mb-3 shrink-0 rounded-xl bg-slate-50 p-2.5 ${isInbox ? "md:hidden lg:block" : ""}`}>
-            <div className="sidebar-group flex items-center gap-1.5">
-              <Building2 size={12} aria-hidden /> Workspace
-            </div>
-            <p className="sidebar-workspace mt-1.5 truncate">{user.organization?.name ?? "Your organization"}</p>
-            <p className="meta-text mt-0.5 truncate">{user.organization?.slug}</p>
-          </div>
-        )}
-        <nav
-          aria-label="Main navigation"
-          className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-y-contain px-3 pb-2 [-webkit-overflow-scrolling:touch]"
-        >
-          {navigationGroups.map((group) => (
-            <div key={group.label} role="group" aria-label={group.label} className="space-y-0.5">
-              {!sidebarCollapsed && (
-                <p
-                  className={`sidebar-group sticky top-0 z-[1] bg-white px-2 pb-1 pt-1 ${isInbox ? "md:hidden lg:block" : ""}`}
-                >
-                  {group.label}
-                </p>
-              )}
-              {group.links.map(({ href, label, icon: Icon, exact }) => {
-                const active = isDashboardNavigationLinkActive(pathname, { href, label, icon: Icon, exact });
-                return (
-                  <Link
-                    key={href}
-                    href={href}
-                    onClick={() => setMobileOpen(false)}
-                    title={sidebarCollapsed || isInbox ? label : undefined}
-                    aria-label={sidebarCollapsed || isInbox ? label : undefined}
-                    aria-current={active ? "page" : undefined}
-                    className={`sidebar-item flex min-h-[36px] items-center gap-2.5 rounded-lg px-2 py-2 transition ${sidebarCollapsed ? "justify-center" : isInbox ? "md:justify-center lg:justify-start" : ""} ${active ? "bg-blue-50 font-medium text-blue-800" : "hover:bg-slate-50 hover:text-[var(--text-primary)]"}`}
-                  >
-                    <Icon size={17} className="shrink-0" strokeWidth={active ? 2.25 : 2} />
-                    {!sidebarCollapsed && <span className={`min-w-0 flex-1 truncate ${isInbox ? "md:hidden lg:block" : ""}`}>{label}</span>}
-                    {!sidebarCollapsed && active && (
-                      <span className={`size-1.5 shrink-0 rounded-full bg-blue-700 ${isInbox ? "md:hidden lg:block" : ""}`} />
-                    )}
-                  </Link>
-                );
-              })}
-            </div>
-          ))}
-        </nav>
-        <div className="shrink-0 border-t border-slate-100 p-3">
-          {!sidebarCollapsed && <div className={`mb-3 flex items-center gap-2 px-2 text-xs text-slate-600 ${isInbox ? "md:hidden lg:flex" : ""}`}><CircleHelp size={15}/> Need a hand? <span className="ml-auto text-slate-600">v0.3</span></div>}
-          <div className={`flex items-center rounded-xl p-2 ${sidebarCollapsed ? "justify-center" : isInbox ? "gap-3 md:flex-col md:gap-1 lg:flex-row lg:gap-3" : "gap-3"}`}>
-            <div title={sidebarCollapsed ? user.full_name : undefined} className="grid size-9 shrink-0 place-items-center rounded-full bg-blue-100 text-sm font-bold text-blue-800">{user.full_name.slice(0, 1).toUpperCase()}</div>
-            {!sidebarCollapsed && <div className={`min-w-0 flex-1 ${isInbox ? "md:hidden lg:block" : ""}`}><p className="truncate text-sm font-semibold">{user.full_name}</p><p className="truncate text-xs capitalize text-slate-500">{user.role}</p></div>}
-            <button title="Sign out" onClick={() => logout.mutate()} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100" aria-label="Sign out"><LogOut size={17}/></button>
-          </div>
-        </div>
-      </aside>
-      <div className={`min-w-0 flex-1 ${desktopSidebarOffset}`}>
-        <header className="sticky top-0 z-20 flex h-12 items-center justify-between border-b border-slate-200 bg-white/90 px-3 backdrop-blur sm:px-6">
-          <div className="flex items-center gap-2"><button aria-label="Open navigation" onClick={() => setMobileOpen(true)} className={`rounded-xl p-2 text-slate-600 hover:bg-slate-100 ${isInbox ? "md:hidden" : "lg:hidden"}`}><Menu size={20}/></button><button type="button" onClick={toggleSidebar} aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"} title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"} className="hidden rounded-xl p-2 text-slate-600 hover:bg-slate-100 lg:inline-flex">{sidebarCollapsed ? <PanelLeftOpen size={20}/> : <PanelLeftClose size={20}/>}</button></div>
-          <div role="status" aria-live="polite" className="hidden items-center gap-2 text-xs text-slate-500 sm:flex">
-            <Activity size={14} className={readiness.isSuccess ? "text-emerald-500" : readiness.isError ? "text-amber-500" : "animate-pulse text-slate-400"}/>
-            {readiness.isSuccess ? "Core services ready" : readiness.isError ? "System status unavailable" : "Checking system status…"}
-            {workerHealth.isSuccess && <span className={`ml-2 border-l border-slate-200 pl-3 text-xs ${workerHealth.data.status === "active" ? "text-emerald-700" : "text-amber-700"}`} title={`Active durable workers: ${workerHealth.data.active_workers}`}>
-              {workerHealth.data.status === "active" ? `Worker${workerHealth.data.active_workers === 1 ? "" : "s"} online` : "Worker offline"}
-            </span>}
-            {workerHealth.isError && <span className="ml-2 border-l border-slate-200 pl-3 text-xs text-amber-700" title="Worker heartbeat could not be checked">Worker status unavailable</span>}
-          </div>
-          <div className="ml-3"><CommandSearch/></div>
-          <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
-            {operationalAttentionCount > 0 && <details className="group relative">
-              <summary
-                aria-label={`${operationalAttentionCount} operational items need attention`}
-                title={`${operationalAttentionCount} operational items need attention`}
-                className="relative grid size-9 cursor-pointer list-none place-items-center rounded-lg text-amber-700 hover:bg-amber-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600"
-              >
-                <BellRing size={17} aria-hidden="true"/>
-                <span className="absolute -right-0.5 -top-0.5 grid min-h-4 min-w-4 place-items-center rounded-full bg-amber-600 px-1 text-[9px] font-bold leading-none text-white">
-                  {operationalAttentionCount > 9 ? "9+" : operationalAttentionCount}
-                </span>
-              </summary>
-              <section aria-label="Operational items requiring attention" className="absolute right-0 top-11 z-50 w-[min(22rem,calc(100vw-1.5rem))] overflow-hidden rounded-xl border border-slate-200 bg-white text-slate-900 shadow-xl">
-                <header className="border-b border-slate-100 px-4 py-3">
-                  <p className="text-sm font-semibold">Operations need attention</p>
-                  <p className="mt-0.5 text-xs text-slate-500">Current persisted issues in this workspace</p>
-                </header>
-                <ul className="max-h-80 divide-y divide-slate-100 overflow-y-auto">
-                  {operationalAlerts.data?.alerts.map((alert) => <li key={alert.code}>
-                    <Link href={alert.href} className="block px-4 py-3 hover:bg-slate-50 focus-visible:bg-slate-50 focus-visible:outline-none">
-                      <span className="flex items-start gap-3">
-                        <span className={`mt-1 size-2 shrink-0 rounded-full ${alert.severity === "attention" ? "bg-amber-500" : "bg-blue-500"}`} aria-hidden="true"/>
-                        <span className="min-w-0 flex-1">
-                          <span className="flex items-center justify-between gap-2 text-sm font-semibold"><span>{alert.title}</span><span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs tabular-nums">{alert.count}</span></span>
-                          <span className="mt-1 block text-xs leading-5 text-slate-600">{alert.description}</span>
-                          <span className="mt-1.5 block text-xs font-semibold text-blue-700">{alert.action_label} →</span>
-                        </span>
-                      </span>
-                    </Link>
-                  </li>)}
-                </ul>
-                <Link href="/dashboard/operations" className="block border-t border-slate-100 px-4 py-3 text-xs font-semibold text-blue-700 hover:bg-blue-50">Open Operations</Link>
-              </section>
-            </details>}
-            <span className="hidden text-xs text-slate-500 md:block">{user.email}</span>
-            <button onClick={toggleTheme} aria-label={dark ? "Switch to light theme" : "Switch to dark theme"} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100">{dark ? <Sun size={16}/> : <Moon size={16}/>}</button>
-            <Button size="sm" variant="ghost" onClick={() => logout.mutate()}>Sign out</Button>
-          </div>
-        </header>
-        <main className={isFullBleed ? "h-[calc(100dvh-3rem)] w-full overflow-hidden p-0" : "mx-auto w-full max-w-7xl p-3 sm:p-5 lg:p-6"}>{children}</main>
-      </div>
+  const unreadCount = unread.data?.items.length ?? 0;
+  const hasMoreUnread = Boolean(unread.data?.nextCursor);
+  const workerState = worker.isPending ? "checking" : worker.isError ? "unavailable" : worker.data.status === "active" ? "online" : "offline";
+  const serviceState = readiness.isPending ? "checking" : readiness.isError ? "unavailable" : "ready";
+
+  return <div className="min-h-dvh bg-background text-foreground">
+    <div className={`fixed inset-y-0 left-0 z-30 hidden h-dvh transition-[width] duration-150 lg:block ${sidebarCollapsed ? "w-14" : "w-[248px]"}`}>
+      <AppSidebar
+        user={me.data}
+        collapsed={sidebarCollapsed}
+        unreadCount={unreadCount}
+        hasMoreUnread={hasMoreUnread}
+        onToggleCollapse={toggleSidebar}
+        onOpenSearch={() => setSearchOpen(true)}
+        onSwitchWorkspace={() => logout.mutate()}
+      />
     </div>
-  );
+    <div className={`min-w-0 transition-[padding] duration-150 ${sidebarCollapsed ? "lg:pl-14" : "lg:pl-[248px]"}`}>
+      <DashboardTopbar
+        pathname={pathname}
+        user={me.data}
+        alerts={alerts.data}
+        alertsUnavailable={alerts.isError}
+        serviceState={serviceState}
+        workerState={workerState}
+        workerCount={worker.data?.active_workers}
+        dark={dark}
+        mobileOpen={mobileOpen}
+        searchOpen={searchOpen}
+        unreadCount={unreadCount}
+        hasMoreUnread={hasMoreUnread}
+        onMobileOpenChange={setMobileOpen}
+        onSearchOpenChange={setSearchOpen}
+        onToggleTheme={toggleTheme}
+        onSignOut={() => logout.mutate()}
+      />
+      <main className={pathname.startsWith("/dashboard/inbox") || pathname.startsWith("/dashboard/automations") ? "h-[calc(100dvh-3.25rem)] w-full overflow-hidden p-0" : "mx-auto w-full max-w-[1440px] p-3 sm:p-5 lg:p-6"}>
+        {children}
+      </main>
+    </div>
+  </div>;
 }

@@ -1,5 +1,7 @@
 "use client";
 
+import { Checkbox } from "@/components/ui";
+import { Input, Select, Textarea } from "@/components/ui";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -1008,13 +1010,13 @@ export function AutomationWorkspace() {
         <ul className="mt-1 max-h-24 list-disc overflow-y-auto pl-4 text-[11px] text-red-800">
           {draftValidation.issues.slice(0, 5).map((issue, i) => (
             <li key={i}>
-              <button
+              <Button variant="unstyled"
                 type="button"
                 className="text-left underline decoration-red-700/70 hover:text-red-950"
                 onClick={() => scrollToStep(issue.step)}
               >
                 {issue.message}
-              </button>
+              </Button>
             </li>
           ))}
         </ul>
@@ -1089,7 +1091,7 @@ export function AutomationWorkspace() {
             <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="workflow-name-input">
               Workflow name
             </label>
-            <input
+            <Input
               id="workflow-name-input"
               required
               minLength={2}
@@ -1117,10 +1119,9 @@ export function AutomationWorkspace() {
             </p>
             {runsOnEveryLine && (
               <label className="mt-2 flex cursor-pointer items-start gap-2 text-[11px] text-amber-900">
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={acknowledgeBroadRule}
-                  onChange={(e) => setAcknowledgeBroadRule(e.target.checked)}
+                  onCheckedChange={(e) => setAcknowledgeBroadRule(e.target.checked)}
                   className="mt-0.5 rounded border-amber-300"
                 />
                 <span className="leading-snug">Broad rule: no conditions. Confirm before publishing.</span>
@@ -1158,7 +1159,7 @@ export function AutomationWorkspace() {
             <div className="border-b border-slate-100 p-2.5">
               <div className="relative">
                 <Search size={14} className="pointer-events-none absolute left-2 top-2 text-slate-400" />
-                <input
+                <Input
                   type="search"
                   value={libraryQuery}
                   onChange={(e) => setLibraryQuery(e.target.value)}
@@ -1176,7 +1177,7 @@ export function AutomationWorkspace() {
                     ["actions", "Actions"],
                   ] as const
                 ).map(([id, label]) => (
-                  <button
+                  <Button variant="unstyled"
                     key={id}
                     type="button"
                     onClick={() => setLibraryFilter(id)}
@@ -1185,7 +1186,7 @@ export function AutomationWorkspace() {
                     }`}
                   >
                     {label}
-                  </button>
+                  </Button>
                 ))}
               </div>
             </div>
@@ -1297,7 +1298,7 @@ export function AutomationWorkspace() {
               {draft.elseNote && (
                 <label className="mt-2 block text-xs font-medium text-amber-950">
                   Internal note
-                  <textarea
+                  <Textarea
                     className={`${fieldClass} mt-1 min-h-16 w-full bg-white`}
                     maxLength={4000}
                     value={draft.elseNote}
@@ -1336,27 +1337,27 @@ export function AutomationWorkspace() {
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-xs font-semibold text-slate-800">Path {index + 1}</p>
                     <div className="flex items-center gap-2">
-                      <button type="button" className="rounded-md p-1.5 text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40" aria-label={`Move ${branch.name} earlier`} title="Check this branch earlier" disabled={index === 0} onClick={() => moveBranch(index, -1)}>
+                      <Button variant="unstyled" type="button" className="rounded-md p-1.5 text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40" aria-label={`Move ${branch.name} earlier`} title="Check this branch earlier" disabled={index === 0} onClick={() => moveBranch(index, -1)}>
                         <ChevronUp aria-hidden="true" className="h-4 w-4" />
-                      </button>
-                      <button type="button" className="rounded-md p-1.5 text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40" aria-label={`Move ${branch.name} later`} title="Check this branch later" disabled={index === (draft.branches ?? []).length - 1} onClick={() => moveBranch(index, 1)}>
+                      </Button>
+                      <Button variant="unstyled" type="button" className="rounded-md p-1.5 text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40" aria-label={`Move ${branch.name} later`} title="Check this branch later" disabled={index === (draft.branches ?? []).length - 1} onClick={() => moveBranch(index, 1)}>
                         <ChevronDown aria-hidden="true" className="h-4 w-4" />
-                      </button>
-                      <button type="button" className="text-xs font-semibold text-red-700 underline" onClick={() => updateDraft((current) => ({ ...current, branches: (current.branches ?? []).filter((item) => item.id !== branch.id) }))}>Remove</button>
+                      </Button>
+                      <Button variant="unstyled" type="button" className="text-xs font-semibold text-red-700 underline" onClick={() => updateDraft((current) => ({ ...current, branches: (current.branches ?? []).filter((item) => item.id !== branch.id) }))}>Remove</Button>
                     </div>
                   </div>
                   <label className="block text-xs font-medium text-slate-700">Branch name
-                    <input className={fieldClass} maxLength={80} value={branch.name} onChange={(event) => updateDraft((current) => ({ ...current, branches: (current.branches ?? []).map((item) => item.id === branch.id ? { ...item, name: event.target.value } : item) }))}/>
+                    <Input className={fieldClass} maxLength={80} value={branch.name} onChange={(event) => updateDraft((current) => ({ ...current, branches: (current.branches ?? []).map((item) => item.id === branch.id ? { ...item, name: event.target.value } : item) }))}/>
                   </label>
                   <div className="flex flex-wrap items-end justify-between gap-2">
                     <label className="block min-w-48 flex-1 text-xs font-medium text-slate-700">Match logic
-                      <select className={fieldClass} value={branch.condition_mode} onChange={(event) => updateDraft((current) => ({
+                      <Select className={fieldClass} value={branch.condition_mode} onChange={(event) => updateDraft((current) => ({
                         ...current,
                         branches: (current.branches ?? []).map((item) => item.id === branch.id ? { ...item, condition_mode: event.target.value as "all" | "any" } : item),
                       }))}>
                         <option value="all">Match all conditions (AND)</option>
                         <option value="any">Match any condition (OR)</option>
-                      </select>
+                      </Select>
                     </label>
                     <Button type="button" size="sm" variant="secondary" disabled={branch.conditions.length >= 10} onClick={() => updateDraft((current) => ({
                       ...current,
@@ -1377,7 +1378,7 @@ export function AutomationWorkspace() {
                     return <div key={`${branch.id}-condition-${conditionIndex}`} className="rounded-md border border-slate-200 bg-slate-50 p-2">
                       <div className="flex items-center gap-2">
                         <label className="min-w-0 flex-1 text-xs font-medium text-slate-700">Condition {conditionIndex + 1}
-                          <select className={fieldClass} value={condition.kind} onChange={(event) => updateCondition(defaultConditionForKind(event.target.value as Condition["kind"]))}>
+                          <Select className={fieldClass} value={condition.kind} onChange={(event) => updateCondition(defaultConditionForKind(event.target.value as Condition["kind"]))}>
                             <option value="contains_keyword">Message contains phrase</option>
                             <option value="channel_is">Channel</option>
                             <option value="ticket_priority_is">Ticket priority</option>
@@ -1385,39 +1386,39 @@ export function AutomationWorkspace() {
                             <option value="conversation_ai_mode_is">Conversation AI mode</option>
                             <option value="assignee_present">Assignee present</option>
                             <option value="shopify_store_connected">Shopify store connected</option>
-                          </select>
+                          </Select>
                         </label>
-                        <button type="button" className="mb-0.5 rounded px-2 py-1 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:text-slate-400" aria-label={`Remove branch condition ${conditionIndex + 1}`} disabled={branch.conditions.length <= 1} onClick={() => updateDraft((current) => ({
+                        <Button variant="unstyled" type="button" className="mb-0.5 rounded px-2 py-1 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:text-slate-400" aria-label={`Remove branch condition ${conditionIndex + 1}`} disabled={branch.conditions.length <= 1} onClick={() => updateDraft((current) => ({
                           ...current,
                           branches: (current.branches ?? []).map((item) => item.id === branch.id ? { ...item, conditions: item.conditions.filter((_, candidateIndex) => candidateIndex !== conditionIndex) } : item),
-                        }))}>Remove</button>
+                        }))}>Remove</Button>
                       </div>
                       {condition.kind === "contains_keyword" && <label className="mt-2 block text-xs font-medium text-slate-700">Phrase
-                        <input className={fieldClass} maxLength={80} value={condition.value} placeholder="e.g. delivery" onChange={(event) => updateCondition({ ...condition, value: event.target.value })}/>
+                        <Input className={fieldClass} maxLength={80} value={condition.value} placeholder="e.g. delivery" onChange={(event) => updateCondition({ ...condition, value: event.target.value })}/>
                       </label>}
                       {(condition.kind === "channel_is" || condition.kind === "ticket_priority_is" || condition.kind === "ticket_status_is") && <div className="mt-2 grid grid-cols-2 gap-2">
                         <label className="text-xs font-medium text-slate-700">Operator
-                          <select className={fieldClass} value={operator} onChange={(event) => {
+                          <Select className={fieldClass} value={operator} onChange={(event) => {
                             if (condition.kind === "channel_is") updateCondition({ ...condition, operator: event.target.value as "is" | "is_not" });
                             if (condition.kind === "ticket_priority_is") updateCondition({ ...condition, operator: event.target.value as "is" | "is_not" });
                             if (condition.kind === "ticket_status_is") updateCondition({ ...condition, operator: event.target.value as "is" | "is_not" });
-                          }}><option value="is">Is</option><option value="is_not">Is not</option></select>
+                          }}><option value="is">Is</option><option value="is_not">Is not</option></Select>
                         </label>
                         {condition.kind === "channel_is" && <label className="text-xs font-medium text-slate-700">Channel
-                          <input className={fieldClass} maxLength={80} value={condition.value} placeholder="widget" onChange={(event) => updateCondition({ ...condition, value: event.target.value })}/>
+                          <Input className={fieldClass} maxLength={80} value={condition.value} placeholder="widget" onChange={(event) => updateCondition({ ...condition, value: event.target.value })}/>
                         </label>}
                         {condition.kind === "ticket_priority_is" && <label className="text-xs font-medium text-slate-700">Priority
-                          <select className={fieldClass} value={condition.value} onChange={(event) => updateCondition({ ...condition, value: event.target.value as typeof condition.value })}><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option></select>
+                          <Select className={fieldClass} value={condition.value} onChange={(event) => updateCondition({ ...condition, value: event.target.value as typeof condition.value })}><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option></Select>
                         </label>}
                         {condition.kind === "ticket_status_is" && <label className="text-xs font-medium text-slate-700">Status
-                          <select className={fieldClass} value={condition.value} onChange={(event) => updateCondition({ ...condition, value: event.target.value as typeof condition.value })}><option value="open">Open</option><option value="pending">Pending</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select>
+                          <Select className={fieldClass} value={condition.value} onChange={(event) => updateCondition({ ...condition, value: event.target.value as typeof condition.value })}><option value="open">Open</option><option value="pending">Pending</option><option value="resolved">Resolved</option><option value="closed">Closed</option></Select>
                         </label>}
                       </div>}
                       {condition.kind === "conversation_ai_mode_is" && <label className="mt-2 block text-xs font-medium text-slate-700">AI mode
-                        <select className={fieldClass} value={condition.mode} onChange={(event) => updateCondition({ ...condition, mode: event.target.value as "ai" | "human" })}><option value="ai">AI</option><option value="human">Human</option></select>
+                        <Select className={fieldClass} value={condition.mode} onChange={(event) => updateCondition({ ...condition, mode: event.target.value as "ai" | "human" })}><option value="ai">AI</option><option value="human">Human</option></Select>
                       </label>}
                       {condition.kind === "assignee_present" && <label className="mt-2 flex items-center gap-2 text-xs font-medium text-slate-700">
-                        <input type="checkbox" checked={condition.value} onChange={(event) => updateCondition({ ...condition, value: event.target.checked })}/> An assignee is set
+                        <Checkbox checked={condition.value} onCheckedChange={(checked) => updateCondition({ ...condition, value: checked === true })}/> An assignee is set
                       </label>}
                       {condition.kind === "shopify_store_connected" && <p className="mt-2 text-[11px] text-slate-500">Matches when this workspace has an active Shopify store connection.</p>}
                     </div>;
@@ -1444,7 +1445,7 @@ export function AutomationWorkspace() {
             aria-label="Inspector"
           >
             <div className="flex gap-1 border-b border-slate-100 p-1.5">
-              <button
+              <Button variant="unstyled"
                 type="button"
                 className={`flex-1 rounded-md py-1.5 text-xs font-medium ${
                   inspectorTab === "configure" ? "bg-slate-100 text-slate-900" : "text-slate-500 hover:bg-slate-50"
@@ -1452,8 +1453,8 @@ export function AutomationWorkspace() {
                 onClick={() => setInspectorTab("configure")}
               >
                 Configure
-              </button>
-              <button
+              </Button>
+              <Button variant="unstyled"
                 type="button"
                 className={`flex-1 rounded-md py-1.5 text-xs font-medium ${
                   inspectorTab === "test" ? "bg-slate-100 text-slate-900" : "text-slate-500 hover:bg-slate-50"
@@ -1461,7 +1462,7 @@ export function AutomationWorkspace() {
                 onClick={() => setInspectorTab("test")}
               >
                 Test
-              </button>
+              </Button>
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto p-3">
@@ -1474,6 +1475,12 @@ export function AutomationWorkspace() {
                   draftValidation={draftValidation}
                   setShowValidation={setShowValidation}
                   members={members}
+                  bots={aiAgents.data?.items ?? []}
+                  connections={integrationConnections.data?.items ?? []}
+                  botOptionsStatus={!canManage ? "restricted" : aiAgents.isPending ? "loading" : aiAgents.isError ? "error" : "ready"}
+                  connectionOptionsStatus={!canManage ? "restricted" : integrationConnections.isPending ? "loading" : integrationConnections.isError ? "error" : "ready"}
+                  onRetryBotOptions={() => void aiAgents.refetch()}
+                  onRetryConnectionOptions={() => void integrationConnections.refetch()}
                   fieldClass={fieldClass}
                   onSelectErrorStep={scrollToStep}
                 />
@@ -1569,58 +1576,58 @@ function BranchActionsEditor({
     {actions.map((action, index) => <div key={`${index}-${action.kind}`} className="space-y-2 rounded-md border border-slate-200 bg-white p-2">
       <div className="flex items-end gap-1.5">
         <label className="min-w-0 flex-1 text-xs font-medium text-slate-700">Action {index + 1}
-          <select className={fieldClass} value={action.kind} onChange={(event) => updateAction(index, defaultActionForKind(event.target.value as Action["kind"]))}>
+          <Select className={fieldClass} value={action.kind} onChange={(event) => updateAction(index, defaultActionForKind(event.target.value as Action["kind"]))}>
             {(Object.keys(actionNames) as Action["kind"][]).map((kind) => <option key={kind} value={kind}>{actionNames[kind]}</option>)}
-          </select>
+          </Select>
         </label>
-        <button type="button" className="rounded px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 disabled:text-slate-300" aria-label={`Move branch action ${index + 1} up`} disabled={index === 0} onClick={() => moveAction(index, -1)}>↑</button>
-        <button type="button" className="rounded px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 disabled:text-slate-300" aria-label={`Move branch action ${index + 1} down`} disabled={index === actions.length - 1} onClick={() => moveAction(index, 1)}>↓</button>
-        <button type="button" className="rounded px-2 py-1 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:text-slate-300" aria-label={`Remove branch action ${index + 1}`} disabled={actions.length <= 1} onClick={() => onChange(actions.filter((_, actionIndex) => actionIndex !== index))}>Remove</button>
+        <Button variant="unstyled" type="button" className="rounded px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 disabled:text-slate-300" aria-label={`Move branch action ${index + 1} up`} disabled={index === 0} onClick={() => moveAction(index, -1)}>↑</Button>
+        <Button variant="unstyled" type="button" className="rounded px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 disabled:text-slate-300" aria-label={`Move branch action ${index + 1} down`} disabled={index === actions.length - 1} onClick={() => moveAction(index, 1)}>↓</Button>
+        <Button variant="unstyled" type="button" className="rounded px-2 py-1 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:text-slate-300" aria-label={`Remove branch action ${index + 1}`} disabled={actions.length <= 1} onClick={() => onChange(actions.filter((_, actionIndex) => actionIndex !== index))}>Remove</Button>
       </div>
       {action.kind === "set_priority" && <>
         <label className="block text-xs font-medium text-slate-700">Priority
-          <select className={fieldClass} value={action.value} onChange={(event) => updateAction(index, { ...action, value: event.target.value as typeof action.value })}><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option></select>
+          <Select className={fieldClass} value={action.value} onChange={(event) => updateAction(index, { ...action, value: event.target.value as typeof action.value })}><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option></Select>
         </label>
-        <label className="flex items-center gap-2 text-xs text-slate-700"><input type="checkbox" checked={action.only_raise} onChange={(event) => updateAction(index, { ...action, only_raise: event.target.checked })}/> Only raise priority</label>
+        <label className="flex items-center gap-2 text-xs text-slate-700"><Checkbox checked={action.only_raise} onCheckedChange={(checked) => updateAction(index, { ...action, only_raise: checked === true })}/> Only raise priority</label>
       </>}
       {action.kind === "assign_to_user" && <>
         <label className="block text-xs font-medium text-slate-700">Teammate
-          <select className={fieldClass} value={action.user_id} onChange={(event) => updateAction(index, { ...action, user_id: event.target.value })}><option value="">Choose teammate</option>{members.filter((member) => member.is_active && ["owner", "admin", "agent"].includes(member.role)).map((member) => <option key={member.id} value={member.id}>{member.full_name} · {member.role}</option>)}</select>
+          <Select className={fieldClass} value={action.user_id} onChange={(event) => updateAction(index, { ...action, user_id: event.target.value })}><option value="">Choose teammate</option>{members.filter((member) => member.is_active && ["owner", "admin", "agent"].includes(member.role)).map((member) => <option key={member.id} value={member.id}>{member.full_name} · {member.role}</option>)}</Select>
         </label>
-        <label className="flex items-center gap-2 text-xs text-slate-700"><input type="checkbox" checked={action.only_if_unassigned} onChange={(event) => updateAction(index, { ...action, only_if_unassigned: event.target.checked })}/> Only if unassigned</label>
+        <label className="flex items-center gap-2 text-xs text-slate-700"><Checkbox checked={action.only_if_unassigned} onCheckedChange={(checked) => updateAction(index, { ...action, only_if_unassigned: checked === true })}/> Only if unassigned</label>
       </>}
       {action.kind === "assign_to_team" && <>
         <label className="block text-xs font-medium text-slate-700">Support team
-          <select className={fieldClass} value={action.team_id} onChange={(event) => updateAction(index, { ...action, team_id: event.target.value })}><option value="">Choose team</option>{teams.filter((team) => team.is_active).map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</select>
+          <Select className={fieldClass} value={action.team_id} onChange={(event) => updateAction(index, { ...action, team_id: event.target.value })}><option value="">Choose team</option>{teams.filter((team) => team.is_active).map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</Select>
         </label>
-        <label className="flex items-center gap-2 text-xs text-slate-700"><input type="checkbox" checked={action.only_if_unassigned} onChange={(event) => updateAction(index, { ...action, only_if_unassigned: event.target.checked })}/> Only if no team is assigned</label>
+        <label className="flex items-center gap-2 text-xs text-slate-700"><Checkbox checked={action.only_if_unassigned} onCheckedChange={(checked) => updateAction(index, { ...action, only_if_unassigned: checked === true })}/> Only if no team is assigned</label>
       </>}
       {action.kind === "set_ticket_status" && <label className="block text-xs font-medium text-slate-700">Status
-        <select className={fieldClass} value={action.value} onChange={(event) => updateAction(index, { ...action, value: event.target.value as typeof action.value })}><option value="open">Open</option><option value="pending">Pending</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select>
+        <Select className={fieldClass} value={action.value} onChange={(event) => updateAction(index, { ...action, value: event.target.value as typeof action.value })}><option value="open">Open</option><option value="pending">Pending</option><option value="resolved">Resolved</option><option value="closed">Closed</option></Select>
       </label>}
       {action.kind === "set_conversation_ai_mode" && <label className="block text-xs font-medium text-slate-700">Conversation mode
-        <select className={fieldClass} value={action.mode} onChange={(event) => updateAction(index, { ...action, mode: event.target.value as typeof action.mode })}><option value="ai">AI</option><option value="human">Human</option></select>
+        <Select className={fieldClass} value={action.mode} onChange={(event) => updateAction(index, { ...action, mode: event.target.value as typeof action.mode })}><option value="ai">AI</option><option value="human">Human</option></Select>
       </label>}
       {action.kind === "route_to_ai_bot" && <label className="block text-xs font-medium text-slate-700">AI bot
-        <select className={fieldClass} value={action.ai_agent_id} onChange={(event) => updateAction(index, { ...action, ai_agent_id: event.target.value })}><option value="">Choose active AI bot</option>{agents.filter((agent) => agent.status === "active").map((agent) => <option key={agent.id} value={agent.id}>{agent.name}{agent.is_default ? " · default" : ""}</option>)}</select>
+        <Select className={fieldClass} value={action.ai_agent_id} onChange={(event) => updateAction(index, { ...action, ai_agent_id: event.target.value })}><option value="">Choose active AI bot</option>{agents.filter((agent) => agent.status === "active").map((agent) => <option key={agent.id} value={agent.id}>{agent.name}{agent.is_default ? " · default" : ""}</option>)}</Select>
       </label>}
       {action.kind === "add_internal_note" && <label className="block text-xs font-medium text-slate-700">Private internal note
-        <textarea className={`${fieldClass} min-h-16`} maxLength={4000} value={action.body} onChange={(event) => updateAction(index, { ...action, body: event.target.value })}/>
+        <Textarea className={`${fieldClass} min-h-16`} maxLength={4000} value={action.body} onChange={(event) => updateAction(index, { ...action, body: event.target.value })}/>
       </label>}
       {action.kind === "require_human_approval" && <>
-        <label className="block text-xs font-medium text-slate-700">Approval summary<input className={fieldClass} maxLength={200} value={action.summary} onChange={(event) => updateAction(index, { ...action, summary: event.target.value })}/></label>
-        <label className="block text-xs font-medium text-slate-700">Reviewer details<textarea className={`${fieldClass} min-h-14`} maxLength={2000} value={action.detail ?? ""} onChange={(event) => { const detail = event.target.value.trim(); updateAction(index, { ...action, detail: detail || null }); }}/></label>
+        <label className="block text-xs font-medium text-slate-700">Approval summary<Input className={fieldClass} maxLength={200} value={action.summary} onChange={(event) => updateAction(index, { ...action, summary: event.target.value })}/></label>
+        <label className="block text-xs font-medium text-slate-700">Reviewer details<Textarea className={`${fieldClass} min-h-14`} maxLength={2000} value={action.detail ?? ""} onChange={(event) => { const detail = event.target.value.trim(); updateAction(index, { ...action, detail: detail || null }); }}/></label>
       </>}
-      {action.kind === "lookup_shopify_order" && <label className="block text-xs font-medium text-slate-700">Order number pattern<input className={fieldClass} value={action.order_number_regex} onChange={(event) => updateAction(index, { ...action, order_number_regex: event.target.value })}/></label>}
+      {action.kind === "lookup_shopify_order" && <label className="block text-xs font-medium text-slate-700">Order number pattern<Input className={fieldClass} value={action.order_number_regex} onChange={(event) => updateAction(index, { ...action, order_number_regex: event.target.value })}/></label>}
       {action.kind === "search_shopify_catalog" && <>
-        <label className="block text-xs font-medium text-slate-700">Search pattern (optional)<input className={fieldClass} value={action.query_regex ?? ""} onChange={(event) => updateAction(index, { ...action, query_regex: event.target.value || null })}/></label>
-        <label className="block text-xs font-medium text-slate-700">Maximum results<input className={fieldClass} type="number" min={1} max={10} value={action.max_results} onChange={(event) => { const count = Number(event.target.value); if (Number.isInteger(count) && count >= 1 && count <= 10) updateAction(index, { ...action, max_results: count }); }}/></label>
+        <label className="block text-xs font-medium text-slate-700">Search pattern (optional)<Input className={fieldClass} value={action.query_regex ?? ""} onChange={(event) => updateAction(index, { ...action, query_regex: event.target.value || null })}/></label>
+        <label className="block text-xs font-medium text-slate-700">Maximum results<Input className={fieldClass} type="number" min={1} max={10} value={action.max_results} onChange={(event) => { const count = Number(event.target.value); if (Number.isInteger(count) && count >= 1 && count <= 10) updateAction(index, { ...action, max_results: count }); }}/></label>
       </>}
       {action.kind === "request_commerce_approval" && <>
         <p className="rounded-md bg-amber-50 p-2 text-[11px] leading-4 text-amber-900">Creates a review request only; cancellation is not executed automatically.</p>
-        <label className="block text-xs font-medium text-slate-700">Request summary<input className={fieldClass} maxLength={200} value={action.summary} onChange={(event) => updateAction(index, { ...action, summary: event.target.value })}/></label>
-        <label className="block text-xs font-medium text-slate-700">Order number pattern<input className={fieldClass} value={action.order_number_regex} onChange={(event) => updateAction(index, { ...action, order_number_regex: event.target.value })}/></label>
-        <label className="block text-xs font-medium text-slate-700">Additional details<textarea className={`${fieldClass} min-h-14`} maxLength={2000} value={action.detail ?? ""} onChange={(event) => { const detail = event.target.value.trim(); updateAction(index, { ...action, detail: detail || null }); }}/></label>
+        <label className="block text-xs font-medium text-slate-700">Request summary<Input className={fieldClass} maxLength={200} value={action.summary} onChange={(event) => updateAction(index, { ...action, summary: event.target.value })}/></label>
+        <label className="block text-xs font-medium text-slate-700">Order number pattern<Input className={fieldClass} value={action.order_number_regex} onChange={(event) => updateAction(index, { ...action, order_number_regex: event.target.value })}/></label>
+        <label className="block text-xs font-medium text-slate-700">Additional details<Textarea className={`${fieldClass} min-h-14`} maxLength={2000} value={action.detail ?? ""} onChange={(event) => { const detail = event.target.value.trim(); updateAction(index, { ...action, detail: detail || null }); }}/></label>
       </>}
       {action.kind === "restore_widget_bot_routing" && <p className="text-[11px] text-slate-500">Future widget messages use configured automatic bot routing.</p>}
     </div>)}
@@ -1635,6 +1642,12 @@ function InspectorConfigure({
   draftValidation,
   setShowValidation,
   members,
+  bots,
+  connections,
+  botOptionsStatus,
+  connectionOptionsStatus,
+  onRetryBotOptions,
+  onRetryConnectionOptions,
   fieldClass,
   onSelectErrorStep,
 }: {
@@ -1645,6 +1658,12 @@ function InspectorConfigure({
   draftValidation: ReturnType<typeof validateWorkflowDraft>;
   setShowValidation: (v: boolean) => void;
   members: UseQueryResult<User[], Error>;
+  bots: AIAgent[];
+  connections: IntegrationConnection[];
+  botOptionsStatus: "restricted" | "loading" | "error" | "ready";
+  connectionOptionsStatus: "restricted" | "loading" | "error" | "ready";
+  onRetryBotOptions: () => void;
+  onRetryConnectionOptions: () => void;
   fieldClass: string;
   onSelectErrorStep: (s: DraftStep) => void;
 }) {
@@ -1662,13 +1681,13 @@ function InspectorConfigure({
           <p className="text-xs font-semibold uppercase text-teal-700">Trigger</p>
           <label className="mt-2 block text-sm font-medium text-slate-700">
             Start workflow when
-            <select
+            <Select
               value={draft.trigger.kind}
               onChange={(event) => updateDraft({
                 trigger: event.target.value === "conversation_started"
                   ? { kind: "conversation_started" }
                   : event.target.value === "ticket_created"
-                    ? { kind: "ticket_created" }
+                    ? { kind: "ticket_created", channel: null, ai_agent_id: null, integration_connection_id: null }
                     : createEmptyCustomerMessageTrigger(),
               })}
               className={fieldClass}
@@ -1676,16 +1695,60 @@ function InspectorConfigure({
               <option value="customer_message_received">A customer sends a message</option>
               <option value="conversation_started">A conversation receives its first message</option>
               <option value="ticket_created">An inbound message creates a ticket</option>
-            </select>
+            </Select>
           </label>
           {draft.trigger.kind === "conversation_started" ? (
             <p className="mt-2 text-xs text-slate-500">
               Runs once when the first customer message is saved. Later messages in the same conversation do not start another run.
             </p>
           ) : draft.trigger.kind === "ticket_created" ? (
-            <p className="mt-2 text-xs text-slate-500">
-              Runs when a new ticket is created by the first inbound storefront or connected-channel message. Agent-created tickets without an inbound conversation do not trigger this workflow.
-            </p>
+            <>
+              <p className="mt-2 text-xs text-slate-500">
+                Runs when the first inbound storefront or connected-channel message creates a ticket. Agent-created tickets without an inbound conversation do not trigger this workflow. Add a channel filter to limit it to a source such as widget.
+              </p>
+              <label className="mt-3 block text-sm font-medium text-slate-700">
+                Channel filter (optional)
+                <Input
+                  value={draft.trigger.channel ?? ""}
+                  onChange={(event) => updateDraft({ trigger: { ...draft.trigger, channel: event.target.value.trim() ? event.target.value : null } })}
+                  maxLength={40}
+                  placeholder="e.g. widget"
+                  className={fieldClass}
+                />
+              </label>
+              <label className="mt-3 block text-sm font-medium text-slate-700">
+                AI bot filter (optional)
+                <Select
+                  value={draft.trigger.ai_agent_id ?? ""}
+                  disabled={botOptionsStatus !== "ready"}
+                  onChange={(event) => updateDraft({ trigger: { ...draft.trigger, ai_agent_id: event.target.value || null } })}
+                  className={fieldClass}
+                >
+                  <option value="">Any bot</option>
+                  {draft.trigger.ai_agent_id && !bots.some((bot) => bot.id === draft.trigger.ai_agent_id && bot.status === "active") && <option value={draft.trigger.ai_agent_id}>{bots.find((bot) => bot.id === draft.trigger.ai_agent_id)?.name ?? "Saved bot selection unavailable"} · inactive or unavailable</option>}
+                  {bots.filter((bot) => bot.status === "active").map((agent) => <option key={agent.id} value={agent.id}>{agent.name}{agent.is_default ? " · default" : ""}</option>)}
+                </Select>
+                {botOptionsStatus === "loading" && <span role="status" className="mt-1 block text-xs font-normal text-slate-500">Loading active bots…</span>}
+                {botOptionsStatus === "error" && <span className="mt-1 block text-xs font-normal text-amber-800">Bot list unavailable. Existing selection is preserved; <Button variant="unstyled" type="button" className="underline" onClick={onRetryBotOptions}>retry loading</Button> before changing it.</span>}
+                {botOptionsStatus === "restricted" && <span className="mt-1 block text-xs font-normal text-slate-500">Bot filters are available to workspace managers.</span>}
+              </label>
+              <label className="mt-3 block text-sm font-medium text-slate-700">
+                Connected integration filter (optional)
+                <Select
+                  value={draft.trigger.integration_connection_id ?? ""}
+                  disabled={connectionOptionsStatus !== "ready"}
+                  onChange={(event) => updateDraft({ trigger: { ...draft.trigger, integration_connection_id: event.target.value || null } })}
+                  className={fieldClass}
+                >
+                  <option value="">Any connection</option>
+                  {draft.trigger.integration_connection_id && !connections.some((connection) => connection.id === draft.trigger.integration_connection_id && connection.status === "connected") && <option value={draft.trigger.integration_connection_id}>{connections.find((connection) => connection.id === draft.trigger.integration_connection_id)?.display_name ?? "Saved connection unavailable"} · disconnected or unavailable</option>}
+                  {connections.filter((connection) => connection.status === "connected").map((connection) => <option key={connection.id} value={connection.id}>{connection.display_name} · {connection.provider_id}</option>)}
+                </Select>
+                {connectionOptionsStatus === "loading" && <span role="status" className="mt-1 block text-xs font-normal text-slate-500">Loading connected integrations…</span>}
+                {connectionOptionsStatus === "error" && <span className="mt-1 block text-xs font-normal text-amber-800">Integration list unavailable. Existing selection is preserved; <Button variant="unstyled" type="button" className="underline" onClick={onRetryConnectionOptions}>retry loading</Button> before changing it.</span>}
+                {connectionOptionsStatus === "restricted" && <span className="mt-1 block text-xs font-normal text-slate-500">Integration filters are available to workspace managers.</span>}
+              </label>
+            </>
           ) : (
             <>
               <p className="mt-2 text-xs text-slate-500">
@@ -1693,7 +1756,7 @@ function InspectorConfigure({
               </p>
           <label className="mt-3 block text-sm font-medium text-slate-700">
             Channel filter (optional)
-            <input
+            <Input
               value={draft.trigger.channel ?? ""}
               onChange={(e) =>
                 updateDraft({
@@ -1708,10 +1771,9 @@ function InspectorConfigure({
             />
           </label>
           <label className="mt-2 flex items-center gap-2 text-sm text-slate-700">
-            <input
-              type="checkbox"
+            <Checkbox
               checked={draft.trigger.first_message_only}
-              onChange={(e) =>
+              onCheckedChange={(e) =>
                 updateDraft({
                   trigger: { ...draft.trigger, first_message_only: e.target.checked },
                 })
@@ -1720,36 +1782,36 @@ function InspectorConfigure({
             First customer message in the conversation only
           </label>
           <label className="mt-3 block text-sm font-medium text-slate-700">
-            AI agent filter (optional, UUID)
-            <input
+            AI bot filter (optional)
+            <Select
               value={draft.trigger.ai_agent_id ?? ""}
-              onChange={(e) =>
-                updateDraft({
-                  trigger: {
-                    ...draft.trigger,
-                    ai_agent_id: e.target.value.trim() ? e.target.value.trim() : null,
-                  },
-                })
-              }
+              disabled={botOptionsStatus !== "ready"}
+              onChange={(event) => updateDraft({ trigger: { ...draft.trigger, ai_agent_id: event.target.value || null } })}
               className={fieldClass}
-              placeholder="Leave blank for all agents"
-            />
+            >
+              <option value="">Any bot</option>
+              {draft.trigger.ai_agent_id && !bots.some((bot) => bot.id === draft.trigger.ai_agent_id && bot.status === "active") && <option value={draft.trigger.ai_agent_id}>{bots.find((bot) => bot.id === draft.trigger.ai_agent_id)?.name ?? "Saved bot selection unavailable"} · inactive or unavailable</option>}
+              {bots.filter((bot) => bot.status === "active").map((bot) => <option key={bot.id} value={bot.id}>{bot.name}{bot.is_default ? " · default" : ""}</option>)}
+            </Select>
+            {botOptionsStatus === "loading" && <span role="status" className="mt-1 block text-xs font-normal text-slate-500">Loading active bots…</span>}
+            {botOptionsStatus === "error" && <span className="mt-1 block text-xs font-normal text-amber-800">Bot list unavailable. The saved filter is preserved; <Button variant="unstyled" type="button" className="underline" onClick={onRetryBotOptions}>retry loading</Button> before changing it.</span>}
+            {botOptionsStatus === "restricted" && <span className="mt-1 block text-xs font-normal text-slate-500">Bot filters are available to workspace managers.</span>}
           </label>
           <label className="mt-2 block text-sm font-medium text-slate-700">
-            Channel connection filter (optional, UUID)
-            <input
+            Connected integration filter (optional)
+            <Select
               value={draft.trigger.integration_connection_id ?? ""}
-              onChange={(e) =>
-                updateDraft({
-                  trigger: {
-                    ...draft.trigger,
-                    integration_connection_id: e.target.value.trim() ? e.target.value.trim() : null,
-                  },
-                })
-              }
+              disabled={connectionOptionsStatus !== "ready"}
+              onChange={(event) => updateDraft({ trigger: { ...draft.trigger, integration_connection_id: event.target.value || null } })}
               className={fieldClass}
-              placeholder="e.g. WhatsApp connection id"
-            />
+            >
+              <option value="">Any connection</option>
+              {draft.trigger.integration_connection_id && !connections.some((connection) => connection.id === draft.trigger.integration_connection_id && connection.status === "connected") && <option value={draft.trigger.integration_connection_id}>{connections.find((connection) => connection.id === draft.trigger.integration_connection_id)?.display_name ?? "Saved connection unavailable"} · disconnected or unavailable</option>}
+              {connections.filter((connection) => connection.status === "connected").map((connection) => <option key={connection.id} value={connection.id}>{connection.display_name} · {connection.provider_id}</option>)}
+            </Select>
+            {connectionOptionsStatus === "loading" && <span role="status" className="mt-1 block text-xs font-normal text-slate-500">Loading connected integrations…</span>}
+            {connectionOptionsStatus === "error" && <span className="mt-1 block text-xs font-normal text-amber-800">Integration list unavailable. The saved filter is preserved; <Button variant="unstyled" type="button" className="underline" onClick={onRetryConnectionOptions}>retry loading</Button> before changing it.</span>}
+            {connectionOptionsStatus === "restricted" && <span className="mt-1 block text-xs font-normal text-slate-500">Integration filters are available to workspace managers.</span>}
           </label>
             </>
           )}
@@ -1766,18 +1828,18 @@ function InspectorConfigure({
           <p className="text-xs font-semibold uppercase text-amber-800">Condition {selectedStep.index + 1}</p>
           <label className="mt-2 block text-sm font-medium text-slate-700">
             Match logic (group)
-            <select
+            <Select
               value={draft.conditionMode}
               onChange={(e) => updateDraft({ conditionMode: e.target.value as "all" | "any" })}
               className={fieldClass}
             >
               <option value="all">Match all conditions (AND)</option>
               <option value="any">Match any condition (OR)</option>
-            </select>
+            </Select>
           </label>
           <label className="mt-3 block text-sm font-medium text-slate-700">
             Rule type
-            <select
+            <Select
               value={draft.conditions[selectedStep.index]!.kind}
               onChange={(e) => {
                 const kind = e.target.value as Condition["kind"];
@@ -1796,12 +1858,12 @@ function InspectorConfigure({
               <option value="conversation_ai_mode_is">Conversation AI mode</option>
               <option value="assignee_present">Assignee present</option>
               <option value="shopify_store_connected">Shopify store connected</option>
-            </select>
+            </Select>
           </label>
           {draft.conditions[selectedStep.index]!.kind === "contains_keyword" && (
             <label className="mt-3 block text-sm font-medium text-slate-700">
               Phrase
-              <input
+              <Input
                 aria-label={`Condition ${selectedStep.index + 1} · message contains`}
                 value={(draft.conditions[selectedStep.index] as Extract<Condition, { kind: "contains_keyword" }>).value}
                 onChange={(e) =>
@@ -1820,7 +1882,7 @@ function InspectorConfigure({
             <>
               <label className="mt-3 block text-sm font-medium text-slate-700">
                 Operator
-                <select
+                <Select
                   value={(draft.conditions[selectedStep.index] as Extract<Condition, { kind: "channel_is" }>).operator}
                   onChange={(e) =>
                     updateDraft((c) => {
@@ -1834,11 +1896,11 @@ function InspectorConfigure({
                 >
                   <option value="is">Is</option>
                   <option value="is_not">Is not</option>
-                </select>
+                </Select>
               </label>
               <label className="mt-2 block text-sm font-medium text-slate-700">
                 Channel
-                <input
+                <Input
                   value={(draft.conditions[selectedStep.index] as Extract<Condition, { kind: "channel_is" }>).value}
                   onChange={(e) =>
                     updateDraft((c) => {
@@ -1857,7 +1919,7 @@ function InspectorConfigure({
             <>
               <label className="mt-3 block text-sm font-medium text-slate-700">
                 Operator
-                <select
+                <Select
                   value={(draft.conditions[selectedStep.index] as Extract<Condition, { kind: "ticket_priority_is" }>).operator}
                   onChange={(e) =>
                     updateDraft((c) => {
@@ -1871,11 +1933,11 @@ function InspectorConfigure({
                 >
                   <option value="is">Is</option>
                   <option value="is_not">Is not</option>
-                </select>
+                </Select>
               </label>
               <label className="mt-2 block text-sm font-medium text-slate-700">
                 Priority
-                <select
+                <Select
                   value={(draft.conditions[selectedStep.index] as Extract<Condition, { kind: "ticket_priority_is" }>).value}
                   onChange={(e) =>
                     updateDraft((c) => {
@@ -1891,7 +1953,7 @@ function InspectorConfigure({
                   <option value="normal">Normal</option>
                   <option value="high">High</option>
                   <option value="urgent">Urgent</option>
-                </select>
+                </Select>
               </label>
             </>
           )}
@@ -1899,7 +1961,7 @@ function InspectorConfigure({
             <>
               <label className="mt-3 block text-sm font-medium text-slate-700">
                 Operator
-                <select
+                <Select
                   value={(draft.conditions[selectedStep.index] as Extract<Condition, { kind: "ticket_status_is" }>).operator}
                   onChange={(e) =>
                     updateDraft((c) => {
@@ -1913,11 +1975,11 @@ function InspectorConfigure({
                 >
                   <option value="is">Is</option>
                   <option value="is_not">Is not</option>
-                </select>
+                </Select>
               </label>
               <label className="mt-2 block text-sm font-medium text-slate-700">
                 Ticket status
-                <select
+                <Select
                   value={(draft.conditions[selectedStep.index] as Extract<Condition, { kind: "ticket_status_is" }>).value}
                   onChange={(e) =>
                     updateDraft((c) => {
@@ -1933,14 +1995,14 @@ function InspectorConfigure({
                   <option value="pending">Pending</option>
                   <option value="resolved">Resolved</option>
                   <option value="closed">Closed</option>
-                </select>
+                </Select>
               </label>
             </>
           )}
           {draft.conditions[selectedStep.index]!.kind === "conversation_ai_mode_is" && (
             <label className="mt-3 block text-sm font-medium text-slate-700">
               Mode
-              <select
+              <Select
                 value={(draft.conditions[selectedStep.index] as Extract<Condition, { kind: "conversation_ai_mode_is" }>).mode}
                 onChange={(e) =>
                   updateDraft((c) => {
@@ -1956,13 +2018,13 @@ function InspectorConfigure({
               >
                 <option value="ai">AI</option>
                 <option value="human">Human</option>
-              </select>
+              </Select>
             </label>
           )}
           {draft.conditions[selectedStep.index]!.kind === "assignee_present" && (
             <label className="mt-3 block text-sm font-medium text-slate-700">
               Expect assignee
-              <select
+              <Select
                 value={
                   (draft.conditions[selectedStep.index] as Extract<Condition, { kind: "assignee_present" }>).value
                     ? "yes"
@@ -1982,7 +2044,7 @@ function InspectorConfigure({
               >
                 <option value="yes">Has assignee</option>
                 <option value="no">Unassigned</option>
-              </select>
+              </Select>
             </label>
           )}
           {draft.conditions[selectedStep.index]!.kind === "shopify_store_connected" && (
@@ -2002,7 +2064,7 @@ function InspectorConfigure({
           <p className="text-xs font-semibold uppercase text-violet-700">Action {selectedStep.index + 1}</p>
           <label className="mt-2 block text-sm font-medium text-slate-700">
             Action type
-            <select
+            <Select
               value={draft.actions[selectedStep.index]!.kind}
               onChange={(e) => {
                 const kind = e.target.value as Action["kind"];
@@ -2026,13 +2088,13 @@ function InspectorConfigure({
               <option value="lookup_shopify_order">Look up Shopify order (read-only)</option>
               <option value="search_shopify_catalog">Search Shopify catalog (read-only)</option>
               <option value="request_commerce_approval">Request cancellation review</option>
-            </select>
+            </Select>
           </label>
           {draft.actions[selectedStep.index]!.kind === "set_priority" && (
             <>
               <label className="mt-3 block text-sm font-medium text-slate-700">
                 Priority
-                <select
+                <Select
                   aria-label="Action priority"
                   value={(draft.actions[selectedStep.index] as Extract<Action, { kind: "set_priority" }>).value}
                   onChange={(e) =>
@@ -2049,13 +2111,12 @@ function InspectorConfigure({
                   <option value="normal">Normal</option>
                   <option value="high">High</option>
                   <option value="urgent">Urgent</option>
-                </select>
+                </Select>
               </label>
               <label className="mt-2 flex items-center gap-2 text-sm text-slate-700">
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={(draft.actions[selectedStep.index] as Extract<Action, { kind: "set_priority" }>).only_raise}
-                  onChange={(e) =>
+                  onCheckedChange={(e) =>
                     updateDraft((c) => {
                       const next = [...c.actions];
                       const cur = next[selectedStep.index] as Extract<Action, { kind: "set_priority" }>;
@@ -2072,7 +2133,7 @@ function InspectorConfigure({
             <>
               <label className="mt-3 block text-sm font-medium text-slate-700">
                 Assign to
-                <select
+                <Select
                   aria-label="Assign to teammate"
                   required
                   value={(draft.actions[selectedStep.index] as Extract<Action, { kind: "assign_to_user" }>).user_id}
@@ -2094,13 +2155,12 @@ function InspectorConfigure({
                         {member.full_name} · {member.role}
                       </option>
                     ))}
-                </select>
+                </Select>
               </label>
               <label className="mt-2 flex items-center gap-2 text-sm text-slate-700">
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={(draft.actions[selectedStep.index] as Extract<Action, { kind: "assign_to_user" }>).only_if_unassigned}
-                  onChange={(e) =>
+                  onCheckedChange={(e) =>
                     updateDraft((c) => {
                       const next = [...c.actions];
                       const cur = next[selectedStep.index] as Extract<Action, { kind: "assign_to_user" }>;
@@ -2122,7 +2182,7 @@ function InspectorConfigure({
             <>
               <label className="mt-3 block text-sm font-medium text-slate-700">
                 Support team
-                <select
+                <Select
                   aria-label="Assign to support team"
                   required
                   value={(draft.actions[selectedStep.index] as Extract<Action, { kind: "assign_to_team" }>).team_id}
@@ -2140,16 +2200,15 @@ function InspectorConfigure({
                   {teams.data?.filter((team) => team.is_active).map((team) => (
                     <option key={team.id} value={team.id}>{team.name}</option>
                   ))}
-                </select>
+                </Select>
               </label>
               {teams.data?.every((team) => !team.is_active) && (
                 <p className="mt-1 text-xs text-slate-500">Create an active support team in Settings before using this action.</p>
               )}
               <label className="mt-2 flex items-center gap-2 text-sm text-slate-700">
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={(draft.actions[selectedStep.index] as Extract<Action, { kind: "assign_to_team" }>).only_if_unassigned}
-                  onChange={(e) =>
+                  onCheckedChange={(e) =>
                     updateDraft((c) => {
                       const next = [...c.actions];
                       const cur = next[selectedStep.index] as Extract<Action, { kind: "assign_to_team" }>;
@@ -2166,7 +2225,7 @@ function InspectorConfigure({
           {draft.actions[selectedStep.index]!.kind === "set_ticket_status" && (
             <label className="mt-3 block text-sm font-medium text-slate-700">
               Set ticket status
-              <select
+              <Select
                 value={(draft.actions[selectedStep.index] as Extract<Action, { kind: "set_ticket_status" }>).value}
                 onChange={(e) =>
                   updateDraft((c) => {
@@ -2182,13 +2241,13 @@ function InspectorConfigure({
                 <option value="pending">Pending</option>
                 <option value="resolved">Resolved</option>
                 <option value="closed">Closed</option>
-              </select>
+              </Select>
             </label>
           )}
           {draft.actions[selectedStep.index]!.kind === "set_conversation_ai_mode" && (
             <label className="mt-3 block text-sm font-medium text-slate-700">
               Mode
-              <select
+              <Select
                 value={(draft.actions[selectedStep.index] as Extract<Action, { kind: "set_conversation_ai_mode" }>).mode}
                 onChange={(e) =>
                   updateDraft((c) => {
@@ -2202,14 +2261,14 @@ function InspectorConfigure({
               >
                 <option value="ai">AI</option>
                 <option value="human">Human</option>
-              </select>
+              </Select>
             </label>
           )}
           {draft.actions[selectedStep.index]!.kind === "route_to_ai_bot" && (
             <>
               <label className="mt-3 block text-sm font-medium text-slate-700">
                 AI bot
-                <select
+                <Select
                   aria-label="Route to AI bot"
                   required
                   value={(draft.actions[selectedStep.index] as Extract<Action, { kind: "route_to_ai_bot" }>).ai_agent_id}
@@ -2233,14 +2292,14 @@ function InspectorConfigure({
                         {agent.name}{agent.is_default ? " · default" : ""}
                       </option>
                     ))}
-                </select>
+                </Select>
               </label>
               <p className="mt-2 text-xs leading-5 text-slate-500">
                 This applies to future widget messages after the workflow finishes. The current message may already have an AI reply queued.
               </p>
               {aiAgents.isError && (
                 <span role="alert" className="mt-1 block text-xs text-red-700">
-                  Unable to load AI bots. <button type="button" className="underline" onClick={() => void aiAgents.refetch()}>Try again</button>
+                  Unable to load AI bots. <Button variant="unstyled" type="button" className="underline" onClick={() => void aiAgents.refetch()}>Try again</Button>
                 </span>
               )}
               {!aiAgents.isLoading && !aiAgents.isError && !(aiAgents.data?.items.some((agent) => agent.status === "active")) && (
@@ -2253,7 +2312,7 @@ function InspectorConfigure({
           {draft.actions[selectedStep.index]!.kind === "add_internal_note" && (
             <label className="mt-3 block text-sm font-medium text-slate-700">
               Note body
-              <textarea
+              <Textarea
                 rows={3}
                 value={(draft.actions[selectedStep.index] as Extract<Action, { kind: "add_internal_note" }>).body}
                 onChange={(e) =>
@@ -2276,7 +2335,7 @@ function InspectorConfigure({
               </p>
               <label className="mt-3 block text-sm font-medium text-slate-700">
                 Approval summary
-                <input
+                <Input
                   value={(draft.actions[selectedStep.index] as Extract<Action, { kind: "require_human_approval" }>).summary}
                   onChange={(e) =>
                     updateDraft((c) => {
@@ -2292,7 +2351,7 @@ function InspectorConfigure({
               </label>
               <label className="mt-2 block text-sm font-medium text-slate-700">
                 Details (optional)
-                <textarea
+                <Textarea
                   rows={3}
                   value={(draft.actions[selectedStep.index] as Extract<Action, { kind: "require_human_approval" }>).detail ?? ""}
                   onChange={(e) =>
@@ -2314,7 +2373,7 @@ function InspectorConfigure({
           {draft.actions[selectedStep.index]!.kind === "lookup_shopify_order" && (
             <label className="mt-3 block text-sm font-medium text-slate-700">
               Order number regex
-              <input
+              <Input
                 value={(draft.actions[selectedStep.index] as Extract<Action, { kind: "lookup_shopify_order" }>).order_number_regex}
                 onChange={(e) =>
                   updateDraft((c) => {
@@ -2332,7 +2391,7 @@ function InspectorConfigure({
             <>
               <label className="mt-3 block text-sm font-medium text-slate-700">
                 Search regex (optional, first capture group)
-                <input
+                <Input
                   value={
                     (draft.actions[selectedStep.index] as Extract<Action, { kind: "search_shopify_catalog" }>).query_regex ?? ""
                   }
@@ -2351,7 +2410,7 @@ function InspectorConfigure({
               </label>
               <label className="mt-2 block text-sm font-medium text-slate-700">
                 Max results
-                <input
+                <Input
                   type="number"
                   min={1}
                   max={10}
@@ -2377,7 +2436,7 @@ function InspectorConfigure({
               </p>
               <label className="mt-3 block text-sm font-medium text-slate-700">
                 Request summary
-                <input
+                <Input
                   value={(draft.actions[selectedStep.index] as Extract<Action, { kind: "request_commerce_approval" }>).summary}
                   onChange={(e) =>
                     updateDraft((c) => {
@@ -2392,7 +2451,7 @@ function InspectorConfigure({
               </label>
               <label className="mt-2 block text-sm font-medium text-slate-700">
                 Order number pattern
-                <input
+                <Input
                   value={(draft.actions[selectedStep.index] as Extract<Action, { kind: "request_commerce_approval" }>).order_number_regex}
                   onChange={(e) =>
                     updateDraft((c) => {
@@ -2409,7 +2468,7 @@ function InspectorConfigure({
               </label>
               <label className="mt-2 block text-sm font-medium text-slate-700">
                 Detail (optional)
-                <textarea
+                <Textarea
                   rows={2}
                   value={
                     (draft.actions[selectedStep.index] as Extract<Action, { kind: "request_commerce_approval" }>).detail ?? ""
@@ -2438,13 +2497,13 @@ function InspectorConfigure({
       )}
 
       <div className="border-t border-slate-100 pt-3">
-        <button
+        <Button variant="unstyled"
           type="button"
           className="text-sm font-semibold text-teal-700 underline"
           onClick={() => setShowValidation(true)}
         >
           Validate entire workflow
-        </button>
+        </Button>
         {showValidation && draftValidation.errors.length === 0 && (
           <p role="status" className="mt-2 text-xs font-medium text-emerald-700">
             Draft structure is valid.
@@ -2454,9 +2513,9 @@ function InspectorConfigure({
           <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-red-800" role="alert">
             {draftValidation.issues.map((issue, i) => (
               <li key={i}>
-                <button type="button" className="text-left underline" onClick={() => onSelectErrorStep(issue.step)}>
+                <Button variant="unstyled" type="button" className="text-left underline" onClick={() => onSelectErrorStep(issue.step)}>
                   {issue.message}
-                </button>
+                </Button>
               </li>
             ))}
           </ul>
@@ -2579,7 +2638,7 @@ function InspectorTest({
       </div>
       <label className="block text-sm font-medium text-slate-700">
         Sample customer message
-        <textarea
+        <Textarea
           aria-label="Sample customer message"
           value={sampleMessage}
           onChange={(e) => setSampleMessage(e.target.value)}
@@ -2592,32 +2651,32 @@ function InspectorTest({
       <div className="space-y-1.5">
         <label className="block text-sm font-medium text-slate-700">
           Sample AI bot
-          <select aria-label="Sample AI bot" value={sampleAiAgentId} onChange={(event) => setSampleAiAgentId(event.target.value)} className={fieldClass} disabled={botOptionsStatus !== "ready"}>
+          <Select aria-label="Sample AI bot" value={sampleAiAgentId} onChange={(event) => setSampleAiAgentId(event.target.value)} className={fieldClass} disabled={botOptionsStatus !== "ready"}>
             <option value="">Use the trigger bot, if configured</option>
             {bots.filter((bot) => bot.status === "active").map((bot) => <option key={bot.id} value={bot.id}>{bot.name}</option>)}
-          </select>
+          </Select>
         </label>
         {botOptionsStatus === "loading" && <span role="status" className="block text-xs font-normal text-slate-500">Loading active workspace bots…</span>}
         {botOptionsStatus === "restricted" && <span className="block text-xs font-normal text-slate-500">Only Owners and Admins can select a sample bot; the configured trigger context will be used.</span>}
-        {botOptionsStatus === "error" && <span role="alert" className="flex items-center justify-between gap-2 text-xs font-normal text-rose-700"><span>Bot options could not be loaded; this preview will use trigger context.</span><button type="button" className="shrink-0 font-semibold underline" onClick={onRetryBotOptions}>Retry</button></span>}
+        {botOptionsStatus === "error" && <span role="alert" className="flex items-center justify-between gap-2 text-xs font-normal text-rose-700"><span>Bot options could not be loaded; this preview will use trigger context.</span><Button variant="unstyled" type="button" className="shrink-0 font-semibold underline" onClick={onRetryBotOptions}>Retry</Button></span>}
         {botOptionsStatus === "ready" && bots.filter((bot) => bot.status === "active").length === 0 && <span className="block text-xs font-normal text-slate-500">No active bots are available in this workspace.</span>}
       </div>
       <div className="space-y-1.5">
         <label className="block text-sm font-medium text-slate-700">
           Sample connected channel
-          <select aria-label="Sample connected channel" value={sampleIntegrationConnectionId} onChange={(event) => setSampleIntegrationConnectionId(event.target.value)} className={fieldClass} disabled={connectionOptionsStatus !== "ready"}>
+          <Select aria-label="Sample connected channel" value={sampleIntegrationConnectionId} onChange={(event) => setSampleIntegrationConnectionId(event.target.value)} className={fieldClass} disabled={connectionOptionsStatus !== "ready"}>
             <option value="">Use the trigger connection, if configured</option>
             {connections.filter((connection) => connection.status === "connected").map((connection) => <option key={connection.id} value={connection.id}>{connection.display_name} · {connection.provider_id}</option>)}
-          </select>
+          </Select>
         </label>
         {connectionOptionsStatus === "loading" && <span role="status" className="block text-xs font-normal text-slate-500">Loading connected integrations…</span>}
         {connectionOptionsStatus === "restricted" && <span className="block text-xs font-normal text-slate-500">Only Owners and Admins can select a sample integration; the configured trigger context will be used.</span>}
-        {connectionOptionsStatus === "error" && <span role="alert" className="flex items-center justify-between gap-2 text-xs font-normal text-rose-700"><span>Integration options could not be loaded; this preview will use trigger context.</span><button type="button" className="shrink-0 font-semibold underline" onClick={onRetryConnectionOptions}>Retry</button></span>}
+        {connectionOptionsStatus === "error" && <span role="alert" className="flex items-center justify-between gap-2 text-xs font-normal text-rose-700"><span>Integration options could not be loaded; this preview will use trigger context.</span><Button variant="unstyled" type="button" className="shrink-0 font-semibold underline" onClick={onRetryConnectionOptions}>Retry</Button></span>}
         {connectionOptionsStatus === "ready" && connections.filter((connection) => connection.status === "connected").length === 0 && <span className="block text-xs font-normal text-slate-500">No connected integrations are available in this workspace.</span>}
       </div>
       <label className="block text-sm font-medium text-slate-700">
         Sample ticket priority
-        <select
+        <Select
           aria-label="Sample ticket priority"
           value={sampleTicketPriority}
           onChange={(e) => setSampleTicketPriority(e.target.value as typeof sampleTicketPriority)}
@@ -2628,11 +2687,11 @@ function InspectorTest({
           <option value="normal">Normal</option>
           <option value="high">High</option>
           <option value="urgent">Urgent</option>
-        </select>
+        </Select>
       </label>
       <label className="block text-sm font-medium text-slate-700">
         Sample ticket status
-        <input
+        <Input
           value={sampleTicketStatus}
           onChange={(e) => setSampleTicketStatus(e.target.value)}
           className={fieldClass}
@@ -2641,7 +2700,7 @@ function InspectorTest({
       </label>
       <label className="block text-sm font-medium text-slate-700">
         Sample channel
-        <input
+        <Input
           value={sampleChannel}
           onChange={(e) => setSampleChannel(e.target.value)}
           className={fieldClass}
@@ -2650,7 +2709,7 @@ function InspectorTest({
       </label>
       <label className="block text-sm font-medium text-slate-700">
         First customer message?
-        <select
+        <Select
           value={sampleFirstMessage === null ? "" : sampleFirstMessage ? "yes" : "no"}
           onChange={(e) => {
             const v = e.target.value;
@@ -2661,11 +2720,11 @@ function InspectorTest({
           <option value="">Not specified</option>
           <option value="yes">Yes</option>
           <option value="no">No</option>
-        </select>
+        </Select>
       </label>
       <label className="block text-sm font-medium text-slate-700">
         Assignee present?
-        <select
+        <Select
           value={sampleAssigneePresent === null ? "" : sampleAssigneePresent ? "yes" : "no"}
           onChange={(e) => {
             const v = e.target.value;
@@ -2676,11 +2735,11 @@ function InspectorTest({
           <option value="">Not specified</option>
           <option value="yes">Yes</option>
           <option value="no">No</option>
-        </select>
+        </Select>
       </label>
       <label className="block text-sm font-medium text-slate-700">
         Conversation AI mode (sample)
-        <select
+        <Select
           value={sampleConversationAiMode}
           onChange={(e) => setSampleConversationAiMode(e.target.value as "" | "ai" | "human")}
           className={fieldClass}
@@ -2688,11 +2747,11 @@ function InspectorTest({
           <option value="">Not specified</option>
           <option value="ai">AI</option>
           <option value="human">Human</option>
-        </select>
+        </Select>
       </label>
       <label className="block text-sm font-medium text-slate-700">
         Shopify connected (sample)
-        <select
+        <Select
           value={sampleShopifyConnected === null ? "" : sampleShopifyConnected ? "yes" : "no"}
           onChange={(e) => {
             const v = e.target.value;
@@ -2703,7 +2762,7 @@ function InspectorTest({
           <option value="">Not specified</option>
           <option value="yes">Yes</option>
           <option value="no">No</option>
-        </select>
+        </Select>
       </label>
       <div className="flex flex-wrap items-center gap-3">
         <Button type="button" variant="secondary" disabled={testDisabled || previewPending} onClick={onRunTest}>

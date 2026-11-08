@@ -76,7 +76,15 @@ def _trigger_matches(definition: WorkflowDefinition, ctx: EvaluationContext) -> 
     if definition.trigger.kind == "conversation_started":
         return ctx.is_first_customer_message
     if definition.trigger.kind == "ticket_created":
-        return ctx.is_ticket_created
+        trig = definition.trigger
+        return ctx.is_ticket_created and (
+            trig.channel is None or _normalize_text(trig.channel.strip()) == _normalize_text(ctx.channel)
+        ) and (
+            trig.ai_agent_id is None or trig.ai_agent_id == ctx.conversation_ai_agent_id
+        ) and (
+            trig.integration_connection_id is None
+            or trig.integration_connection_id == ctx.conversation_integration_connection_id
+        )
     if definition.trigger.kind != "customer_message_received":
         return False
     trig = definition.trigger
@@ -142,6 +150,16 @@ def _trigger_blocked(definition: WorkflowDefinition, ctx: EvaluationContext) -> 
     if definition.trigger.kind == "ticket_created":
         if not ctx.is_ticket_created:
             return True, "This trigger runs only when an inbound customer message creates a new ticket."
+        trig = definition.trigger
+        if trig.channel is not None and _normalize_text(trig.channel.strip()) != _normalize_text(ctx.channel):
+            return True, f"Trigger is limited to channel “{trig.channel.strip()}”."
+        if trig.ai_agent_id is not None and trig.ai_agent_id != ctx.conversation_ai_agent_id:
+            return True, "Trigger is limited to a specific AI bot."
+        if (
+            trig.integration_connection_id is not None
+            and trig.integration_connection_id != ctx.conversation_integration_connection_id
+        ):
+            return True, "Trigger is limited to a specific channel connection."
         return False, None
     if definition.trigger.kind != "customer_message_received":
         return True, "This trigger is not available for message preview yet."
@@ -198,7 +216,10 @@ def preview_definition(
         assumptions.append("Ticket status defaults to Open because no sample status was provided.")
     if channel is None and (
         any(condition.kind == "channel_is" for condition in preview_conditions)
-        or (definition.trigger.kind == "customer_message_received" and definition.trigger.channel is not None)
+        or (
+            definition.trigger.kind in ("customer_message_received", "ticket_created")
+            and definition.trigger.channel is not None
+        )
     ):
         assumptions.append("Channel defaults to web because no sample channel was provided.")
     if is_first_customer_message is None:
@@ -222,15 +243,15 @@ def preview_definition(
         assumptions.append("The preview assumes Shopify is not connected.")
     if conversation_ai_agent_id is not None:
         assumptions.append("The preview uses the active AI bot selected in the sample context.")
-    elif definition.trigger.kind == "customer_message_received" and definition.trigger.ai_agent_id is not None:
-        assumptions.append("The preview assumes the message is routed through the bot selected by this trigger.")
+    elif definition.trigger.kind in ("customer_message_received", "ticket_created") and definition.trigger.ai_agent_id is not None:
+        assumptions.append("The preview assumes the inbound event is routed through the bot selected by this trigger.")
     if conversation_integration_connection_id is not None:
         assumptions.append("The preview uses the connected integration selected in the sample context.")
     elif (
-        definition.trigger.kind == "customer_message_received"
+        definition.trigger.kind in ("customer_message_received", "ticket_created")
         and definition.trigger.integration_connection_id is not None
     ):
-        assumptions.append("The preview assumes the message arrives through the connection selected by this trigger.")
+        assumptions.append("The preview assumes the inbound event arrives through the connection selected by this trigger.")
 
     ctx = EvaluationContext(
         message=message,
@@ -244,19 +265,19 @@ def preview_definition(
         conversation_ai_mode=conversation_ai_mode or "human",
         shopify_connected=shopify_connected if shopify_connected is not None else False,
         trigger_ai_agent_id=definition.trigger.ai_agent_id
-        if definition.trigger.kind == "customer_message_received"
+        if definition.trigger.kind in ("customer_message_received", "ticket_created")
         else None,
         trigger_integration_connection_id=definition.trigger.integration_connection_id
-        if definition.trigger.kind == "customer_message_received"
+        if definition.trigger.kind in ("customer_message_received", "ticket_created")
         else None,
         conversation_ai_agent_id=conversation_ai_agent_id or (
             definition.trigger.ai_agent_id
-            if definition.trigger.kind == "customer_message_received"
+            if definition.trigger.kind in ("customer_message_received", "ticket_created")
             else None
         ),
         conversation_integration_connection_id=conversation_integration_connection_id or (
             definition.trigger.integration_connection_id
-            if definition.trigger.kind == "customer_message_received"
+            if definition.trigger.kind in ("customer_message_received", "ticket_created")
             else None
         ),
         is_ticket_created=(
@@ -283,7 +304,11 @@ def preview_definition(
     trigger_detail = (
         "First customer message in conversation"
         if definition.trigger.kind == "conversation_started"
-        else "New ticket created by an inbound customer message"
+        else (
+            f"New ticket created by an inbound customer message on {definition.trigger.channel.strip()}"
+            if definition.trigger.kind == "ticket_created" and definition.trigger.channel is not None
+            else "New ticket created by an inbound customer message"
+        )
         if definition.trigger.kind == "ticket_created"
         else "Incoming customer message"
     )
@@ -582,10 +607,10 @@ def evaluate_customer_message_match(
         conversation_ai_mode=ctx.conversation_ai_mode,
         shopify_connected=ctx.shopify_connected,
         trigger_ai_agent_id=definition.trigger.ai_agent_id
-        if definition.trigger.kind == "customer_message_received"
+        if definition.trigger.kind in ("customer_message_received", "ticket_created")
         else None,
         trigger_integration_connection_id=definition.trigger.integration_connection_id
-        if definition.trigger.kind == "customer_message_received"
+        if definition.trigger.kind in ("customer_message_received", "ticket_created")
         else None,
         conversation_ai_agent_id=ctx.conversation_ai_agent_id,
         conversation_integration_connection_id=ctx.conversation_integration_connection_id,
@@ -611,10 +636,10 @@ def evaluate_customer_message_branch(
         conversation_ai_mode=ctx.conversation_ai_mode,
         shopify_connected=ctx.shopify_connected,
         trigger_ai_agent_id=definition.trigger.ai_agent_id
-        if definition.trigger.kind == "customer_message_received"
+        if definition.trigger.kind in ("customer_message_received", "ticket_created")
         else None,
         trigger_integration_connection_id=definition.trigger.integration_connection_id
-        if definition.trigger.kind == "customer_message_received"
+        if definition.trigger.kind in ("customer_message_received", "ticket_created")
         else None,
         conversation_ai_agent_id=ctx.conversation_ai_agent_id,
         conversation_integration_connection_id=ctx.conversation_integration_connection_id,

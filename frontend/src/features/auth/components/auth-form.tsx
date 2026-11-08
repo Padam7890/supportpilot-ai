@@ -173,7 +173,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
         </div>
         <div className="space-y-2">
           {workspaces.map((workspace) => (
-            <button
+            <Button variant="unstyled"
               key={workspace.membership_id}
               type="button"
               disabled={busy}
@@ -187,11 +187,11 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
               <span className="text-sm font-semibold text-blue-700">
                 {sendingWorkspaceId === workspace.membership_id ? "Sending…" : "Continue"}
               </span>
-            </button>
+            </Button>
           ))}
         </div>
         <FlowMessages error={message} notice={notice} />
-        <button type="button" className="text-sm font-semibold text-blue-700 hover:underline" onClick={() => setStep("credentials")}>Back to sign in</button>
+        <Button variant="unstyled" type="button" className="text-sm font-semibold text-blue-700 hover:underline" onClick={() => setStep("credentials")}>Back to sign in</Button>
       </section>
     );
   }
@@ -237,7 +237,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
         <Field label="Work email"><Input type="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} /></Field>
         <FlowMessages error={message} notice={notice} />
         <Button className="w-full" type="submit" disabled={busy}>{busy ? "Sending…" : "Send recovery code"}</Button>
-        <button type="button" className="w-full text-sm font-semibold text-blue-700 hover:underline" onClick={() => setStep("credentials")}>Back to sign in</button>
+        <Button variant="unstyled" type="button" className="w-full text-sm font-semibold text-blue-700 hover:underline" onClick={() => setStep("credentials")}>Back to sign in</Button>
       </form>
     );
   }
@@ -251,7 +251,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
         <Field label="New password"><Input type="password" autoComplete="new-password" minLength={12} maxLength={128} required value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></Field>
         <FlowMessages error={message} notice={notice} />
         <Button className="w-full" type="submit" disabled={busy || code.length !== 6}>{busy ? "Updating…" : "Update password"}</Button>
-        <button type="button" className="w-full text-sm font-semibold text-blue-700 hover:underline" onClick={() => void resendCode()}>Resend code</button>
+        <Button variant="unstyled" type="button" className="w-full text-sm font-semibold text-blue-700 hover:underline" onClick={() => void resendCode()}>Resend code</Button>
       </form>
     );
   }
@@ -304,12 +304,12 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
       <Button className="w-full" type="submit" disabled={busy || (mode === "login" ? login.formState.isSubmitting : register.formState.isSubmitting)}>
         {busy ? "Please wait…" : mode === "login" ? "Continue" : "Submit for approval"}
       </Button>
-      {mode === "login" && <button type="button" className="w-full text-sm font-semibold text-blue-700 hover:underline" onClick={() => {
+      {mode === "login" && <Button variant="unstyled" type="button" className="w-full text-sm font-semibold text-blue-700 hover:underline" onClick={() => {
         setEmail(login.getValues("email") ?? "");
         setStep("recovery-email");
         setMessage("");
         setNotice("");
-      }}>Forgot password?</button>}
+      }}>Forgot password?</Button>}
       <p className="text-center text-sm text-slate-500">
         {mode === "login" ? "New to SupportPilot? " : "Already have a workspace? "}
         <Link className="font-semibold text-blue-700 hover:underline" href={mode === "login" ? "/register" : "/login"}>
@@ -360,8 +360,8 @@ function OtpPanel({
       </Field>
       <FlowMessages error={error} notice={notice} />
       <Button className="w-full" type="submit" disabled={busy || code.length !== 6}>{busy ? "Verifying…" : "Verify and continue"}</Button>
-      <button type="button" className="w-full text-sm font-semibold text-blue-700 hover:underline disabled:opacity-60" disabled={busy} onClick={onResend}>Resend code</button>
-      {onBack && <button type="button" className="w-full text-sm text-slate-500 hover:underline" onClick={onBack}>Back</button>}
+      <Button variant="unstyled" type="button" className="w-full text-sm font-semibold text-blue-700 hover:underline disabled:opacity-60" disabled={busy} onClick={onResend}>Resend code</Button>
+      {onBack && <Button variant="unstyled" type="button" className="w-full text-sm text-slate-500 hover:underline" onClick={onBack}>Back</Button>}
     </form>
   );
 }

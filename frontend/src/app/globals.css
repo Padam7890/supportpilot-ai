@@ -104,6 +104,20 @@ html[data-theme="dark"] {
   --text-disabled: #64748b;
   --text-accent: #60a5fa;
   --text-on-accent: #0b1120;
+  --primary: #60a5fa;
+  --primary-foreground: #0b1120;
+  --secondary: #172033;
+  --secondary-foreground: #e2e8f0;
+  --muted: #172033;
+  --muted-foreground: #a0aec0;
+  --accent-foreground: #f1f5f9;
+  --destructive: #fb7185;
+  --input: #38465d;
+  --ring: #60a5fa;
+  --card: #111827;
+  --card-foreground: #f1f5f9;
+  --popover: #111827;
+  --popover-foreground: #f1f5f9;
   --color-white: #111827;
   --color-slate-50: #0b1120;
   --color-slate-100: #172033;
@@ -170,7 +184,7 @@ html[data-typography-scale="comfortable"] {
 }
 
 :focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent), transparent 25%);
+  outline: 1px solid color-mix(in srgb, var(--accent), transparent 45%);
   outline-offset: 1px;
 }
 

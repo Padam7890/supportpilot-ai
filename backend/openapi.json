@@ -10216,6 +10216,42 @@
       "TicketCreatedTriggerConfig": {
         "additionalProperties": false,
         "properties": {
+          "ai_agent_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ai Agent Id"
+          },
+          "channel": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channel"
+          },
+          "integration_connection_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Integration Connection Id"
+          },
           "kind": {
             "const": "ticket_created",
             "default": "ticket_created",

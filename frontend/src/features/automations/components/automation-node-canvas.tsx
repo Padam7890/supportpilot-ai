@@ -1,3 +1,4 @@
+import { Button } from "@/components/ui";
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { ArrowDown, ArrowUp, ClipboardList, Filter, Move, Plus, Redo2, Trash2, Undo2, Zap } from "lucide-react";
 import { defaultCanvasLayout, WORKFLOW_CANVAS } from "../utils/canvas-layout";
@@ -351,7 +352,7 @@ export function AutomationNodeCanvas({
 
   function renderMoveHandle(node: CanvasNode, label: string) {
     return (
-      <button
+      <Button variant="unstyled"
         type="button"
         aria-label={`Move ${label} node. Use arrow keys to reposition.`}
         title="Drag to move, or focus and use arrow keys"
@@ -363,7 +364,7 @@ export function AutomationNodeCanvas({
         className="touch-none cursor-grab rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/25"
       >
         <Move size={15} aria-hidden="true" />
-      </button>
+      </Button>
     );
   }
 
@@ -409,11 +410,13 @@ export function AutomationNodeCanvas({
 
   const conversationStartTrigger = draft.trigger.kind === "conversation_started";
   const ticketCreatedTrigger = draft.trigger.kind === "ticket_created";
-  const ch = draft.trigger.kind === "customer_message_received" ? draft.trigger.channel?.trim() : null;
+  const ch = draft.trigger.kind === "customer_message_received" || draft.trigger.kind === "ticket_created"
+    ? draft.trigger.channel?.trim()
+    : null;
   const triggerSubtitle = conversationStartTrigger
     ? "First customer message · once per conversation"
     : ticketCreatedTrigger
-      ? "New inbound ticket · once per ticket"
+      ? ch ? `New inbound ticket · ${ch}` : "New inbound ticket · once per ticket"
     : ch
       ? `${ch} · filtered`
       : "Any channel · every message";
@@ -482,7 +485,7 @@ export function AutomationNodeCanvas({
         ref={open ? addStepPopoverRef : undefined}
         className="pointer-events-auto absolute bottom-0 left-1/2 z-20 flex -translate-x-1/2 translate-y-1/2 flex-col items-center"
       >
-        <button
+        <Button variant="unstyled"
           type="button"
           className={addStepCircleClass}
           aria-expanded={open}
@@ -496,10 +499,10 @@ export function AutomationNodeCanvas({
           }}
         >
           <Plus size={14} strokeWidth={2.5} aria-hidden="true" />
-        </button>
+        </Button>
         {open && (
           <div id={popoverId} role="menu" className={addStepPopoverClass} aria-label="Add step type">
-            <button
+            <Button variant="unstyled"
               type="button"
               role="menuitem"
               className={addStepPopoverItemClass}
@@ -509,8 +512,8 @@ export function AutomationNodeCanvas({
               }}
             >
               Keyword condition
-            </button>
-            <button
+            </Button>
+            <Button variant="unstyled"
               type="button"
               role="menuitem"
               className={addStepPopoverItemClass}
@@ -520,7 +523,7 @@ export function AutomationNodeCanvas({
               }}
             >
               Action
-            </button>
+            </Button>
           </div>
         )}
       </div>
@@ -530,7 +533,7 @@ export function AutomationNodeCanvas({
   return (
     <section aria-label="Automation rule flow" className="relative flex h-full min-h-0 flex-col bg-white">
       <div className="absolute right-2 top-2 z-20 flex items-center gap-0.5 rounded-md border border-slate-200/80 bg-white/95 px-1 py-0.5 text-slate-600 shadow-sm backdrop-blur-sm">
-        <button
+        <Button variant="unstyled"
           type="button"
           aria-label="Auto arrange workflow nodes"
           title="Reset nodes to a clean, non-overlapping layout"
@@ -538,27 +541,27 @@ export function AutomationNodeCanvas({
           className="rounded px-2 py-1 text-[10px] font-medium hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/20"
         >
           Arrange
-        </button>
+        </Button>
         <span className="mx-0.5 h-3.5 w-px bg-slate-200" aria-hidden />
-        <button
+        <Button variant="unstyled"
           type="button"
           aria-label="Zoom out workflow canvas"
           onClick={() => setZoom((value) => Math.max(0.7, Number((value - 0.1).toFixed(2))))}
           className="rounded px-1.5 py-0.5 text-xs font-medium hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/20"
         >
           −
-        </button>
+        </Button>
         <span className="min-w-9 text-center text-[10px] font-medium tabular-nums text-slate-600">{Math.round(zoom * 100)}%</span>
-        <button
+        <Button variant="unstyled"
           type="button"
           aria-label="Zoom in workflow canvas"
           onClick={() => setZoom((value) => Math.min(1.4, Number((value + 0.1).toFixed(2))))}
           className="rounded px-1.5 py-0.5 text-xs font-medium hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/20"
         >
           +
-        </button>
+        </Button>
         <span className="mx-0.5 h-3.5 w-px bg-slate-200" aria-hidden />
-        <button
+        <Button variant="unstyled"
           type="button"
           aria-label="Undo workflow edit"
           title="Undo"
@@ -567,8 +570,8 @@ export function AutomationNodeCanvas({
           className="rounded p-0.5 text-slate-500 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/20"
         >
           <Undo2 size={14} aria-hidden="true" />
-        </button>
-        <button
+        </Button>
+        <Button variant="unstyled"
           type="button"
           aria-label="Redo workflow edit"
           title="Redo"
@@ -577,7 +580,7 @@ export function AutomationNodeCanvas({
           className="rounded p-0.5 text-slate-500 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/20"
         >
           <Redo2 size={14} aria-hidden="true" />
-        </button>
+        </Button>
       </div>
       <div className="flex min-h-0 flex-1 flex-col">
         <div
@@ -692,7 +695,7 @@ export function AutomationNodeCanvas({
               style={positionStyle({ kind: "trigger" })}
             >
               <div className="flex h-full items-start gap-3">
-                <button
+                <Button variant="unstyled"
                   type="button"
                   aria-label={`Configure trigger: ${triggerTitle.toLowerCase()}`}
                   className="flex min-w-0 flex-1 items-start gap-3 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/30"
@@ -709,7 +712,7 @@ export function AutomationNodeCanvas({
                       <span className="mt-1 block text-xs font-medium text-amber-800">First message in conversation only</span>
                     )}
                   </span>
-                </button>
+                </Button>
                 <div className="absolute right-2 top-2">{renderMoveHandle({ kind: "trigger" }, "trigger")}</div>
               </div>
               {!isLastOrderedNode({ kind: "trigger" }) && renderAddStepOnNode({ kind: "trigger" })}
@@ -725,7 +728,7 @@ export function AutomationNodeCanvas({
                   style={positionStyle(node)}
                 >
                   <div className="flex items-start justify-between gap-3">
-                    <button
+                    <Button variant="unstyled"
                       type="button"
                       aria-label={`Configure condition ${index + 1}: ${conditionSummary(condition, index)}`}
                       className="flex min-w-0 flex-1 items-start gap-3 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/25"
@@ -741,10 +744,10 @@ export function AutomationNodeCanvas({
                         <span className="mt-0.5 block text-sm font-semibold text-slate-900">{conditionSummary(condition, index)}</span>
                         <span className="mt-1 block text-xs text-slate-500">{matchLabel}</span>
                       </span>
-                    </button>
+                    </Button>
                     <div className="flex items-center gap-0.5">
                       {renderMoveHandle(node, `condition ${index + 1}`)}
-                      <button
+                      <Button variant="unstyled"
                         type="button"
                         aria-label={`Move condition ${index + 1} up`}
                         disabled={index === 0}
@@ -752,8 +755,8 @@ export function AutomationNodeCanvas({
                         className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/25"
                       >
                         <ArrowUp size={14} aria-hidden="true" />
-                      </button>
-                      <button
+                      </Button>
+                      <Button variant="unstyled"
                         type="button"
                         aria-label={`Move condition ${index + 1} down`}
                         disabled={index === draft.conditions.length - 1}
@@ -761,15 +764,15 @@ export function AutomationNodeCanvas({
                         className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/25"
                       >
                         <ArrowDown size={14} aria-hidden="true" />
-                      </button>
-                      <button
+                      </Button>
+                      <Button variant="unstyled"
                         type="button"
                         aria-label={`Remove condition ${index + 1}`}
                         onClick={(event) => { event.stopPropagation(); onRemoveCondition(index); }}
                         className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/25"
                       >
                         <Trash2 size={14} aria-hidden="true" />
-                      </button>
+                      </Button>
                     </div>
                   </div>
                   {!isLastOrderedNode(node) && renderAddStepOnNode(node)}
@@ -787,7 +790,7 @@ export function AutomationNodeCanvas({
                   style={positionStyle(node)}
                 >
                   <div className="flex items-start justify-between gap-3">
-                    <button
+                    <Button variant="unstyled"
                       type="button"
                       aria-label={`Configure action ${index + 1}: ${actionSummary(action, memberNamesById, aiAgentNamesById)}`}
                       className="flex min-w-0 flex-1 items-start gap-3 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/25"
@@ -800,10 +803,10 @@ export function AutomationNodeCanvas({
                         <span className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Action {index + 1}</span>
                         <span className="mt-0.5 block text-sm font-semibold text-slate-900">{actionSummary(action, memberNamesById, aiAgentNamesById)}</span>
                       </span>
-                    </button>
+                    </Button>
                     <div className="flex items-center gap-0.5">
                       {renderMoveHandle(node, `action ${index + 1}`)}
-                      <button
+                      <Button variant="unstyled"
                         type="button"
                         aria-label={`Move action ${index + 1} up`}
                         disabled={index === 0}
@@ -811,8 +814,8 @@ export function AutomationNodeCanvas({
                         className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/25"
                       >
                         <ArrowUp size={14} aria-hidden="true" />
-                      </button>
-                      <button
+                      </Button>
+                      <Button variant="unstyled"
                         type="button"
                         aria-label={`Move action ${index + 1} down`}
                         disabled={index === draft.actions.length - 1}
@@ -820,8 +823,8 @@ export function AutomationNodeCanvas({
                         className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/25"
                       >
                         <ArrowDown size={14} aria-hidden="true" />
-                      </button>
-                      <button
+                      </Button>
+                      <Button variant="unstyled"
                         type="button"
                         aria-label={`Remove action ${index + 1}`}
                         disabled={draft.actions.length <= 1}
@@ -829,7 +832,7 @@ export function AutomationNodeCanvas({
                         className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/25"
                       >
                         <Trash2 size={14} aria-hidden="true" />
-                      </button>
+                      </Button>
                     </div>
                   </div>
                   {renderAddStepOnNode(node)}
@@ -862,7 +865,7 @@ export function AutomationNodeCanvas({
                 style={{ ...positionStyle(node), width: BRANCH_NODE_WIDTH }}
               >
                 <div className="flex items-start justify-between gap-2">
-                  <button
+                  <Button variant="unstyled"
                     type="button"
                     aria-label={`Edit ordered branch ${index + 1}: ${branch.name}`}
                     onClick={() => onSelectBranch(branch.id)}
@@ -873,7 +876,7 @@ export function AutomationNodeCanvas({
                     <span className="mt-2 block line-clamp-2 text-[11px] leading-4 text-slate-600">If: {conditionDescription}</span>
                     <span className="mt-1 block line-clamp-2 text-[11px] leading-4 text-indigo-800">Then: {actionsDescription}</span>
                     <span className="mt-2 block text-[10px] font-medium text-indigo-700">Click to edit path</span>
-                  </button>
+                  </Button>
                   {renderMoveHandle(node, `branch ${index + 1}`)}
                 </div>
               </div>;

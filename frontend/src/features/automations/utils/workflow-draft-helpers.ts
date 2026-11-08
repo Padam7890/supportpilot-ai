@@ -29,8 +29,15 @@ export const EMPTY_DRAFT: WorkflowDraft = {
 export function workflowDraftDefinition(draft: WorkflowDraft): WorkflowDefinition {
   const trig = draft.trigger;
   return {
-    trigger: trig.kind === "conversation_started" || trig.kind === "ticket_created"
+    trigger: trig.kind === "conversation_started"
       ? { kind: trig.kind }
+      : trig.kind === "ticket_created"
+        ? {
+            kind: trig.kind,
+            channel: trig.channel ?? null,
+            ai_agent_id: trig.ai_agent_id ?? null,
+            integration_connection_id: trig.integration_connection_id ?? null,
+          }
       : {
           kind: "customer_message_received",
           channel: trig.channel,
@@ -68,7 +75,12 @@ function normalizeDefinitionTrigger(raw: WorkflowDefinition["trigger"]): Workflo
     return { kind: "conversation_started" };
   }
   if (typeof raw === "object" && raw !== null && "kind" in raw && raw.kind === "ticket_created") {
-    return { kind: "ticket_created" };
+    return {
+      kind: "ticket_created",
+      channel: raw.channel ?? null,
+      ai_agent_id: raw.ai_agent_id ?? null,
+      integration_connection_id: raw.integration_connection_id ?? null,
+    };
   }
   if (typeof raw === "object" && raw !== null && "kind" in raw && raw.kind === "customer_message_received") {
     return {

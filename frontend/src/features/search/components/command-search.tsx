@@ -1,58 +1,155 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { FileText, LoaderCircle, Search, Ticket, Users, X } from "lucide-react";
+import { Button, Dialog, DialogContent, Input } from "@/components/ui";
+import { getCurrentUser, currentUserQueryKey } from "@/features/auth/api/auth-api";
+import { getDashboardNavigation } from "@/features/dashboard/navigation/dashboard-navigation";
 import { searchWorkspace } from "../api/search-api";
 
-const icons = { ticket: Ticket, customer: Users, document: FileText } as const;
+const RECENT_DESTINATIONS_KEY = "supportpilot-recent-destinations";
+function getResultIcon(kind: string) {
+  if (kind === "ticket") return Ticket;
+  if (kind === "customer") return Users;
+  if (kind === "document") return FileText;
+  return Search;
+}
 
-export function CommandSearch() {
-  const trigger = useRef<HTMLButtonElement>(null);
-  const dialog = useRef<HTMLElement>(null);
-  const [open, setOpen] = useState(false);
+type CommandItem = {
+  id: string;
+  title: string;
+  subtitle: string;
+  href: string;
+  kind: string;
+  icon: typeof Search;
+};
+
+type CommandSearchProps = {
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+};
+
+export function CommandSearch({ open: controlledOpen, onOpenChange }: CommandSearchProps = {}) {
+  const router = useRouter();
+  const [localOpen, setLocalOpen] = useState(false);
+  const open = controlledOpen ?? localOpen;
+  const setOpen = (next: boolean) => {
+    setLocalOpen(next);
+    onOpenChange?.(next);
+  };
   const [query, setQuery] = useState("");
-  const results = useQuery({
+  const [recentHrefs, setRecentHrefs] = useState<string[]>([]);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const me = useQuery({ queryKey: currentUserQueryKey, queryFn: getCurrentUser });
+  const search = useQuery({
     queryKey: ["workspace-search", query],
     queryFn: () => searchWorkspace(query.trim()),
     enabled: open && query.trim().length >= 2,
     staleTime: 5_000,
   });
 
+  const routes = useMemo<CommandItem[]>(() => getDashboardNavigation(me.data?.role ?? "viewer")
+    .flatMap((group) => group.links)
+    .map((link) => ({
+      id: `route:${link.href}`,
+      title: link.label,
+      subtitle: link.href,
+      href: link.href,
+      kind: "page",
+      icon: link.icon,
+    })), [me.data?.role]);
+
+  const backendItems = useMemo<CommandItem[]>(() => (search.data?.items ?? []).map((item) => ({
+    id: `${item.kind}:${item.id}`,
+    title: item.title,
+    subtitle: item.subtitle,
+    href: item.href,
+    kind: item.kind,
+    icon: getResultIcon(item.kind),
+  })), [search.data?.items]);
+  const visibleRoutes = routes.filter((item) => !query.trim() || `${item.title} ${item.subtitle}`.toLowerCase().includes(query.trim().toLowerCase()));
+  const items = useMemo(() => {
+    if (query.trim()) {
+      const known = new Set(visibleRoutes.map((item) => item.href));
+      return [...visibleRoutes, ...backendItems.filter((item) => !known.has(item.href))];
+    }
+    const recent = recentHrefs.map((href) => routes.find((item) => item.href === href)).filter((item): item is CommandItem => Boolean(item));
+    const recentSet = new Set(recent.map((item) => item.href));
+    return [...recent, ...routes.filter((item) => !recentSet.has(item.href)).slice(0, 6)];
+  }, [backendItems, query, recentHrefs, routes, visibleRoutes]);
+
+  useEffect(() => {
+    if (!open) return;
+    try {
+      const saved = window.localStorage.getItem(RECENT_DESTINATIONS_KEY);
+      setRecentHrefs(saved ? JSON.parse(saved) as string[] : []);
+    } catch {
+      setRecentHrefs([]);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [query, items.length]);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         setOpen(true);
-      } else if (event.key === "Escape") {
-        setOpen(false);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  useEffect(() => {
-    if (open) return;
-    trigger.current?.focus();
-  }, [open]);
+  function navigateTo(item: CommandItem) {
+    const nextRecents = [item.href, ...recentHrefs.filter((href) => href !== item.href)].slice(0, 5);
+    setRecentHrefs(nextRecents);
+    window.localStorage.setItem(RECENT_DESTINATIONS_KEY, JSON.stringify(nextRecents));
+    setOpen(false);
+    setQuery("");
+    router.push(item.href);
+  }
+
+  function handleInputKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "ArrowDown" && items.length) {
+      event.preventDefault();
+      setActiveIndex((index) => (index + 1) % items.length);
+    } else if (event.key === "ArrowUp" && items.length) {
+      event.preventDefault();
+      setActiveIndex((index) => (index - 1 + items.length) % items.length);
+    } else if (event.key === "Enter" && items[activeIndex]) {
+      event.preventDefault();
+      navigateTo(items[activeIndex]);
+    }
+  }
 
   return <>
-    <button ref={trigger} type="button" onClick={() => setOpen(true)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-500 hover:border-slate-300 hover:text-slate-800" aria-label="Search workspace ⌘ K"><Search size={15}/><span className="hidden md:inline">Search workspace</span><kbd aria-hidden="true" className="hidden rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] md:inline">⌘ K</kbd></button>
-    {open && <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-950/40 px-4 pt-[12vh]" onMouseDown={(event) => { if (event.target === event.currentTarget) setOpen(false); }}>
-      <section ref={dialog} role="dialog" aria-modal="true" aria-labelledby="workspace-search-title" onKeyDown={(event) => { if (event.key !== "Tab") return; const focusable = dialog.current?.querySelectorAll<HTMLElement>('input:not([disabled]), button:not([disabled]), a[href]'); if (!focusable?.length) return; const first = focusable[0]; const last = focusable[focusable.length - 1]; if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); } }} className="w-full max-w-2xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
-        <h2 id="workspace-search-title" className="sr-only">Search workspace</h2>
-        <div className="flex items-center gap-3 border-b border-slate-100 px-4"><Search size={19} className="shrink-0 text-slate-400"/><input autoFocus aria-label="Search tickets, customers, or documents" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search tickets, customers, or documents…" className="h-14 min-w-0 flex-1 bg-transparent text-sm outline-none"/><button type="button" onClick={() => setOpen(false)} aria-label="Close search" className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"><X size={17}/></button></div>
-        <div className="max-h-[60vh] overflow-y-auto p-2" aria-live="polite">
-          {query.trim().length < 2 && <p className="px-3 py-8 text-center text-sm text-slate-500">Enter at least two characters to search your workspace.</p>}
-          {query.trim().length >= 2 && results.isPending && <p role="status" className="flex items-center justify-center gap-2 px-3 py-8 text-sm text-slate-500"><LoaderCircle size={16} className="animate-spin"/>Searching…</p>}
-          {results.isError && <p role="alert" className="px-3 py-8 text-center text-sm text-red-700">Workspace search is unavailable. Try again.</p>}
-          {results.data?.items.length === 0 && <p className="px-3 py-8 text-center text-sm text-slate-500">No tickets, customers, or documents matched.</p>}
-          {results.data?.items.map((item) => { const Icon = icons[item.kind]; return <Link key={`${item.kind}:${item.id}`} href={item.href} onClick={() => setOpen(false)} className="flex items-center gap-3 rounded-xl px-3 py-3 hover:bg-blue-50 focus:bg-blue-50 focus:outline-none"><span className="grid size-9 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-600"><Icon size={17}/></span><span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold text-slate-900">{item.title}</span><span className="mt-0.5 block truncate text-xs text-slate-500">{item.subtitle}</span></span><span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-[10px] font-semibold capitalize text-slate-600">{item.kind}</span></Link>; })}
+    <Button variant="outline" className="h-9 w-full max-w-56 justify-start gap-2 px-2.5 text-xs font-normal text-muted-foreground sm:w-auto sm:min-w-52" type="button" onClick={() => setOpen(true)} aria-label="Search workspace, Command K">
+      <Search size={15}/><span className="hidden flex-1 text-left sm:inline">Search workspace</span><kbd className="ml-auto rounded border border-border bg-muted px-1 py-0.5 font-mono text-[9px]">⌘K</kbd>
+    </Button>
+    <Dialog open={open} onOpenChange={(next) => { setOpen(next); if (!next) setQuery(""); }}>
+      <DialogContent showCloseButton={false} aria-label="Workspace command menu" className="top-[12vh] w-[min(640px,calc(100vw-1.5rem))] max-w-none translate-y-0 gap-0 overflow-hidden rounded-xl p-0 sm:max-w-none">
+        <div className="flex items-center gap-3 border-b border-border px-3">
+          <Search size={17} className="shrink-0 text-muted-foreground" aria-hidden="true"/>
+          <Input autoFocus aria-label="Search pages, tickets, customers, and documents" aria-controls="command-menu-results" aria-activedescendant={items[activeIndex] ? `command-item-${activeIndex}` : undefined} value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={handleInputKeyDown} placeholder="Search pages, tickets, customers…" className="h-12 min-w-0 flex-1 border-0 bg-transparent px-0 shadow-none focus-visible:border-transparent focus-visible:ring-0"/>
+          <Button variant="ghost" size="icon-sm" onClick={() => setOpen(false)} aria-label="Close search"><X/></Button>
         </div>
-        <div className="flex items-center justify-between border-t border-slate-100 px-4 py-2 text-[11px] text-slate-400"><span>Search is limited to your workspace access.</span><span>Esc to close</span></div>
-      </section>
-    </div>}
+        <div id="command-menu-results" role="listbox" aria-label={query ? "Search results" : "Recent destinations and pages"} className="max-h-[min(60vh,480px)] overflow-y-auto p-2">
+          {search.isPending && query.trim().length >= 2 && <p role="status" className="flex items-center justify-center gap-2 px-3 py-6 text-sm text-muted-foreground"><LoaderCircle size={15} className="animate-spin"/>Searching workspace…</p>}
+          {search.isError && <p role="alert" className="px-3 py-6 text-center text-sm text-destructive">Workspace records could not be searched. You can still open the pages listed below.</p>}
+          {!search.isPending && !items.length && <p className="px-3 py-8 text-center text-sm text-muted-foreground">No matching pages or workspace records.</p>}
+          {items.map((item, index) => { const Icon = item.icon; return <button id={`command-item-${index}`} key={item.id} type="button" role="option" aria-selected={index === activeIndex} onMouseMove={() => setActiveIndex(index)} onClick={() => navigateTo(item)} className={`flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left transition-colors ${index === activeIndex ? "bg-accent text-accent-foreground" : "text-foreground hover:bg-muted"}`}>
+            <span className="grid size-8 shrink-0 place-items-center rounded-md bg-background text-muted-foreground"><Icon size={16}/></span>
+            <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{item.title}</span><span className="mt-0.5 block truncate text-xs text-muted-foreground">{item.subtitle}</span></span>
+            <span className="shrink-0 text-[10px] capitalize text-muted-foreground">{item.kind}</span>
+          </button>; })}
+        </div>
+        <div className="flex items-center justify-between border-t border-border px-3 py-2 text-[10px] text-muted-foreground"><span>Search is limited to pages and records available to your role.</span><span>↑↓ · Enter · Esc</span></div>
+      </DialogContent>
+    </Dialog>
   </>;
 }

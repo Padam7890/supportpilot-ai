@@ -10,6 +10,7 @@ import { ArrowLeft, ArrowRight, Mail, Plus, Search, UserRound } from "lucide-rea
 import { ApiError } from "@/lib/api/errors";
 import { formatDate } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/page-header";
 import { Input } from "@/components/ui/input";
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
 import { createCustomer, listCustomers } from "../api/customer-api";
@@ -34,7 +35,7 @@ export default function CustomersPage() {
 
   return (
     <div className="space-y-6">
-      <div><p className="text-sm font-semibold text-blue-700">Relationships</p><h1 className="mt-1 text-3xl font-bold tracking-tight">Customers</h1><p className="mt-2 text-sm text-slate-500">A shared view of the people your team supports.</p></div>
+      <PageHeader eyebrow="Relationships" title="Customers" description="A shared view of the people your team supports." />
       <details className="group rounded-2xl border border-blue-100 bg-blue-50/70 open:bg-white open:shadow-sm">
         <summary className="flex cursor-pointer list-none items-center gap-3 p-4 text-sm font-semibold text-blue-800"><span className="grid size-9 place-items-center rounded-xl bg-white"><Plus size={17}/></span>Add a customer<span className="ml-auto text-xs font-medium text-blue-600 group-open:hidden">Open form</span></summary>
         <form className="grid gap-4 border-t border-slate-100 p-5 md:grid-cols-2" onSubmit={form.handleSubmit((values) => create.mutate(values))}>

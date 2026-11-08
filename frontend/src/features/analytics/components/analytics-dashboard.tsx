@@ -1,5 +1,6 @@
 "use client";
 
+import { Input } from "@/components/ui";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -100,7 +101,7 @@ export function AnalyticsDashboard() {
   return <div className="space-y-7">
     <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
       <div><p className="sidebar-group text-[var(--text-accent)]">Workspace insights</p><h1 className="page-title mt-1">Analytics</h1><p className="page-subtitle mt-2">AI usage, recommendation activity, workflow health, and teammate feedback.</p></div>
-      <div className="flex flex-wrap items-end gap-3"><label className="text-xs font-semibold text-slate-600">From<input aria-label="Analytics start date" type="date" value={startDate} max={endDate} onChange={(event) => setStartDate(event.target.value)} className="mt-1 block rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"/></label><label className="text-xs font-semibold text-slate-600">To<input aria-label="Analytics end date" type="date" value={endDate} min={startDate} onChange={(event) => setEndDate(event.target.value)} className="mt-1 block rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"/></label></div>
+      <div className="flex flex-wrap items-end gap-3"><label className="text-xs font-semibold text-slate-600">From<Input aria-label="Analytics start date" type="date" value={startDate} max={endDate} onChange={(event) => setStartDate(event.target.value)} className="mt-1 block rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"/></label><label className="text-xs font-semibold text-slate-600">To<Input aria-label="Analytics end date" type="date" value={endDate} min={startDate} onChange={(event) => setEndDate(event.target.value)} className="mt-1 block rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"/></label></div>
     </header>
 
     {rangeError ? (

@@ -1,5 +1,6 @@
 "use client";
 
+import { Select } from "@/components/ui";
 import { SupportTraceLink } from "@/components/support-trace-link";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -331,7 +332,7 @@ export function ShopifyIntegrationCard() {
             {canManageCatalog && <div className="flex flex-wrap items-end gap-2">
               <label className="space-y-1 text-xs font-medium text-slate-600">
                 <span>Sync type</span>
-                <select
+                <Select
                   aria-label="Catalog sync type"
                   value={syncMode}
                   onChange={(event) => setSyncMode(event.target.value as CatalogSyncMode)}
@@ -340,7 +341,7 @@ export function ShopifyIntegrationCard() {
                 >
                   <option value="full">Full refresh</option>
                   <option value="incremental">Changes since last sync</option>
-                </select>
+                </Select>
               </label>
               <Button type="button" variant="secondary" size="sm" disabled={!catalog.data?.product_scope_granted || syncCatalog.isPending || syncInProgress} onClick={() => syncCatalog.mutate(syncMode)}><RefreshCw size={14} className={syncInProgress ? "animate-spin" : ""}/>{syncInProgress ? "Syncing…" : syncMode === "full" ? "Run full sync" : "Sync changes"}</Button>
             </div>}

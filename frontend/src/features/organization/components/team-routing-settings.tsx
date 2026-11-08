@@ -1,5 +1,6 @@
 "use client";
 
+import { Checkbox } from "@/components/ui";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Users } from "lucide-react";
@@ -52,10 +53,10 @@ export function TeamRoutingSettings() {
         {create.isError && <ErrorMessage error={create.error} fallback="Team could not be created."/>}
         {teams.isPending ? <div role="status" className="h-28 animate-pulse rounded-xl bg-slate-100"/> : teams.isError ? <div><ErrorMessage error={teams.error} fallback="Teams could not be loaded."/><Button className="mt-3" variant="secondary" onClick={() => void teams.refetch()}>Try again</Button></div> : teams.data?.length ? <div className="divide-y divide-slate-100 rounded-xl border border-slate-200">
           {teams.data.map((team) => <div key={team.id} className="flex flex-wrap items-center gap-3 p-4">
-            <button type="button" aria-pressed={selectedTeamId === team.id} onClick={() => { setSelectedTeamId(team.id); setEditName(team.name); setEditDescription(team.description ?? ""); setDraftMemberIds(team.members.map((member) => member.id)); }} className={`min-w-0 flex-1 rounded-lg px-2 py-1 text-left ${selectedTeamId === team.id ? "bg-blue-50" : "hover:bg-slate-50"}`}>
+            <Button variant="unstyled" type="button" aria-pressed={selectedTeamId === team.id} onClick={() => { setSelectedTeamId(team.id); setEditName(team.name); setEditDescription(team.description ?? ""); setDraftMemberIds(team.members.map((member) => member.id)); }} className={`min-w-0 flex-1 rounded-lg px-2 py-1 text-left ${selectedTeamId === team.id ? "bg-blue-50" : "hover:bg-slate-50"}`}>
               <span className="flex items-center gap-2 font-semibold text-slate-900">{team.name}{!team.is_active && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-slate-500">Inactive</span>}</span>
               <span className="mt-1 block text-xs text-slate-500">{team.members.length} members · {team.active_ticket_count} open tickets{team.description ? ` · ${team.description}` : ""}</span>
-            </button>
+            </Button>
             <Button type="button" size="sm" variant="secondary" disabled={toggleTeam.isPending} onClick={() => toggleTeam.mutate({ id: team.id, active: !team.is_active })}>{team.is_active ? "Deactivate" : "Activate"}</Button>
           </div>)}
         </div> : <div className="rounded-xl border border-dashed border-slate-300 px-5 py-8 text-center"><Users className="mx-auto text-slate-400" size={24}/><p className="mt-2 font-medium text-slate-800">No teams yet</p><p className="mt-1 text-sm text-slate-500">Create a team to organize incoming support tickets.</p></div>}
@@ -80,7 +81,7 @@ export function TeamRoutingSettings() {
       <PanelHeader title={`${selectedTeam.name} members`} description="Only active Owners, Admins, and Agents can be added to a team."/>
       <PanelBody>
         {members.isPending ? <p role="status" className="text-sm text-slate-500">Loading workspace members…</p> : members.isError ? <ErrorMessage error={members.error} fallback="Workspace members could not be loaded."/> : eligibleMembers.length ? <>
-          <div className="grid gap-2 sm:grid-cols-2">{eligibleMembers.map((member) => <label key={member.id} className="flex min-h-12 items-center gap-3 rounded-xl border border-slate-200 px-3 py-2.5 text-sm hover:bg-slate-50"><input type="checkbox" className="size-4 rounded border-slate-300 text-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600" checked={draftMemberIds.includes(member.id)} disabled={!selectedTeam.is_active || saveMembers.isPending} onChange={(event) => setDraftMemberIds((current) => event.target.checked ? [...current, member.id] : current.filter((id) => id !== member.id))}/><span className="min-w-0 flex-1"><span className="block truncate font-medium text-slate-800">{member.full_name}</span><span className="block truncate text-xs text-slate-500">{member.email} · {member.role}</span></span></label>)}</div>
+          <div className="grid gap-2 sm:grid-cols-2">{eligibleMembers.map((member) => <label key={member.id} className="flex min-h-12 items-center gap-3 rounded-xl border border-slate-200 px-3 py-2.5 text-sm hover:bg-slate-50"><Checkbox className="size-4 rounded border-slate-300 text-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600" checked={draftMemberIds.includes(member.id)} disabled={!selectedTeam.is_active || saveMembers.isPending} onCheckedChange={(checked) => setDraftMemberIds((current) => checked === true ? [...current, member.id] : current.filter((id) => id !== member.id))}/><span className="min-w-0 flex-1"><span className="block truncate font-medium text-slate-800">{member.full_name}</span><span className="block truncate text-xs text-slate-500">{member.email} · {member.role}</span></span></label>)}</div>
           <div className="mt-4 flex flex-wrap items-center gap-3"><Button type="button" disabled={!selectedTeam.is_active || saveMembers.isPending || sameIds(draftMemberIds, selectedTeam.members.map((member) => member.id))} onClick={() => saveMembers.mutate({ id: selectedTeam.id, ids: draftMemberIds })}>{saveMembers.isPending ? "Saving…" : "Save team members"}</Button>{!selectedTeam.is_active && <span className="text-xs text-slate-500">Activate this team before editing members.</span>}</div>
           {saveMembers.isError && <ErrorMessage error={saveMembers.error} fallback="Team members could not be updated."/>}
           {saveMembers.isSuccess && <p role="status" className="mt-3 text-sm text-emerald-700">Team members updated.</p>}

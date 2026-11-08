@@ -30,6 +30,19 @@ class ConversationStartedTriggerConfig(StrictModel):
 
 class TicketCreatedTriggerConfig(StrictModel):
     kind: Literal["ticket_created"] = "ticket_created"
+    channel: str | None = Field(default=None, max_length=40)
+    ai_agent_id: UUID | None = None
+    integration_connection_id: UUID | None = None
+
+    @field_validator("channel")
+    @classmethod
+    def normalize_channel(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Channel filter cannot be blank")
+        return normalized
 
 
 TriggerConfig = Annotated[
