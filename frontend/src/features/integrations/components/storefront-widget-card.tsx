@@ -148,7 +148,7 @@ export function StorefrontWidgetCard({ onPreviewChange }: { onPreviewChange: (dr
             <input aria-label="Sample customer message" value={sampleRoutingMessage} onChange={(event) => { routingPreview.reset(); setSampleRoutingMessage(event.target.value); }} maxLength={1000} placeholder="e.g. What is your return policy?" className="min-h-10 min-w-0 flex-1 rounded-lg border border-slate-200 px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30"/>
             <Button type="button" variant="secondary" disabled={!sampleRoutingMessage.trim() || agents.isPending || agents.isError || selectedAgents.length === 0 || routingPreview.isPending} onClick={() => routingPreview.mutate({ message: sampleRoutingMessage.trim(), ai_agent_ids: selectedAgents })}>{routingPreview.isPending ? "Checking…" : "Preview"}</Button>
           </div>
-          {routingPreview.data && <p role="status" className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-900">“{routingPreview.variables?.message}” would go to <strong>{routingPreview.data.ai_agent_name}</strong> from {routingPreview.data.configured_bot_count} selected bots. Routing uses the strongest assigned-source match, then the primary bot as fallback. This is a routing preview, not a generated answer.</p>}
+          {routingPreview.data && <p role="status" className="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-900">“{routingPreview.variables?.message}” would go to <strong>{routingPreview.data.ai_agent_name}</strong>. {routingPreviewReason(routingPreview.data.routing_reason, routingPreview.data.matched_bot_count)} This is a routing preview, not a generated answer.</p>}
           {routingPreview.isError && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">Routing could not be previewed. Check the selected active bots and try again.</p>}
         </div>}
         <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={aiEnabled} onChange={(event) => setAiEnabledDraft(event.target.checked)}/>Enable AI replies</label>
@@ -163,4 +163,13 @@ export function StorefrontWidgetCard({ onPreviewChange }: { onPreviewChange: (dr
       {config.data && <div className="space-y-2 border-t border-slate-100 pt-4"><div className="flex items-center justify-between gap-3"><h3 className="text-sm font-semibold">Shopify theme embed</h3><Button size="sm" variant="secondary" onClick={copySnippet}>{copied ? <Check size={14}/> : <Copy size={14}/>} {copied ? "Copied" : "Copy snippet"}</Button></div><pre className="overflow-x-auto rounded-xl bg-slate-950 p-3 text-xs leading-5 text-slate-100"><code>{embed || "Set NEXT_PUBLIC_SUPPORTPILOT_APP_URL to the public app URL before installing outside localhost."}</code></pre><p className="text-xs leading-5 text-slate-500">In Shopify Admin, open **Online Store → Themes → Edit code**, paste this before <code>&lt;/body&gt;</code> in <code>layout/theme.liquid</code>, and save. Replace any older SupportPilot script tag with this versioned snippet so the browser loads the latest widget. For a local app, use an HTTPS tunnel URL in <code>NEXT_PUBLIC_SUPPORTPILOT_APP_URL</code>; localhost is not reachable from Shopify shoppers.</p><p className="text-xs text-slate-500">Widget ID: <code>{config.data.public_id}</code></p></div>}
     </PanelBody>
   </Panel>;
+}
+
+function routingPreviewReason(reason: WidgetRoutingPreview["routing_reason"], matchedBotCount: number): string {
+  if (reason === "best_source_match") {
+    return `Its assigned knowledge matched best; ${matchedBotCount} eligible ${matchedBotCount === 1 ? "bot has" : "bots have"} matching sources.`;
+  }
+  if (reason === "conversation_continuity") return "No stronger source match was found, so the conversation’s current bot stays selected.";
+  if (reason === "conversation_override") return "A teammate pinned this bot for the conversation.";
+  return "No selected bot had a matching assigned source, so the primary fallback bot was selected.";
 }

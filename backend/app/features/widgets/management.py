@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import require_roles
 from app.db.session import get_db
 from app.features.ai.application.defaults import get_default_agent
-from app.services.widget_ai import resolve_widget_agent
+from app.services.widget_ai import resolve_widget_agent_decision
 from app.models import (
     AIAgent,
     Conversation,
@@ -84,19 +84,21 @@ async def preview_widget_routing(
     if len(agent_by_id) != len(selected_ids):
         raise HTTPException(status_code=422, detail="Preview bots must be active bots in this workspace")
     selected_agents = [agent_by_id[agent_id] for agent_id in selected_ids]
-    selected = await resolve_widget_agent(
+    decision = await resolve_widget_agent_decision(
         db,
         widget,
         data.message,
         configured_agent_ids=selected_ids,
         primary_agent_id=selected_agents[0].id,
     )
-    if selected is None:
+    if decision.agent is None:
         raise HTTPException(status_code=409, detail="No selected bot is available to handle widget messages")
     return WidgetRoutingPreviewOut(
-        ai_agent_id=selected.id,
-        ai_agent_name=selected.name,
+        ai_agent_id=decision.agent.id,
+        ai_agent_name=decision.agent.name,
         configured_bot_count=len(selected_ids),
+        routing_reason=decision.reason,
+        matched_bot_count=decision.matched_bot_count,
     )
 
 

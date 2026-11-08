@@ -2131,6 +2131,17 @@
             ],
             "title": "Sample Is First Customer Message"
           },
+          "sample_is_ticket_created": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sample Is Ticket Created"
+          },
           "sample_message": {
             "maxLength": 5000,
             "minLength": 1,
@@ -11523,6 +11534,22 @@
             "title": "Configured Bot Count",
             "type": "integer"
           },
+          "matched_bot_count": {
+            "maximum": 10.0,
+            "minimum": 0.0,
+            "title": "Matched Bot Count",
+            "type": "integer"
+          },
+          "routing_reason": {
+            "enum": [
+              "best_source_match",
+              "primary_fallback",
+              "conversation_continuity",
+              "conversation_override"
+            ],
+            "title": "Routing Reason",
+            "type": "string"
+          },
           "routing_rule": {
             "const": "best_source_match_then_primary_fallback",
             "default": "best_source_match_then_primary_fallback",
@@ -11533,7 +11560,9 @@
         "required": [
           "ai_agent_id",
           "ai_agent_name",
-          "configured_bot_count"
+          "configured_bot_count",
+          "routing_reason",
+          "matched_bot_count"
         ],
         "title": "WidgetRoutingPreviewOut",
         "type": "object"

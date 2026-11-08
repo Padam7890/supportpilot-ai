@@ -647,6 +647,7 @@ export function AutomationWorkspace() {
       sample_ticket_status: sampleTicketStatus.trim() || null,
       sample_channel: sampleChannel.trim() || null,
       sample_is_first_customer_message: sampleFirstMessage,
+      sample_is_ticket_created: draft.trigger.kind === "ticket_created",
       sample_assignee_present: sampleAssigneePresent,
       sample_conversation_ai_mode: sampleConversationAiMode || null,
       sample_shopify_connected: sampleShopifyConnected,
@@ -689,6 +690,21 @@ export function AutomationWorkspace() {
         addLabel: "Use trigger",
         onAdd: () => {
           updateDraft({ trigger: { kind: "conversation_started" } });
+          setSelectedStep({ type: "trigger" });
+          setInspectorTab("configure");
+        },
+      },
+      {
+        id: "trigger-ticket-created",
+        category: "triggers",
+        group: "inbox",
+        name: "New inbound ticket",
+        description: "Run when a customer message creates a new support ticket.",
+        icon: MessageSquare,
+        available: true,
+        addLabel: "Use trigger",
+        onAdd: () => {
+          updateDraft({ trigger: { kind: "ticket_created" } });
           setSelectedStep({ type: "trigger" });
           setInspectorTab("configure");
         },
@@ -1651,17 +1667,24 @@ function InspectorConfigure({
               onChange={(event) => updateDraft({
                 trigger: event.target.value === "conversation_started"
                   ? { kind: "conversation_started" }
-                  : createEmptyCustomerMessageTrigger(),
+                  : event.target.value === "ticket_created"
+                    ? { kind: "ticket_created" }
+                    : createEmptyCustomerMessageTrigger(),
               })}
               className={fieldClass}
             >
               <option value="customer_message_received">A customer sends a message</option>
               <option value="conversation_started">A conversation receives its first message</option>
+              <option value="ticket_created">An inbound message creates a ticket</option>
             </select>
           </label>
           {draft.trigger.kind === "conversation_started" ? (
             <p className="mt-2 text-xs text-slate-500">
               Runs once when the first customer message is saved. Later messages in the same conversation do not start another run.
+            </p>
+          ) : draft.trigger.kind === "ticket_created" ? (
+            <p className="mt-2 text-xs text-slate-500">
+              Runs when a new ticket is created by the first inbound storefront or connected-channel message. Agent-created tickets without an inbound conversation do not trigger this workflow.
             </p>
           ) : (
             <>

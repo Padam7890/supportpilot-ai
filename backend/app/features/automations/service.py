@@ -7,7 +7,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.observability import current_correlation_id
-from app.features.automations.capabilities import organization_capabilities
+from app.features.automations.capabilities import missing_capabilities, organization_capabilities
 from app.features.automations.contracts import Action, SUPPORTED_TICKET_STATUSES, WorkflowDefinition
 from app.models import AIAgent, AutomationExecution, AutomationWorkflow, AutomationWorkflowVersion, Conversation, IntegrationConnection, Message, Team, User
 
@@ -78,7 +78,7 @@ async def validate_definition_targets(
     db: AsyncSession, organization_id: UUID, definition: WorkflowDefinition
 ) -> None:
     """Validate workflow before publish."""
-    if definition.trigger.kind not in ("customer_message_received", "conversation_started"):
+    if definition.trigger.kind not in ("customer_message_received", "conversation_started", "ticket_created"):
         raise ValueError("This workflow trigger is not available in this release")
     await validate_assignment_targets(db, organization_id, definition)
     await validate_team_assignment_targets(db, organization_id, definition)
@@ -146,12 +146,25 @@ async def validate_definition_targets(
         if conn is None:
             raise ValueError("Trigger references an unknown or disconnected channel connection")
 
-    needs_shopify = any(c.kind == "shopify_store_connected" for c in _all_conditions(definition)) or any(
-        a.kind in ("lookup_shopify_order", "search_shopify_catalog", "request_commerce_approval")
-        for a in _all_actions(definition)
+    required_shopify_capabilities: set[str] = set()
+    if any(condition.kind == "shopify_store_connected" for condition in _all_conditions(definition)):
+        required_shopify_capabilities.add("shopify.connected")
+    for action in _all_actions(definition):
+        if action.kind == "lookup_shopify_order":
+            required_shopify_capabilities.add("shopify.orders.verified_read")
+        elif action.kind == "search_shopify_catalog":
+            required_shopify_capabilities.add("shopify.catalog.read")
+        elif action.kind == "request_commerce_approval":
+            required_shopify_capabilities.add("shopify.orders.cancel")
+    missing = missing_capabilities(
+        sorted(required_shopify_capabilities),
+        available=caps,
     )
-    if needs_shopify and "shopify.read" not in caps:
-        raise ValueError("Connect a Shopify store to publish workflows that use Shopify conditions or actions")
+    if missing:
+        raise ValueError(
+            "Shopify connection is missing the access required for this workflow: "
+            + ", ".join(missing)
+        )
 
 
 async def enqueue_customer_message_workflows(
@@ -161,8 +174,9 @@ async def enqueue_customer_message_workflows(
     ticket_id: UUID,
     conversation_id: UUID,
     message_id: UUID,
+    ticket_created: bool = False,
 ) -> int:
-    """Create durable runs for message triggers and first-message conversation triggers."""
+    """Create durable runs for inbound message, conversation, and new-ticket events."""
     conversation = await db.scalar(
         select(Conversation).where(
             Conversation.organization_id == organization_id,
@@ -208,7 +222,7 @@ async def enqueue_customer_message_workflows(
             AutomationWorkflow.status == "active",
             AutomationWorkflow.published_version.is_not(None),
             AutomationWorkflowVersion.definition["trigger"]["kind"].as_string().in_(
-                ("customer_message_received", "conversation_started")
+                ("customer_message_received", "conversation_started", "ticket_created")
             ),
         )
         .order_by(AutomationWorkflow.created_at, AutomationWorkflow.id)
@@ -219,6 +233,8 @@ async def enqueue_customer_message_workflows(
         definition = WorkflowDefinition.model_validate(definition_raw)
         trig = definition.trigger
         if trig.kind == "conversation_started" and not is_first_customer_message:
+            continue
+        if trig.kind == "ticket_created" and not ticket_created:
             continue
         if trig.kind == "customer_message_received":
             if trig.channel is not None and _normalize_channel(trig.channel) != _normalize_channel(
@@ -244,6 +260,8 @@ async def enqueue_customer_message_workflows(
                 event_key=(
                     f"conversation:{conversation_id}"
                     if trig.kind == "conversation_started"
+                    else f"ticket:{ticket_id}"
+                    if trig.kind == "ticket_created"
                     else str(message_id)
                 ),
                 correlation_id=current_correlation_id(),

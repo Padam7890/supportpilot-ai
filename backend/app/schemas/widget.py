@@ -86,6 +86,13 @@ class WidgetRoutingPreviewOut(BaseModel):
     ai_agent_id: UUID
     ai_agent_name: str
     configured_bot_count: int
+    routing_reason: Literal[
+        "best_source_match",
+        "primary_fallback",
+        "conversation_continuity",
+        "conversation_override",
+    ]
+    matched_bot_count: int = Field(ge=0, le=10)
     routing_rule: Literal["best_source_match_then_primary_fallback"] = "best_source_match_then_primary_fallback"
 
 

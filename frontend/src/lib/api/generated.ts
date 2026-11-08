@@ -3639,6 +3639,8 @@ export interface components {
             sample_integration_connection_id?: string | null;
             /** Sample Is First Customer Message */
             sample_is_first_customer_message?: boolean | null;
+            /** Sample Is Ticket Created */
+            sample_is_ticket_created?: boolean | null;
             /** Sample Message */
             sample_message: string;
             /** Sample Shopify Connected */
@@ -7357,6 +7359,13 @@ export interface components {
             ai_agent_name: string;
             /** Configured Bot Count */
             configured_bot_count: number;
+            /** Matched Bot Count */
+            matched_bot_count: number;
+            /**
+             * Routing Reason
+             * @enum {string}
+             */
+            routing_reason: "best_source_match" | "primary_fallback" | "conversation_continuity" | "conversation_override";
             /**
              * Routing Rule
              * @default best_source_match_then_primary_fallback

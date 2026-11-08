@@ -140,6 +140,7 @@ async def persist_incoming_message(
             Conversation.external_conversation_id == incoming.external_conversation_id,
         )
     )
+    ticket_created = conversation is None
     if conversation is None:
         sender_fingerprint = hashlib.sha256(
             f"{connection.id}:{incoming.external_sender_id}".encode()
@@ -252,5 +253,6 @@ async def persist_incoming_message(
         ticket_id=conversation.ticket_id,
         conversation_id=conversation.id,
         message_id=message.id,
+        ticket_created=ticket_created,
     )
     return message, True

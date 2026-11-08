@@ -395,6 +395,7 @@ class AutomationPreviewRequest(StrictModel):
     sample_ticket_status: str | None = Field(default=None, max_length=40)
     sample_channel: str | None = Field(default=None, max_length=40)
     sample_is_first_customer_message: bool | None = None
+    sample_is_ticket_created: bool | None = None
     sample_assignee_present: bool | None = None
     sample_conversation_ai_mode: Literal["ai", "human"] | None = None
     sample_shopify_connected: bool | None = None

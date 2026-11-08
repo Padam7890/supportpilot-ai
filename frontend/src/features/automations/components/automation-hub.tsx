@@ -176,7 +176,7 @@ function summarizeWorkflow(workflow: AutomationWorkflow) {
     ? "Customer message"
     : defs.trigger.kind === "conversation_started"
       ? "Conversation started"
-      : "Ticket created";
+      : "Inbound ticket created";
   const conds = defs.conditions?.length ?? 0;
   const actLabel = (a: AutomationWorkflow["definition"]["actions"][number]): string => {
     switch (a.kind) {

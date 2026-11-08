@@ -205,6 +205,7 @@ class AutomationExecutionHandler(JobHandler):
                     shopify_connected=shopify_connected,
                     conversation_ai_agent_id=conversation.ai_agent_id,
                     conversation_integration_connection_id=conversation.integration_connection_id,
+                    is_ticket_created=execution.event_key == f"ticket:{ticket.id}",
                 )
                 valid_branch_selections = {
                     "match",

@@ -24,7 +24,7 @@ export type WorkflowBranch = components["schemas"]["ConditionalWorkflowBranch"];
 export type WorkflowDraft = {
   name: string;
   description: string | null;
-  trigger: Extract<TriggerConfig, { kind: "customer_message_received" | "conversation_started" }>;
+  trigger: Extract<TriggerConfig, { kind: "customer_message_received" | "conversation_started" | "ticket_created" }>;
   conditionMode: "all" | "any";
   conditions: Condition[];
   actions: Action[];

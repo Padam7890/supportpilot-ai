@@ -408,14 +408,19 @@ export function AutomationNodeCanvas({
   const scaledCanvasHeight = layoutCanvasHeight * zoom;
 
   const conversationStartTrigger = draft.trigger.kind === "conversation_started";
+  const ticketCreatedTrigger = draft.trigger.kind === "ticket_created";
   const ch = draft.trigger.kind === "customer_message_received" ? draft.trigger.channel?.trim() : null;
   const triggerSubtitle = conversationStartTrigger
     ? "First customer message · once per conversation"
+    : ticketCreatedTrigger
+      ? "New inbound ticket · once per ticket"
     : ch
       ? `${ch} · filtered`
       : "Any channel · every message";
   const triggerTitle = conversationStartTrigger
     ? "When a conversation starts"
+    : ticketCreatedTrigger
+      ? "When a new ticket is created"
     : "When a customer messages you";
   const matchLabel = draft.conditionMode === "any" ? "Match any" : "Match all";
   const branchGap = 12;

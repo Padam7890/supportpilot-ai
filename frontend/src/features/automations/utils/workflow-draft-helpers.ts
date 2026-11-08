@@ -29,8 +29,8 @@ export const EMPTY_DRAFT: WorkflowDraft = {
 export function workflowDraftDefinition(draft: WorkflowDraft): WorkflowDefinition {
   const trig = draft.trigger;
   return {
-    trigger: trig.kind === "conversation_started"
-      ? { kind: "conversation_started" }
+    trigger: trig.kind === "conversation_started" || trig.kind === "ticket_created"
+      ? { kind: trig.kind }
       : {
           kind: "customer_message_received",
           channel: trig.channel,
@@ -66,6 +66,9 @@ export function workflowDraftPayload(draft: WorkflowDraft) {
 function normalizeDefinitionTrigger(raw: WorkflowDefinition["trigger"]): WorkflowDraft["trigger"] {
   if (typeof raw === "object" && raw !== null && "kind" in raw && raw.kind === "conversation_started") {
     return { kind: "conversation_started" };
+  }
+  if (typeof raw === "object" && raw !== null && "kind" in raw && raw.kind === "ticket_created") {
+    return { kind: "ticket_created" };
   }
   if (typeof raw === "object" && raw !== null && "kind" in raw && raw.kind === "customer_message_received") {
     return {

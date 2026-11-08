@@ -190,7 +190,7 @@ def _register_all() -> None:
         "title": "Order tracking intent (Shopify)",
         "description": "Requires a connected Shopify store; flags tracking-related messages for verified lookup.",
         "category": "commerce",
-        "required_capabilities": ["shopify.read"],
+        "required_capabilities": ["shopify.orders.verified_read"],
         "definition": d,
         "canvas_layout": layout,
     })
@@ -200,7 +200,7 @@ def _register_all() -> None:
         "title": "Product recommendation hook (Shopify)",
         "description": "Requires Shopify; use as a starting point for catalog-grounded recommendations.",
         "category": "commerce",
-        "required_capabilities": ["shopify.read"],
+        "required_capabilities": ["shopify.catalog.read"],
         "definition": d,
         "canvas_layout": layout,
     })
@@ -271,7 +271,7 @@ def _register_all() -> None:
         "title": "Shipment ops — Shopify connected",
         "description": "When Shopify is connected, log an internal note for fulfillment or shipment issues.",
         "category": "commerce",
-        "required_capabilities": ["shopify.read"],
+        "required_capabilities": ["shopify.connected"],
         "definition": WorkflowDefinition.model_validate({
             "trigger": {"kind": "customer_message_received", "channel": None, "first_message_only": False},
             "condition_mode": "all",
@@ -313,7 +313,7 @@ def _register_all() -> None:
         "title": "Refund request — approval queue",
         "description": "When the customer mentions a refund, open a commerce approval for a human to review.",
         "category": "commerce",
-        "required_capabilities": ["shopify.read"],
+        "required_capabilities": ["shopify.orders.cancel"],
         "definition": WorkflowDefinition.model_validate({
             "trigger": {"kind": "customer_message_received", "channel": None, "first_message_only": False},
             "condition_mode": "all",

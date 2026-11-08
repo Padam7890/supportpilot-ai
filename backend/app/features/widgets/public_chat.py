@@ -307,6 +307,7 @@ async def start_widget_conversation(
         ticket_id=ticket.id,
         conversation_id=conversation.id,
         message_id=message.id,
+        ticket_created=True,
     )
     ticket.updated_at = now
     conversation.updated_at = now

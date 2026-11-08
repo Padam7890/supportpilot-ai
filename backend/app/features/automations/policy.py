@@ -29,6 +29,7 @@ class EvaluationContext:
     trigger_integration_connection_id: UUID | None
     conversation_ai_agent_id: UUID | None
     conversation_integration_connection_id: UUID | None
+    is_ticket_created: bool = False
 
 
 PRIORITY_RANK = {"low": 0, "normal": 1, "high": 2, "urgent": 3}
@@ -74,6 +75,8 @@ def evaluate_conditions(definition: WorkflowDefinition, ctx: EvaluationContext) 
 def _trigger_matches(definition: WorkflowDefinition, ctx: EvaluationContext) -> bool:
     if definition.trigger.kind == "conversation_started":
         return ctx.is_first_customer_message
+    if definition.trigger.kind == "ticket_created":
+        return ctx.is_ticket_created
     if definition.trigger.kind != "customer_message_received":
         return False
     trig = definition.trigger
@@ -136,6 +139,10 @@ def _trigger_blocked(definition: WorkflowDefinition, ctx: EvaluationContext) -> 
         if not ctx.is_first_customer_message:
             return True, "This trigger runs only on the first customer message in a conversation."
         return False, None
+    if definition.trigger.kind == "ticket_created":
+        if not ctx.is_ticket_created:
+            return True, "This trigger runs only when an inbound customer message creates a new ticket."
+        return False, None
     if definition.trigger.kind != "customer_message_received":
         return True, "This trigger is not available for message preview yet."
     trig = definition.trigger
@@ -163,6 +170,7 @@ def preview_definition(
     current_ticket_status: str | None = None,
     channel: str | None = None,
     is_first_customer_message: bool | None = None,
+    is_ticket_created: bool | None = None,
     assignee_present: bool | None = None,
     conversation_ai_mode: str | None = None,
     shopify_connected: bool | None = None,
@@ -198,6 +206,8 @@ def preview_definition(
             assumptions.append("The preview assumes this is the first customer message in the conversation.")
         elif definition.trigger.kind == "customer_message_received" and definition.trigger.first_message_only:
             assumptions.append("The trigger preview assumes this is the customer's first message.")
+    if definition.trigger.kind == "ticket_created" and is_ticket_created is None:
+        assumptions.append("The preview assumes this inbound customer message creates a new ticket.")
     if assignee_present is None and any(
         condition.kind == "assignee_present" for condition in preview_conditions
     ):
@@ -249,6 +259,11 @@ def preview_definition(
             if definition.trigger.kind == "customer_message_received"
             else None
         ),
+        is_ticket_created=(
+            is_ticket_created
+            if is_ticket_created is not None
+            else definition.trigger.kind == "ticket_created"
+        ),
     )
 
     steps: list[AutomationPreviewStepOut] = []
@@ -268,6 +283,8 @@ def preview_definition(
     trigger_detail = (
         "First customer message in conversation"
         if definition.trigger.kind == "conversation_started"
+        else "New ticket created by an inbound customer message"
+        if definition.trigger.kind == "ticket_created"
         else "Incoming customer message"
     )
     steps.append(AutomationPreviewStepOut(step="trigger", outcome="matched", detail=trigger_detail))
@@ -529,6 +546,7 @@ def evaluation_context_from_runtime(
     shopify_connected: bool,
     conversation_ai_agent_id: UUID | None,
     conversation_integration_connection_id: UUID | None,
+    is_ticket_created: bool = False,
 ) -> EvaluationContext:
     return EvaluationContext(
         message=message_content,
@@ -543,6 +561,7 @@ def evaluation_context_from_runtime(
         trigger_integration_connection_id=None,
         conversation_ai_agent_id=conversation_ai_agent_id,
         conversation_integration_connection_id=conversation_integration_connection_id,
+        is_ticket_created=is_ticket_created,
     )
 
 
@@ -550,7 +569,7 @@ def evaluate_customer_message_match(
     definition: WorkflowDefinition,
     ctx: EvaluationContext,
 ) -> bool:
-    if definition.trigger.kind not in ("customer_message_received", "conversation_started"):
+    if definition.trigger.kind not in ("customer_message_received", "conversation_started", "ticket_created"):
         return False
     # Fill trigger ids from definition for evaluate_conditions
     merged = EvaluationContext(
@@ -570,6 +589,7 @@ def evaluate_customer_message_match(
         else None,
         conversation_ai_agent_id=ctx.conversation_ai_agent_id,
         conversation_integration_connection_id=ctx.conversation_integration_connection_id,
+        is_ticket_created=ctx.is_ticket_created,
     )
     return evaluate_conditions(definition, merged)
 
@@ -579,7 +599,7 @@ def evaluate_customer_message_branch(
     ctx: EvaluationContext,
 ) -> str | None:
     """Return the matching path, with None reserved for a non-matching trigger."""
-    if definition.trigger.kind not in ("customer_message_received", "conversation_started"):
+    if definition.trigger.kind not in ("customer_message_received", "conversation_started", "ticket_created"):
         return None
     merged = EvaluationContext(
         message=ctx.message,
@@ -590,10 +610,15 @@ def evaluate_customer_message_branch(
         assignee_present=ctx.assignee_present,
         conversation_ai_mode=ctx.conversation_ai_mode,
         shopify_connected=ctx.shopify_connected,
-        trigger_ai_agent_id=definition.trigger.ai_agent_id,
-        trigger_integration_connection_id=definition.trigger.integration_connection_id,
+        trigger_ai_agent_id=definition.trigger.ai_agent_id
+        if definition.trigger.kind == "customer_message_received"
+        else None,
+        trigger_integration_connection_id=definition.trigger.integration_connection_id
+        if definition.trigger.kind == "customer_message_received"
+        else None,
         conversation_ai_agent_id=ctx.conversation_ai_agent_id,
         conversation_integration_connection_id=ctx.conversation_integration_connection_id,
+        is_ticket_created=ctx.is_ticket_created,
     )
     if not _trigger_matches(definition, merged):
         return None

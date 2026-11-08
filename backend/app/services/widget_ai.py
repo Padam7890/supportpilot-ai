@@ -1,6 +1,7 @@
 """Small policy helpers for queued, tenant-scoped storefront AI replies."""
 
 import re
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
@@ -283,6 +284,13 @@ async def enqueue_widget_reply(
     return execution
 
 
+@dataclass(frozen=True)
+class WidgetAgentRoutingDecision:
+    agent: AIAgent | None
+    reason: str
+    matched_bot_count: int
+
+
 async def resolve_widget_agent(
     db: AsyncSession,
     widget: SupportWidget,
@@ -292,15 +300,37 @@ async def resolve_widget_agent(
     configured_agent_ids: list[UUID] | None = None,
     primary_agent_id: UUID | None = None,
 ) -> AIAgent | None:
-    """Route to the configured active bot whose assigned sources best match the message."""
+    """Compatibility wrapper returning the selected bot for widget workers."""
+    decision = await resolve_widget_agent_decision(
+        db,
+        widget,
+        message,
+        conversation=conversation,
+        configured_agent_ids=configured_agent_ids,
+        primary_agent_id=primary_agent_id,
+    )
+    return decision.agent
+
+
+async def resolve_widget_agent_decision(
+    db: AsyncSession,
+    widget: SupportWidget,
+    message: str,
+    *,
+    conversation: Conversation | None = None,
+    configured_agent_ids: list[UUID] | None = None,
+    primary_agent_id: UUID | None = None,
+) -> WidgetAgentRoutingDecision:
+    """Route to the best configured source match and retain an operator-safe reason."""
     if conversation is not None and conversation.ai_agent_override:
-        return await db.scalar(
+        agent = await db.scalar(
             select(AIAgent).where(
                 AIAgent.organization_id == widget.organization_id,
                 AIAgent.id == conversation.ai_agent_id,
                 AIAgent.status == "active",
             )
         )
+        return WidgetAgentRoutingDecision(agent, "conversation_override", 0)
     configured_ids = configured_agent_ids
     if configured_ids is None:
         configured_ids = list(
@@ -313,6 +343,13 @@ async def resolve_widget_agent(
                 .order_by(SupportWidgetAIAgent.ai_agent_id)
             )
         )
+        # The widget's explicit primary bot is the first configured fallback;
+        # assignment rows themselves have no ordering guarantee.
+        if widget.ai_agent_id in configured_ids:
+            configured_ids = [
+                widget.ai_agent_id,
+                *(agent_id for agent_id in configured_ids if agent_id != widget.ai_agent_id),
+            ]
     if not configured_ids:
         configured_ids = [widget.ai_agent_id]
     agents = list(
@@ -339,7 +376,7 @@ async def resolve_widget_agent(
         or (agents[0] if agents else None)
     )
     if fallback is None:
-        return None
+        return WidgetAgentRoutingDecision(None, "no_active_bot", 0)
 
     if SHOPPING_CUES.search(message):
         required_tool = (
@@ -361,7 +398,8 @@ async def resolve_widget_agent(
 
     terms = build_retrieval_terms(message)
     if not terms:
-        return fallback
+        reason = "conversation_continuity" if preferred_agent_id != primary else "primary_fallback"
+        return WidgetAgentRoutingDecision(fallback, reason, 0)
 
     simple_config = literal_column("'simple'::regconfig")
     ts_query = func.to_tsquery(simple_config, " | ".join(terms))
@@ -424,8 +462,20 @@ async def resolve_widget_agent(
     matches = await db.execute(
         select(source_scores.c.ai_agent_id, func.max(source_scores.c.score).label("score"))
         .group_by(source_scores.c.ai_agent_id)
-        .order_by(func.max(source_scores.c.score).desc(), source_scores.c.ai_agent_id)
         .limit(len(by_id))
     )
-    ranked = matches.first()
-    return by_id.get(ranked.ai_agent_id, fallback) if ranked else fallback
+    ranked_matches = sorted(
+        matches.all(),
+        key=lambda row: (
+            -float(row.score),
+            configured_order.get(row.ai_agent_id, len(configured_order)),
+        ),
+    )
+    if ranked_matches:
+        return WidgetAgentRoutingDecision(
+            by_id.get(ranked_matches[0].ai_agent_id, fallback),
+            "best_source_match",
+            len(ranked_matches),
+        )
+    reason = "conversation_continuity" if preferred_agent_id != primary else "primary_fallback"
+    return WidgetAgentRoutingDecision(fallback, reason, 0)

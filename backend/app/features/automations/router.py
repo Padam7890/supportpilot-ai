@@ -575,6 +575,7 @@ async def preview_automation(
         current_ticket_status=payload.sample_ticket_status,
         channel=payload.sample_channel,
         is_first_customer_message=payload.sample_is_first_customer_message,
+        is_ticket_created=payload.sample_is_ticket_created,
         assignee_present=payload.sample_assignee_present,
         conversation_ai_mode=payload.sample_conversation_ai_mode,
         shopify_connected=payload.sample_shopify_connected,
