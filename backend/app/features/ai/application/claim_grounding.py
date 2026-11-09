@@ -10,8 +10,8 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-_CITATION = re.compile(r"\\[(?:source|doc)\\s*:?\\s*(\\d+)\\]", re.IGNORECASE)
-_NUMBER = re.compile(r"(?<![\\w])(?:\\d+(?:[.,]\\d+)?)(?:\\s*%|\\s*(?:days?|hours?|weeks?|months?|years?))?", re.IGNORECASE)
+_CITATION = re.compile(r"\[(?:source|doc)\s*:?\s*(\d+)\]", re.IGNORECASE)
+_NUMBER = re.compile(r"(?<![\w])(?:\d+(?:[.,]\d+)?)(?:\s*%|\s*(?:days?|hours?|weeks?|months?|years?))?", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
