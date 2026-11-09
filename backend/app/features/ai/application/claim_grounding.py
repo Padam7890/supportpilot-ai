@@ -51,3 +51,18 @@ def check_grounded_claims(
     if missing:
         return ClaimCheck(False, "unsupported_numeric_claim", cited, missing)
     return ClaimCheck(True, "lexical_checks_passed", cited)
+
+
+def check_generated_answer(
+    response: str,
+    sources: Sequence[Mapping[str, object]],
+) -> ClaimCheck:
+    """Delivery gate for generated knowledge answers.
+
+    Existing replies do not consistently include inline source markers, so
+    validate explicit markers when present and always check numeric claims.
+    A separate citation-enforcement rollout is needed before requiring markers.
+    """
+    if not sources:
+        return ClaimCheck(True, "no_knowledge_sources")
+    return check_grounded_claims(response, sources, require_citations=False)
