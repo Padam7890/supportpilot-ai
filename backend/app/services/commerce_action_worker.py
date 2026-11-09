@@ -17,6 +17,7 @@ from app.integrations.providers.shopify.orders import lookup_authorized_order
 from app.integrations.providers.shopify.security import decrypt_credential
 from app.models import CommerceAction, CommerceActionAudit, Customer, ShopifyInstallation, Ticket
 from app.services.mock_commerce import MockCommerceService
+from app.services.commerce_action_recovery import decide_lease_recovery
 
 logger = logging.getLogger(__name__)
 MAX_EXECUTION_ATTEMPTS = 3
@@ -108,7 +109,14 @@ async def claim_commerce_action(organization_id: UUID) -> UUID | None:
             # Shopify cancellations are non-idempotent at the provider boundary.
             # A timed-out lease can mean Shopify accepted the mutation while our
             # worker crashed before committing success. Never dispatch it again.
-            if action.provider == "shopify" and is_reclaimable:
+            recovery = decide_lease_recovery(
+                provider=action.provider,
+                status=action.execution_status,
+                lease_expired=is_reclaimable,
+                attempts=action.execution_attempt_count,
+                max_attempts=MAX_EXECUTION_ATTEMPTS,
+            )
+            if recovery == "manual_reconciliation":
                 action.execution_status = "failed"
                 action.execution_error_code = "shopify_outcome_unknown_manual_review"
                 action.execution_completed_at = now
@@ -127,7 +135,7 @@ async def claim_commerce_action(organization_id: UUID) -> UUID | None:
                 )
                 await db.commit()
                 return None
-            if action.execution_attempt_count >= MAX_EXECUTION_ATTEMPTS:
+            if recovery == "retry_limit":
                 action.execution_status = "failed"
                 action.execution_error_code = "worker_lease_retry_limit"
                 action.execution_completed_at = now
