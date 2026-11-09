@@ -54,9 +54,9 @@ def understand_conversation_turn(
         and item.get("content", "").strip()
     ]
     # Explicit cancellation or correction must not inherit the prior topic.
-    # The caller still decides whether a pending commerce action is cancelled. 
-    correction = _is_correction(normalized) 
-    # Prefer the latest explicit subject over acknowledgements and pronouns. 
+    # The caller still decides whether a pending commerce action is cancelled.
+    correction = _is_correction(normalized)
+    # Prefer the latest explicit subject over acknowledgements and pronouns.
     memory = derive_topic_memory(prior_turns)
     previous_customer = memory.topic_anchor or (recent_customer_turns[0] if recent_customer_turns else "")
     contextual = (is_contextual_follow_up(normalized) or _is_short_prepositional_follow_up(normalized)) and not correction
@@ -72,7 +72,7 @@ def understand_conversation_turn(
     )
     recent_intents = assess_deterministic_route(normalized, [])
     unique_intents = set(recent_intents.candidate_intents)
-    multi_intent = len(unique_intents) > 1 and recent_intents.competing
+    multi_intent = (len(unique_intents) > 1 and recent_intents.competing) or _has_distinct_clauses(normalized)
     pending = None
     if agent_id is not None:
         # Skip non-assistant turns; only a delivered assistant prompt can
@@ -149,3 +149,26 @@ def _is_correction(message: str) -> bool:
     validate their own authorization and cancellation transitions.
     """
     return bool(_CORRECTION_PATTERN.search(message.strip()))
+
+
+_CLAUSE_SEPARATOR = re.compile(r"\\s+(?:and|also|plus)\\s+|[;]", re.IGNORECASE)
+
+
+def _has_distinct_clauses(message: str) -> bool:
+    """Identify multiple explicit support subjects, not just multiple keywords.
+
+    This is advisory for conversation understanding; routing and execution must
+    still independently authorize every tool or commerce action.
+    """
+    from app.features.ai.application.intent_routing.deterministic import assess_deterministic_route
+
+    clauses = [clause.strip() for clause in _CLAUSE_SEPARATOR.split(message) if clause.strip()]
+    if len(clauses) < 2:
+        return False
+    subjects: set[str] = set()
+    for clause in clauses[:4]:
+        if not _has_explicit_topic(clause):
+            continue
+        assessment = assess_deterministic_route(clause, [])
+        subjects.update(intent.value for intent in assessment.candidate_intents if intent.value not in {"greeting", "general"})
+    return len(subjects) > 1
