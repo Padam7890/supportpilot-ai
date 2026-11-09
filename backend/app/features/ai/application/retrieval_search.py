@@ -9,7 +9,10 @@ from sqlalchemy import func, literal, literal_column, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.features.ai.application.retrieval import build_retrieval_terms
+from app.features.ai.application.retrieval import (
+    build_retrieval_terms,
+    should_skip_semantic_retrieval,
+)
 from app.features.ai.infrastructure.embedding_gateway import (
     EmbeddingProviderError,
     embed_texts,
@@ -128,6 +131,7 @@ async def _embedding_readiness(
                     DocumentEmbedding.embedding_model == settings.ai_embedding_model,
                     DocumentEmbedding.embedding_version == settings.ai_embedding_version,
                     DocumentEmbedding.dimensions == settings.ai_embedding_dimensions,
+                    DocumentEmbedding.content_hash == DocumentChunk.content_hash,
                 )
             )
         ).scalar_one()
@@ -315,7 +319,11 @@ async def search_agent_knowledge(
         assigned_bases=assigned_bases,
         common_filters=common_filters,
     )
-    if embedding_status in {"available", "partial"} and int(document_count or 0) > 0:
+    if (
+        embedding_status in {"available", "partial"}
+        and int(document_count or 0) > 0
+        and not should_skip_semantic_retrieval(search_text)
+    ):
         try:
             query_vector = (await embed_texts([search_text[:2000]]))[0].values
             distance = DocumentEmbedding.embedding.op("<=>")(literal(query_vector, type_=Vector()))

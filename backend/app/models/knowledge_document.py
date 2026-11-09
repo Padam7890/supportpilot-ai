@@ -180,6 +180,7 @@ class DocumentEmbedding(Base):
     embedding_model: Mapped[str] = mapped_column(String(255), nullable=False)
     embedding_version: Mapped[str] = mapped_column(String(64), nullable=False)
     dimensions: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     embedding: Mapped[list[float]] = mapped_column(Vector(), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False

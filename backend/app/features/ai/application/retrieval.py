@@ -64,8 +64,9 @@ _INTENT_TERMS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
             "फिर्ता", "phirta", "firta", "firtā", "return garna", "return kasari",
             "refund kasari", "paisa firta",
             "page says", "you said", "return window", "refund window", "how many days",
+            "without receipt", "gift return", "final sale",
         ),
-        ("return", "returns", "refund", "exchange", "policy", "eligible", "days", "window"),
+        ("return", "returns", "refund", "exchange", "policy", "eligible", "days", "window", "receipt"),
     ),
     (
         (
@@ -79,10 +80,12 @@ _INTENT_TERMS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
             "how long does it take", "how long will it take", "how long does shipping take",
             "how long does delivery take", "delivery time", "shipping time",
             "when will it arrive", "when will my order arrive",
+            "international shipping", "same day delivery",
         ),
         (
             "shipping", "shipment", "delivery", "dispatch", "tracking", "courier",
             "fee", "fees", "charge", "charges", "cost", "estimated delivery",
+            "international", "same", "express",
         ),
     ),
     (
@@ -96,8 +99,9 @@ _INTENT_TERMS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
         (
             "payment", "pay", "paid", "billing", "charged", "charge", "भुक्तानी", "तिर्न",
             "पैसा", "payment kasari", "pay garna", "paisa tirna",
+            "esewa", "khalti", "digital wallet",
         ),
-        ("payment", "billing", "pay", "charge", "card"),
+        ("payment", "billing", "pay", "charge", "card", "wallet", "method"),
     ),
     (
         (
@@ -178,6 +182,22 @@ def build_retrieval_terms(text: str, *, limit: int = 64) -> list[str]:
         if any(_matches_trigger(intent_token_set, intent_tokens, trigger) for trigger in triggers):
             expanded.extend(synonyms)
     return list(dict.fromkeys(expanded))[:limit]
+
+
+def should_skip_semantic_retrieval(text: str) -> bool:
+    """Skip query embedding for standalone greetings and thanks (keyword may still run)."""
+    normalized = unicodedata.normalize("NFKC", text).casefold().strip()
+    if not normalized:
+        return True
+    greeting = re.fullmatch(
+        r"(?:hi|hello|hey|thanks|thank you|thx|namaste|नमस्ते|नमस्कार|धन्यवाद)(?: there| everyone| so much| a lot)?[!. ,]*",
+        normalized,
+    )
+    if greeting:
+        return True
+    if len(normalized) <= 48 and is_contextual_follow_up(text) and not build_retrieval_terms(text):
+        return True
+    return False
 
 
 def _matches_trigger(token_set: set[str], tokens: tuple[str, ...], trigger: str) -> bool:

@@ -76,6 +76,7 @@ async def test_process_job_skips_unchanged_chunks(client, monkeypatch):
                 embedding_model=job.embedding_model,
                 embedding_version=job.embedding_version,
                 dimensions=job.dimensions,
+                content_hash=hash_chunk_text(excerpt),
                 embedding=[0.1] * job.dimensions,
             )
         )

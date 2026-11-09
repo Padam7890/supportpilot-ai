@@ -60,7 +60,7 @@ def _merge_to_token_budget(
     buffer_tokens = 0
     buffer_meta = segments[0] if segments else TextSegment("")
 
-    def flush() -> None:
+    def flush(*, carry_overlap: bool = True) -> None:
         nonlocal buffer, buffer_tokens, buffer_meta
         if not buffer:
             return
@@ -69,7 +69,7 @@ def _merge_to_token_budget(
             chunks.append(
                 TextSegment(body, buffer_meta.section_label, buffer_meta.page_number)
             )
-        if overlap_tokens > 0 and body:
+        if carry_overlap and overlap_tokens > 0 and body:
             overlap_text = body
             while overlap_text and estimate_tokens(overlap_text) > overlap_tokens:
                 overlap_text = overlap_text[overlap_text.find(" ") + 1 :]
@@ -115,7 +115,7 @@ def _merge_to_token_budget(
             buffer_meta.section_label != segment.section_label
             or buffer_meta.page_number != segment.page_number
         ):
-            flush()
+            flush(carry_overlap=False)
             buffer_meta = segment
 
         if buffer_tokens + segment_tokens > max_tokens and buffer:
@@ -152,7 +152,19 @@ def make_chunks(
     merged = _merge_to_token_budget(
         segments, max_tokens=max_tokens, overlap_tokens=overlap_tokens
     )
-    return [(segment.text, segment.section_label, segment.page_number) for segment in merged]
+    min_tokens = max(8, max_tokens // 12)
+    seen: set[str] = set()
+    output: list[tuple[str, str | None, int | None]] = []
+    for segment in merged:
+        body = segment.text.strip()
+        if not body or estimate_tokens(body) < min_tokens:
+            continue
+        fingerprint = body.casefold()
+        if fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+        output.append((body, segment.section_label, segment.page_number))
+    return output
 
 
 def _legacy_char_chunks(

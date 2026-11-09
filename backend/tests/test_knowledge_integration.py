@@ -812,6 +812,7 @@ async def test_hybrid_semantic_retrieval_is_tenant_and_bot_scoped(client, monkey
                     embedding_model=model,
                     embedding_version="test-v1",
                     dimensions=3,
+                    content_hash=hash_chunk_text(excerpt),
                     embedding=[1.0, 0.0, 0.0],
                 )
             )
@@ -850,6 +851,7 @@ async def test_hybrid_semantic_retrieval_is_tenant_and_bot_scoped(client, monkey
                 embedding_model=model,
                 embedding_version="test-v1",
                 dimensions=3,
+                content_hash=hash_chunk_text(excerpt),
                 embedding=[1.0, 0.0, 0.0],
             )
         )

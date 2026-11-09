@@ -7,7 +7,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import and_, delete, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import settings
@@ -130,7 +130,7 @@ async def process_job(organization_id: UUID, job_id: UUID) -> None:
                 (await db.execute(
                     select(
                         DocumentEmbedding.chunk_index,
-                        DocumentChunk.content_hash,
+                        DocumentEmbedding.content_hash,
                         DocumentEmbedding.dimensions,
                     )
                     .join(
@@ -229,6 +229,36 @@ async def process_job(organization_id: UUID, job_id: UUID) -> None:
                     DocumentEmbedding.chunk_index.not_in(current_indexes),
                 )
             )
+            stale_indexes = (
+                await db.scalars(
+                    select(DocumentEmbedding.chunk_index)
+                    .join(
+                        DocumentChunk,
+                        and_(
+                            DocumentChunk.organization_id == DocumentEmbedding.organization_id,
+                            DocumentChunk.document_id == DocumentEmbedding.document_id,
+                            DocumentChunk.chunk_index == DocumentEmbedding.chunk_index,
+                        ),
+                    )
+                    .where(
+                        DocumentEmbedding.organization_id == organization_id,
+                        DocumentEmbedding.document_id == document_id,
+                        DocumentEmbedding.embedding_model == model,
+                        DocumentEmbedding.embedding_version == version,
+                        DocumentEmbedding.content_hash != DocumentChunk.content_hash,
+                    )
+                )
+            ).all()
+            if stale_indexes:
+                await db.execute(
+                    delete(DocumentEmbedding).where(
+                        DocumentEmbedding.organization_id == organization_id,
+                        DocumentEmbedding.document_id == document_id,
+                        DocumentEmbedding.embedding_model == model,
+                        DocumentEmbedding.embedding_version == version,
+                        DocumentEmbedding.chunk_index.in_(stale_indexes),
+                    )
+                )
             if new_vectors:
                 await db.execute(
                     delete(DocumentEmbedding).where(
@@ -239,6 +269,10 @@ async def process_job(organization_id: UUID, job_id: UUID) -> None:
                         DocumentEmbedding.chunk_index.in_(new_vectors.keys()),
                     )
                 )
+                hash_by_index = {
+                    chunk_index: content_hash
+                    for chunk_index, _, content_hash in chunk_rows
+                }
                 db.add_all(
                     DocumentEmbedding(
                         organization_id=organization_id,
@@ -247,10 +281,57 @@ async def process_job(organization_id: UUID, job_id: UUID) -> None:
                         embedding_model=model,
                         embedding_version=version,
                         dimensions=dimensions,
+                        content_hash=hash_by_index[chunk_index],
                         embedding=values,
                     )
                     for chunk_index, values in new_vectors.items()
                 )
+
+            fresh_hashes = {chunk_index: content_hash for chunk_index, _, content_hash in chunk_rows}
+            embedded_count = int(
+                (
+                    await db.execute(
+                        select(func.count())
+                        .select_from(DocumentEmbedding)
+                        .join(
+                            DocumentChunk,
+                            and_(
+                                DocumentChunk.organization_id == DocumentEmbedding.organization_id,
+                                DocumentChunk.document_id == DocumentEmbedding.document_id,
+                                DocumentChunk.chunk_index == DocumentEmbedding.chunk_index,
+                            ),
+                        )
+                        .where(
+                            DocumentEmbedding.organization_id == organization_id,
+                            DocumentEmbedding.document_id == document_id,
+                            DocumentEmbedding.embedding_model == model,
+                            DocumentEmbedding.embedding_version == version,
+                            DocumentEmbedding.dimensions == dimensions,
+                            DocumentEmbedding.content_hash == DocumentChunk.content_hash,
+                        )
+                    )
+                ).scalar_one()
+                or 0
+            )
+            if embedded_count < len(chunk_rows):
+                job.status = "queued"
+                job.completed_at = None
+                job.last_error_code = "embedding_incomplete"
+                job.worker_token = None
+                job.next_attempt_at = datetime.now(UTC) + timedelta(seconds=30)
+                await db.commit()
+                logger.warning(
+                    "document_embeddings_incomplete",
+                    extra={
+                        "organization_id": str(organization_id),
+                        "document_id": str(document_id),
+                        "job_id": str(job_id),
+                        "chunk_count": len(chunk_rows),
+                        "embedded_count": embedded_count,
+                        "hashes": len(fresh_hashes),
+                    },
+                )
+                return
 
             job.status = "succeeded"
             job.completed_at = datetime.now(UTC)
