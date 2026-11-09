@@ -677,6 +677,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
         stream_source_ids = None
         if (
             settings.widget_ai_streaming_enabled
+            and not context  # Never publish unvalidated knowledge-grounded tokens.
             and execution.kind == "widget_reply"
             and execution.delivery_mode == "auto_reply"
             and execution.conversation_id is not None
@@ -749,7 +750,11 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 execution_id,
                 draft=draft,
                 reply_status="draft_ready" if execution.delivery_mode == "draft_only" else "sent",
-                safe_summary=f"Reply grounded in {len(citations)} tenant knowledge source(s).",
+                safe_summary=(
+                    "Generated answer failed knowledge grounding checks; a safe fallback was used."
+                    if not grounding_check.accepted else
+                    f"Reply generated using {len(citations)} tenant knowledge source(s)."
+                ),
                 citations=citations,
                 outcomes=outcomes,
                 usage=result.get("usage", {}) if isinstance(result.get("usage"), dict) else {},
@@ -823,6 +828,8 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             row.draft = generated_draft
             output_label = "Reply draft" if row.kind == "reply_draft" else "Playground answer"
             row.safe_summary = (
+                "Generated answer failed knowledge grounding checks; a safe fallback was used."
+                if not grounding_check.accepted else
                 f"{output_label} generated using {len(citations)} knowledge source(s)."
             )
             row.citations = citations
