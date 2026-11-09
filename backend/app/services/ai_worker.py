@@ -65,6 +65,7 @@ from app.features.ai.infrastructure.llm_gateway import (
     provider_configuration_error,
 )
 from app.features.ai.infrastructure.widget_stream import publish_widget_deltas
+from app.features.ai.application.generation_metrics import log_generation_metrics
 from app.models import (
     AIAgent,
     AIExecution,
@@ -704,6 +705,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 decision="streaming" if stream_context is not None else "context_required",
                 historical_context_omitted=stream_context is not None and stream_context != transcript,
             )
+        generation_started = time.monotonic()
         if stream_context is not None and stream_source_ids:
             draft_inputs["conversation_context"] = [{"sender": turn["sender"], "content": turn["content"]} for turn in stream_context]
             async with publish_widget_deltas(
@@ -712,6 +714,15 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 result = await create_grounded_draft(**draft_inputs, on_delta=publish)
         else:
             result = await create_grounded_draft(**draft_inputs)
+        log_generation_metrics(
+            execution_id=str(execution_id),
+            execution_kind=execution.kind,
+            model_name=result.get("model_name") if isinstance(result.get("model_name"), str) else None,
+            started_monotonic=generation_started,
+            usage=result.get("usage") if isinstance(result.get("usage"), dict) else None,
+            streamed=stream_context is not None and bool(stream_source_ids),
+            correlation_id=correlation_id,
+        )
         if execution.kind == "widget_reply":
             failure_stage = "reply_persistence"
             draft = str(result.get("draft", ""))[:12000]
