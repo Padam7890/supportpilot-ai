@@ -25,6 +25,9 @@ async def main() -> None:
 
     connection = await asyncpg.connect(admin_url)
     try:
+        # pgvector is a trusted extension that requires elevated privileges on
+        # this CI image; install it before migrations run as the restricted role.
+        await connection.execute("CREATE EXTENSION IF NOT EXISTS vector")
         # Ask PostgreSQL to quote all dynamic identifiers and password literals.
         quoted = await connection.fetchrow(
             """SELECT quote_ident($1) AS database_name,

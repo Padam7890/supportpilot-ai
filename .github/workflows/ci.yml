@@ -113,7 +113,16 @@ jobs:
         run: python scripts/rag_release_gate.py
 
       - name: Run tests
-        run: pytest -q
+        run: pytest -q --junitxml=pytest-results.xml
+
+      - name: Preserve backend test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-pytest-${{ github.run_id }}
+          path: backend/pytest-results.xml
+          if-no-files-found: ignore
+          retention-days: 14
 
 
   # -------------------------
