@@ -875,10 +875,14 @@
     const verificationRequested = latestAssistantRequestsVerification(latestMessages);
     const latestPublicMessage = latestMessages.at(-1);
     const refundNeedsVerification = latestPublicMessage?.sender_type === "assistant" && latestPublicMessage.verification_required === true;
-    const needsOrderVerification = refundNeedsVerification || (
-      verificationRequested && !/refund request/i.test(latestPublicMessage?.content || "")
-    ) || (
-      containsOrderIntent(latestMessages) && (!verifiedOrder || verificationRequested) && !cancellationWasSubmitted(latestMessages)
+    // Order words in a customer message are not enough to open the private
+    // verification form. Let the assistant first understand the request and
+    // explicitly ask for verification; otherwise ordinary questions about
+    // ordering, returns, or store policies get interrupted by a generic form.
+    const needsOrderVerification = !cancellationWasSubmitted(latestMessages) && (
+      refundNeedsVerification || (
+        verificationRequested && !/refund request/i.test(latestPublicMessage?.content || "")
+      )
     );
     if (waitingForAssistant && conversationMode === "ai" && config?.ai_enabled && !needsOrderVerification) {
       const latestCustomer = [...latestMessages].reverse().find((item) => item.sender_type === "customer")?.content || "";
