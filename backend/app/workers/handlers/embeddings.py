@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import and_, delete, or_, select
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import settings
 from app.db.session import SessionLocal, set_tenant_context
@@ -173,7 +174,7 @@ async def process_job(organization_id: UUID, job_id: UUID) -> None:
             })
     except EmbeddingProviderError as exc:
         await _record_failure(organization_id, job_id, exc.code, retryable=exc.retryable)
-    except Exception as exc:
+    except (SQLAlchemyError, TimeoutError, ValueError, TypeError, OSError) as exc:
         logger.error("document_embeddings_failed_unexpectedly", extra={
             "organization_id": str(organization_id), "job_id": str(job_id),
             "error_type": type(exc).__name__,
