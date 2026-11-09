@@ -1,6 +1,7 @@
 """Tenant- and bot-scoped hybrid retrieval shared by AI runs and diagnostics."""
 
 import logging
+import re
 import time
 from dataclasses import dataclass
 from uuid import UUID
@@ -32,6 +33,19 @@ from app.models.knowledge_document import Vector
 
 logger = logging.getLogger(__name__)
 RRF_K = 60
+
+
+def _fast_relevance_boost(query_terms: set[str], row: object) -> float:
+    """Cheap lexical tie-breaker for hybrid candidates; no extra provider call."""
+    if not query_terms:
+        return 0.0
+    content = getattr(row, "content", "")
+    title = f"{getattr(row, 'document_name', '')} {getattr(row, 'knowledge_base_name', '')}"
+    content_terms = set(re.findall(r"[\w\u0900-\u097f]+", content.casefold()))
+    title_terms = set(re.findall(r"[\w\u0900-\u097f]+", title.casefold()))
+    content_coverage = len(query_terms & content_terms) / len(query_terms)
+    title_coverage = len(query_terms & title_terms) / len(query_terms)
+    return min(0.03, content_coverage * 0.025 + title_coverage * 0.005)
 
 
 def reciprocal_rank_fusion(
@@ -419,10 +433,11 @@ async def search_agent_knowledge(
             rank_index,
         )
 
+    query_terms = set(re.findall(r"[\w\u0900-\u097f]+", search_text.casefold()))
     ranked = sorted(
         merged.values(),
         key=lambda item: (
-            -float(item["score"]),
+            -(float(item["score"]) + _fast_relevance_boost(query_terms, item["row"])),
             str(item["row"].document_id),
             int(item["row"].chunk_index),
         ),
