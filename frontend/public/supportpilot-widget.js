@@ -717,11 +717,19 @@
     switch (event.event_type) {
       case "execution.queued":
       case "execution.started":
-      case "execution.status":
-        streamCursor = event.sequence;
-        clearPartial();
-        if (waitingForAssistant && !thread.querySelector(".typing-row")) addTyping();
+      case "execution.status": {
+        // A status frame may be repeated during reconnect. Never erase text
+        // already received for the same execution attempt.
+        const previousAttempt = streamCursor.split(":").slice(0, 2).join(":");
+        const incomingAttempt = event.sequence.split(":").slice(0, 2).join(":");
+        if (previousAttempt && previousAttempt !== incomingAttempt) clearPartial();
+        // Status offsets (0-0) must not rewind a real Redis delta cursor.
+        if (!partialText || previousAttempt !== incomingAttempt) {
+          streamCursor = event.sequence;
+        }
+        if (waitingForAssistant && !partialText && !thread.querySelector(".typing-row")) addTyping();
         return false;
+      }
       case "message.delta":
         if (typeof event.payload?.text !== "string" || !event.payload.text) return false;
         if (partialText.length + event.payload.text.length > 16000) throw new Error("Reply stream exceeded its limit");
