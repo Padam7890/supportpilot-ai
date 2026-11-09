@@ -52,7 +52,7 @@ _CODE_INTERRUPTED = re.compile(
 YES = re.compile(
     r"(?:yes|yeah|yep|sure|ok(?:ay)?|please do|continue|yes please)[.! ]*", re.IGNORECASE
 )
-NO = re.compile(
+ACTION_RETRACTION = re.compile(\n    r"^(?:please\\s+)?(?:don.t|do\\s+not|never)\\s+(?:cancel|refund|return)\\b|^(?:wait[,! ]*|actually[,! ]*)\\s*(?:don.t|do\\s+not)\\s+(?:cancel|refund|return)\\b",\n    re.IGNORECASE,\n)\nNO = re.compile(
     r"(?:no|no thanks|not now|never mind|nevermind|stop this request)[.! ]*", re.IGNORECASE
 )
 TOPIC_SWITCH = re.compile(
@@ -371,6 +371,8 @@ def resolve_follow_up(
     source_message_id: UUID | None,
 ) -> FollowUp | None:
     answer = " ".join(message.strip().split())
+    if ACTION_RETRACTION.search(answer):
+        return FollowUp("declined", draft="Understood. I won’t proceed with that request. What else can I help with?")
     if order_follow_up := resolve_order_support(answer, state, source_message_id=source_message_id):
         return order_follow_up
     if NO.fullmatch(answer) or (
@@ -459,6 +461,10 @@ def assess_widget_follow_up(
 ) -> tuple[FollowUp | None, str]:
     from app.services import widget_ai
 
+    # A negated commerce command must never initiate a positive action flow.
+    if ACTION_RETRACTION.search(question.strip()):
+        return FollowUp("declined", draft="Understood. I won’t proceed with that request. What else can I help with?"), "retracted"
+
     previous = transcript
     if (
         previous
@@ -467,12 +473,19 @@ def assess_widget_follow_up(
     ):
         previous = previous[:-1]
     if previous:
-        state = pending_from_assistant(previous[-1], agent_id, now)
+        # A pending prompt may be followed by one or more customer messages.
+        # Do not revive an older prompt after a newer assistant response.
+        latest_assistant = next(
+            (turn for turn in reversed(previous[-12:]) if turn.get("sender") == "assistant"),
+            None,
+        )
+        state = pending_from_assistant(latest_assistant, agent_id, now) if latest_assistant else None
         if state is not None and (allow_refund_workflow or state.active_intent == "order"):
             if resolved := resolve_follow_up(question, state, source_message_id=source_message_id):
                 return resolved, "resolved"
             if (
                 not TOPIC_SWITCH.search(question)
+                and not _is_new_subject(question)
                 and classify_conversational_intent(question) is None
                 and state.stage
                 in {
@@ -508,3 +521,14 @@ def assess_widget_follow_up(
     ):
         return FollowUp("refund_start", draft=REASON_PROMPT, pending=refund_start()), "started"
     return None, "no_matching_pending_question"
+
+
+_NEW_SUBJECT = re.compile(
+    r"\\b(?:exchange|delivery|shipping|tracking|order|payment|product|"
+    r"recommend|warranty|contact|hours|store|price|stock)\\b", re.IGNORECASE
+)
+
+
+def _is_new_subject(message: str) -> bool:
+    """Do not force an unrelated explicit request into a pending refund slot."""
+    return bool(_NEW_SUBJECT.search(message))
