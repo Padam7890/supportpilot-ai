@@ -54,8 +54,10 @@ def understand_conversation_turn(
         and item.get("content", "").strip()
     ]
     # Explicit cancellation or correction must not inherit the prior topic.
-    # The caller still decides whether a pending commerce action is cancelled.\n    correction = _is_correction(normalized) 
-    # Prefer the latest explicit subject over acknowledgements and pronouns.\n    memory = derive_topic_memory(prior_turns)
+    # The caller still decides whether a pending commerce action is cancelled. 
+    correction = _is_correction(normalized) 
+    # Prefer the latest explicit subject over acknowledgements and pronouns. 
+    memory = derive_topic_memory(prior_turns)
     previous_customer = memory.topic_anchor or (recent_customer_turns[0] if recent_customer_turns else "")
     contextual = (is_contextual_follow_up(normalized) or _is_short_prepositional_follow_up(normalized)) and not correction
     # A follow-up that names its own subject ("what about shipping?") already
@@ -72,10 +74,13 @@ def understand_conversation_turn(
     unique_intents = set(recent_intents.candidate_intents)
     multi_intent = len(unique_intents) > 1 and recent_intents.competing
     pending = None
-    if prior_turns and agent_id is not None:
-        pending = pending_from_assistant(
-            prior_turns[-1], agent_id, now or datetime.now(UTC)
-        )
+    if agent_id is not None:
+        # Skip non-assistant turns; only a delivered assistant prompt can
+        # provide a pending question, and expiry/agent binding is validated.
+        for turn in reversed(prior_turns[-12:]):
+            if turn.get("sender") == "assistant":
+                pending = pending_from_assistant(turn, agent_id, now or datetime.now(UTC))
+                break
     language = _detect_language(normalized)
     return ConversationUnderstanding(
         message=normalized,
