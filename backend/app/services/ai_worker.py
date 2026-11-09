@@ -210,7 +210,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             )
             return
         execution, question, transcript, context, citations, outcomes, integration_context = loaded
-        correlation_id = execution.correlation_id or correlation_id
+        correlation_id = getattr(execution, "correlation_id", None) or correlation_id
         execution_kind = execution.kind
         ai_agent_id = execution.ai_agent_id
         attempt_count = execution.attempt_count

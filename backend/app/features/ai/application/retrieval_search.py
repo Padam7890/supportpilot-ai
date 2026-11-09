@@ -25,6 +25,18 @@ logger = logging.getLogger(__name__)
 RRF_K = 60
 
 
+def reciprocal_rank_fusion(
+    keyword_rank: int | None,
+    semantic_rank: int | None,
+    *,
+    k: int = RRF_K,
+) -> float:
+    """Return the standard RRF score for one-based candidate ranks."""
+    if k < 1 or any(rank is not None and rank < 1 for rank in (keyword_rank, semantic_rank)):
+        raise ValueError("RRF requires positive ranks and a positive smoothing constant")
+    return sum(1 / (k + rank) for rank in (keyword_rank, semantic_rank) if rank is not None)
+
+
 @dataclass(frozen=True)
 class KnowledgeMatch:
     document_id: UUID
@@ -103,7 +115,10 @@ async def search_agent_knowledge(
         KnowledgeBase.status == "active",
     )
     source_query = (
-        select(DocumentChunk.document_id, KnowledgeDocument.name, KnowledgeBase.name,
+        select(
+               DocumentChunk.document_id,
+               KnowledgeDocument.name.label("document_name"),
+               KnowledgeBase.name.label("knowledge_base_name"),
                DocumentChunk.chunk_index, DocumentChunk.content)
         .join(KnowledgeDocument,
               (KnowledgeDocument.organization_id == DocumentChunk.organization_id)
@@ -152,7 +167,10 @@ async def search_agent_knowledge(
                 literal(query_vector, type_=Vector())
             )
             semantic_query = (
-                select(DocumentChunk.document_id, KnowledgeDocument.name, KnowledgeBase.name,
+                select(
+                       DocumentChunk.document_id,
+                       KnowledgeDocument.name.label("document_name"),
+                       KnowledgeBase.name.label("knowledge_base_name"),
                        DocumentChunk.chunk_index, DocumentChunk.content, distance.label("distance"))
                 .join(DocumentEmbedding,
                       (DocumentEmbedding.organization_id == DocumentChunk.organization_id)
@@ -191,7 +209,7 @@ async def search_agent_knowledge(
         merged[key] = {
             "row": row, "keyword_rank": rank_index, "semantic_rank": None,
             "similarity": None, "basis": row.match_basis,
-            "score": 1 / (RRF_K + rank_index),
+            "score": reciprocal_rank_fusion(rank_index, None),
         }
     for rank_index, row in enumerate(semantic_rows, start=1):
         key = (row.document_id, row.chunk_index)
@@ -205,7 +223,10 @@ async def search_agent_knowledge(
             candidate["semantic_rank"] = rank_index
             candidate["similarity"] = similarity
             candidate["basis"] = "hybrid"
-        candidate["score"] = float(candidate["score"]) + 1 / (RRF_K + rank_index)
+        candidate["score"] = reciprocal_rank_fusion(
+            int(candidate["keyword_rank"]) if candidate["keyword_rank"] is not None else None,
+            rank_index,
+        )
 
     ranked = sorted(merged.values(), key=lambda item: (
         -float(item["score"]), str(item["row"].document_id), int(item["row"].chunk_index)
@@ -226,8 +247,8 @@ async def search_agent_knowledge(
         remaining_tokens -= estimated_tokens
         matches.append(KnowledgeMatch(
             document_id=row.document_id,
-            document_name=row.name,
-            knowledge_base_name=row.name_1,
+            document_name=row.document_name,
+            knowledge_base_name=row.knowledge_base_name,
             chunk_index=row.chunk_index,
             excerpt=excerpt,
             match_basis=str(candidate["basis"]),
