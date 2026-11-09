@@ -17,6 +17,7 @@ from app.integrations.providers.shopify.orders import lookup_authorized_order
 from app.integrations.providers.shopify.security import decrypt_credential
 from app.models import CommerceAction, CommerceActionAudit, Customer, ShopifyInstallation, Ticket
 from app.services.mock_commerce import MockCommerceService
+from app.services.commerce_action_recovery import decide_lease_recovery
 
 logger = logging.getLogger(__name__)
 MAX_EXECUTION_ATTEMPTS = 3
@@ -105,7 +106,36 @@ async def claim_commerce_action(organization_id: UUID) -> UUID | None:
             )
             if not (is_queued or is_reclaimable):
                 continue
-            if action.execution_attempt_count >= MAX_EXECUTION_ATTEMPTS:
+            # Shopify cancellations are non-idempotent at the provider boundary.
+            # A timed-out lease can mean Shopify accepted the mutation while our
+            # worker crashed before committing success. Never dispatch it again.
+            recovery = decide_lease_recovery(
+                provider=action.provider,
+                status=action.execution_status,
+                lease_expired=is_reclaimable,
+                attempts=action.execution_attempt_count,
+                max_attempts=MAX_EXECUTION_ATTEMPTS,
+            )
+            if recovery == "manual_reconciliation":
+                action.execution_status = "failed"
+                action.execution_error_code = "shopify_outcome_unknown_manual_review"
+                action.execution_completed_at = now
+                db.add(
+                    CommerceActionAudit(
+                        organization_id=organization_id,
+                        commerce_action_id=action.id,
+                        actor_user_id=None,
+                        event_type="execution_failed",
+                        details={
+                            "error_code": action.execution_error_code,
+                            "attempt": action.execution_attempt_count,
+                            "manual_reconciliation_required": True,
+                        },
+                    )
+                )
+                await db.commit()
+                return None
+            if recovery == "retry_limit":
                 action.execution_status = "failed"
                 action.execution_error_code = "worker_lease_retry_limit"
                 action.execution_completed_at = now
@@ -159,7 +189,11 @@ async def fail_exhausted_action_leases(organization_id: UUID) -> bool:
             await db.rollback()
             return False
         action.execution_status = "failed"
-        action.execution_error_code = "worker_lease_retry_limit"
+        action.execution_error_code = (
+            "shopify_outcome_unknown_manual_review"
+            if action.provider == "shopify"
+            else "worker_lease_retry_limit"
+        )
         action.execution_completed_at = now
         db.add(
             CommerceActionAudit(
