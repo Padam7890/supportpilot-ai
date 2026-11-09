@@ -109,6 +109,9 @@ jobs:
       - name: Verify restricted runtime database role and forced RLS
         run: python scripts/assert_runtime_db_role.py
 
+      - name: Validate RAG evaluation corpus release gate
+        run: python scripts/rag_release_gate.py
+
       - name: Run tests
         run: pytest -q
 
