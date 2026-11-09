@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.observability import current_correlation_id
 from app.db.session import get_db, set_tenant_context
 from app.features.widgets.shared import require_visitor_conversation
+from app.features.ai.application.order_action_policy import authorize_order_action
 from app.integrations.providers.shopify.actions import (
     ShopifyOrderActionError,
     check_cancellation_eligibility,
@@ -76,10 +77,22 @@ async def request_widget_order_cancellation(
         .order_by(WidgetOrderVerification.verified_at.desc())
         .with_for_update()
     )
-    if verification is None:
+    policy = authorize_order_action(
+        "cancel",
+        verified=verification is not None,
+        verification_tenant_matches=(
+            verification is not None and verification.organization_id == widget.organization_id
+        ),
+        verification_conversation_matches=(
+            verification is not None and verification.conversation_id == conversation.id
+        ),
+    )
+    if policy.decision == "request_verification":
         raise HTTPException(
             status_code=403, detail="Verify the order by email code before requesting cancellation"
         )
+    if policy.decision != "request_human_review":
+        raise HTTPException(status_code=403, detail="Cancellation requires merchant approval")
 
     key_digest = hashlib.sha256(
         f"widget-cancel:{conversation.id}:{idempotency_key.strip()}".encode()
