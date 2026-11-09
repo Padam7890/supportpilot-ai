@@ -45,8 +45,16 @@ def check_grounded_claims(
         for index in cited
     ) if cited else " ".join(str(source.get("excerpt", "")) for source in sources)
     answer_without_citations = _CITATION.sub("", response)
-    numbers = {value.casefold().strip() for value in _NUMBER.findall(answer_without_citations)}
-    source_numbers = {value.casefold().strip() for value in _NUMBER.findall(evidence)}
+    # Normalize thousands separators and decimal values without conflating
+    # numbers with different units (7 days != 7 weeks).
+    def numeric_claims(value: str) -> set[str]:
+        return {
+            re.sub(r"(?<=\\d),(?=\\d{3}(?:\\D|$))", "", item.casefold()).strip()
+            for item in _NUMBER.findall(value)
+        }
+
+    numbers = numeric_claims(answer_without_citations)
+    source_numbers = numeric_claims(evidence)
     missing = tuple(sorted(numbers - source_numbers))
     if missing:
         return ClaimCheck(False, "unsupported_numeric_claim", cited, missing)
