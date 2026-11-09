@@ -696,6 +696,8 @@
     const [previousExecution, previousAttempt, previousOffset] = streamCursor.split(":");
     if (executionId !== previousExecution) return false;
     if (attempt !== previousAttempt) return Number(attempt) < Number(previousAttempt);
+    // A malformed cursor must never crash the widget or accept a replay.
+    if (!/^\\d+-\\d+$/.test(offset || "") || !/^\\d+-\\d+$/.test(previousOffset || "")) return true;
     const [time, index] = offset.split("-").map(BigInt);
     const [previousTime, previousIndex] = previousOffset.split("-").map(BigInt);
     return time < previousTime || (time === previousTime && index <= previousIndex);
