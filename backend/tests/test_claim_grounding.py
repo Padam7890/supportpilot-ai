@@ -116,3 +116,46 @@ def test_cited_source_allows_matching_number():
         ],
     )
     assert result.accepted
+
+
+def test_thousands_separator_is_normalized():
+    from app.features.ai.application.claim_grounding import check_generated_answer
+
+    result = check_generated_answer(
+        "The limit is 1000 units.",
+        [{"excerpt": "The limit is 1,000 units."}],
+    )
+    assert result.accepted
+
+
+def test_different_thousands_values_are_rejected():
+    from app.features.ai.application.claim_grounding import check_generated_answer
+
+    result = check_generated_answer(
+        "The limit is 2,000 units.",
+        [{"excerpt": "The limit is 1,000 units."}],
+    )
+    assert not result.accepted
+    assert result.unsupported_numbers == ("2000",)
+
+
+def test_decimal_values_are_not_confused():
+    from app.features.ai.application.claim_grounding import check_generated_answer
+
+    result = check_generated_answer(
+        "The fee is 2.5%.", [{"excerpt": "The fee is 2.0%."}]
+    )
+    assert not result.accepted
+
+
+def test_numeric_claims_with_citations_use_only_referenced_excerpt():
+    from app.features.ai.application.claim_grounding import check_generated_answer
+
+    result = check_generated_answer(
+        "The warranty lasts 2 years [doc: 2].",
+        [
+            {"excerpt": "The warranty lasts 2 years."},
+            {"excerpt": "The warranty lasts 1 year."},
+        ],
+    )
+    assert not result.accepted
