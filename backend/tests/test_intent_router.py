@@ -157,3 +157,34 @@ async def test_low_confidence_llm_intent_requests_clarification(monkeypatch):
     assert result.clarify is True
     plan = apply_routing_to_widget_plan("What is your shipping policy?", [], result)
     assert plan.route == "clarification"
+
+
+@pytest.mark.anyio
+async def test_fallback_preserves_multi_intent_flag(monkeypatch):
+    from app.features.ai.application.intent_routing import service
+
+    monkeypatch.setattr(settings, "ai_intent_router_enabled", True)
+
+    async def failing_router(*_args, **_kwargs):
+        return None, {}, None, "provider_timeout"
+
+    monkeypatch.setattr(service, "invoke_llm_intent_router", failing_router)
+    result = await resolve_customer_routing(
+        "My order is late and I want a refund.", [], channel="widget"
+    )
+    assert result.mode == "deterministic_fallback"
+    assert result.multi_intent is True
+    assert result.failure_code == "provider_timeout"
+
+
+def test_knowledge_question_does_not_gain_sensitive_route_from_llm():
+    from app.features.ai.application.intent_routing.service import CustomerRoutingResolution
+
+    assessment = assess_deterministic_route("What is your shipping policy?", [])
+    decision = RoutingDecision(
+        intents=[IntentDecision(intent=Intent.ORDER, confidence=0.99, requires_knowledge=False, requires_tools=True)],
+        reason_code="unsafe_upgrade",
+    )
+    result = CustomerRoutingResolution(deterministic=assessment, llm=decision)
+    plan = apply_routing_to_widget_plan("What is your shipping policy?", [], result)
+    assert plan.route != "sensitive"
