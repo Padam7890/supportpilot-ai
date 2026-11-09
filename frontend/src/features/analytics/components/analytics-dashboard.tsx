@@ -116,6 +116,21 @@ export function AnalyticsDashboard() {
         <Metric available={Boolean(usage.data)} loading={usage.isPending} title="Document citation coverage" value={usage.data?.document_citation_rate == null ? "No model replies" : `${Math.round(usage.data.document_citation_rate * 100)}%`} detail={usage.data?.document_citation_rate == null ? "No eligible model-generated responses" : `${usage.data.responses_with_document_citations} cited of ${usage.data.model_backed_responses} model-generated responses`} icon={<ShieldCheck size={18}/>} />
       </section>
 
+      <section aria-label="AI monitoring and cost coverage" className="rounded-2xl border border-slate-200 bg-white p-5">
+        <h2 className="text-sm font-semibold text-slate-900">AI cost monitoring</h2>
+        <p className="mt-2 text-sm text-slate-600">
+          Costs are estimates from configured model-specific rates and provider-reported tokens,
+          not provider invoices. Unknown usage or unpriced models cause the total to show as
+          unavailable rather than an incorrect zero. This view excludes untracked embeddings,
+          routing calls, and retries unless those calls are recorded as executions.
+        </p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-3">
+          <div className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-500">Successful executions</p><p className="text-xl font-semibold">{usage.data?.succeeded.toLocaleString() ?? "—"}</p></div>
+          <div className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-500">Failed executions</p><p className="text-xl font-semibold">{usage.data?.failed.toLocaleString() ?? "—"}</p></div>
+          <div className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-500">Execution failure rate</p><p className="text-xl font-semibold">{usage.data?.executions ? `${((usage.data.failed / usage.data.executions) * 100).toFixed(1)}%` : "—"}</p></div>
+        </div>
+      </section>
+
       {usage.data?.input_cost_per_million_usd != null && usage.data.output_cost_per_million_usd != null && (
         <p className="text-xs text-slate-600">
           AI cost estimate uses recorded tokens at ${usage.data.input_cost_per_million_usd} USD per million input tokens

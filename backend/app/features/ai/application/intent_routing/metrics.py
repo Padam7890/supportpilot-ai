@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-from app.core.config import settings
+from app.features.ai.application.generation_metrics import (\n    configured_model_prices, estimated_generation_cost_usd,\n)
 
 logger = logging.getLogger(__name__)
 
@@ -38,12 +38,17 @@ class IntentRouterMetrics:
         }
 
 
-def estimate_router_cost_usd(*, prompt_tokens: int, completion_tokens: int) -> float | None:
-    if settings.ai_input_cost_per_million is None or settings.ai_output_cost_per_million is None:
-        return None
-    prompt_cost = prompt_tokens * settings.ai_input_cost_per_million / 1_000_000
-    completion_cost = completion_tokens * settings.ai_output_cost_per_million / 1_000_000
-    return round(prompt_cost + completion_cost, 6)
+def estimate_router_cost_usd(
+    *, prompt_tokens: int, completion_tokens: int, model_name: str | None = None,
+) -> float | None:
+    """Estimate router calls only for the exact model and known provider usage."""
+    input_price, output_price = configured_model_prices(model_name)
+    estimate = estimated_generation_cost_usd(
+        {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens},
+        input_price_per_million=input_price,
+        output_price_per_million=output_price,
+    )
+    return float(estimate) if estimate is not None else None
 
 
 @dataclass
