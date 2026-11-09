@@ -625,16 +625,34 @@ async def ai_usage(
     prompt_tokens = func.coalesce(func.sum(input_count), 0)
     completion_tokens = func.coalesce(func.sum(output_count), 0)
     missing_usage = (input_count.is_(None) | output_count.is_(None))
-    priced_model = settings.ai_model
-    pricing_configured = (
-        bool(priced_model)
+    # Price only known model identities; unknown usage or prices stay unpriced.
+    price_catalog = {
+        model: rates for model, rates in settings.ai_model_prices.items()
+        if model and isinstance(rates, dict)
+        and isinstance(rates.get("input"), (int, float))
+        and isinstance(rates.get("output"), (int, float))
+        and 0 <= rates["input"] < float("inf")
+        and 0 <= rates["output"] < float("inf")
+    }
+    if (
+        settings.ai_model and settings.ai_model not in price_catalog
         and settings.ai_input_cost_per_million is not None
         and settings.ai_output_cost_per_million is not None
-    )
-    pricing_eligible = (
-        AIExecution.model_name == priced_model
-        if pricing_configured else AIExecution.id.is_(None)
-    )
+    ):
+        price_catalog[settings.ai_model] = {
+            "input": settings.ai_input_cost_per_million,
+            "output": settings.ai_output_cost_per_million,
+        }
+    priced = [
+        (
+            (AIExecution.model_name == model) & ~missing_usage,
+            (input_count * rates["input"] + output_count * rates["output"]) / 1_000_000,
+        )
+        for model, rates in price_catalog.items()
+    ]
+    per_execution_cost = case(*priced, else_=None) if priced else literal(None)
+    priced_cost_sum = func.sum(per_execution_cost)
+    pricing_eligible = per_execution_cost.is_not(None)
     aggregate = await db.execute(
         select(
             func.count(AIExecution.id),
@@ -644,9 +662,10 @@ async def ai_usage(
             completion_tokens,
             func.count(AIExecution.id).filter(missing_usage),
             func.count(AIExecution.id).filter(~pricing_eligible),
+            priced_cost_sum,
         ).where(*predicate)
     )
-    count, succeeded, failed, prompt, completion, incomplete_usage, unpriced_executions = aggregate.one()
+    count, succeeded, failed, prompt, completion, incomplete_usage, unpriced_executions, summed_cost = aggregate.one()
     document_eligible = (
         AIExecution.status == "succeeded",
         AIExecution.kind.in_(("playground", "reply_draft", "widget_reply")),
@@ -691,12 +710,7 @@ async def ai_usage(
         for day in (start + timedelta(days=offset) for offset in range((end - start).days + 1))
     ]
     prompt, completion = int(prompt), int(completion)
-    estimated_cost = None
-    if pricing_configured and not incomplete_usage and not unpriced_executions:
-        estimated_cost = (
-            prompt * settings.ai_input_cost_per_million
-            + completion * settings.ai_output_cost_per_million
-        ) / 1_000_000
+    estimated_cost = float(summed_cost) if not unpriced_executions and summed_cost is not None else None
     execution_duration = func.extract("epoch", AIExecution.completed_at - AIExecution.started_at)
     timed_execution = (
         (AIExecution.status == "succeeded")
@@ -711,6 +725,8 @@ async def ai_usage(
             func.count(AIExecution.id).filter(AIExecution.status == "failed"),
             prompt_tokens,
             completion_tokens,
+            priced_cost_sum,
+            func.count(AIExecution.id).filter(~pricing_eligible),
             func.avg(execution_duration).filter(timed_execution),
             func.percentile_cont(0.95).within_group(execution_duration).filter(timed_execution),
             func.count(AIExecution.id).filter(timed_execution),
@@ -734,17 +750,14 @@ async def ai_usage(
         bot_failed,
         bot_prompt,
         bot_completion,
+        bot_priced_cost,
+        bot_unpriced,
         latency,
         p95_latency,
         timed_count,
     ) in bot_rows.all():
         bot_prompt, bot_completion = int(bot_prompt or 0), int(bot_completion or 0)
-        bot_cost = None
-        if estimated_cost is not None:
-            bot_cost = (
-                bot_prompt * settings.ai_input_cost_per_million
-                + bot_completion * settings.ai_output_cost_per_million
-            ) / 1_000_000
+        bot_cost = float(bot_priced_cost) if not bot_unpriced and bot_priced_cost is not None else None
         bot_usage.append(
             AIBotUsage(
                 bot_id=bot_id,
@@ -781,8 +794,8 @@ async def ai_usage(
         completion_tokens=completion,
         total_tokens=prompt + completion,
         estimated_cost_usd=estimated_cost,
-        input_cost_per_million_usd=settings.ai_input_cost_per_million if estimated_cost is not None else None,
-        output_cost_per_million_usd=settings.ai_output_cost_per_million if estimated_cost is not None else None,
+        input_cost_per_million_usd=None,  # Mixed-model totals have no single rate.
+        output_cost_per_million_usd=None,
         daily=daily,
         bots=bot_usage,
         top_errors=[
