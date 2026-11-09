@@ -77,7 +77,7 @@ async def resolve_customer_routing(
         llm_invoked = True
         metrics.llm_router_invocation_count = 1
         decision, usage, _model, failure = await invoke_llm_intent_router(message, transcript, assessment)
-        if decision is not None and assessment.risk_level == "high" and any(\n            item.requires_tools or item.intent in {Intent.ORDER, Intent.REFUND}\n            for item in decision.intents\n        ) and assessment.intent not in {Intent.ORDER, Intent.REFUND}:\n            # Model-suggested commerce actions cannot upgrade a deterministic\n            # non-commerce request into an actionable order/refund workflow.\n            decision = None\n            failure = "unsafe_llm_commerce_escalation"\n        if decision is not None:\n            resolution.mode = "llm"
+        if decision is not None and not assessment.requires_tools and any(\n            item.requires_tools or item.intent in {Intent.ORDER, Intent.REFUND}\n            for item in decision.intents\n        ) and assessment.intent not in {Intent.ORDER, Intent.REFUND}:\n            # Model-suggested commerce actions cannot upgrade a deterministic\n            # non-commerce request into an actionable order/refund workflow.\n            decision = None\n            failure = "unsafe_llm_commerce_escalation"\n        if decision is not None:\n            resolution.mode = "llm"
             resolution.llm = decision
             resolution.multi_intent = len(decision.intents) > 1
             resolution.clarify = decision.should_clarify or any(\n                item.confidence < 0.65 for item in decision.intents\n            )
