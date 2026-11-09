@@ -155,3 +155,45 @@ async def test_stream_endpoint_requires_conversation_scoped_visitor_token(client
     denied = await client.get(path, headers={"Authorization": f"Bearer {token}"})
     assert denied.status_code == 403
     assert "text/event-stream" not in denied.headers["content-type"]
+
+
+def test_terminal_event_rejects_uncommitted_text():
+    row = SimpleNamespace(id=uuid4(), attempt_count=1)
+    conversation = uuid4()
+    with pytest.raises(ValidationError):
+        ReplyEvent(
+            execution_id=row.id,
+            conversation_id=conversation,
+            sequence=f"{row.id}:1:0-0",
+            event_type="execution.cancelled",
+            timestamp=datetime.now(UTC),
+            payload=StreamPayload(text="Unsafe provisional content"),
+        )
+
+
+def test_completed_event_requires_persisted_message_id():
+    row = SimpleNamespace(id=uuid4(), attempt_count=1)
+    conversation = uuid4()
+    with pytest.raises(ValidationError):
+        ReplyEvent(
+            execution_id=row.id,
+            conversation_id=conversation,
+            sequence=f"{row.id}:1:0-0",
+            event_type="message.completed",
+            timestamp=datetime.now(UTC),
+            payload=StreamPayload(),
+        )
+
+
+def test_delta_event_cannot_contain_terminal_message_id():
+    row = SimpleNamespace(id=uuid4(), attempt_count=1)
+    conversation = uuid4()
+    with pytest.raises(ValidationError):
+        ReplyEvent(
+            execution_id=row.id,
+            conversation_id=conversation,
+            sequence=f"{row.id}:1:1-0",
+            event_type="message.delta",
+            timestamp=datetime.now(UTC),
+            payload=StreamPayload(text="partial", message_id=uuid4()),
+        )
