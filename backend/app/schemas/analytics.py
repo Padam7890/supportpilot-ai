@@ -41,8 +41,6 @@ class AIUsageOut(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
-    missing_usage_executions: int = 0
-    unpriced_executions: int = 0
     estimated_cost_usd: float | None
     input_cost_per_million_usd: float | None = None
     output_cost_per_million_usd: float | None = None
