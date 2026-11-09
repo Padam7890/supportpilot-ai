@@ -116,7 +116,7 @@ _ROMANIZED_NEPALI = frozenset({
 
 def _detect_language(message: str) -> Literal["en", "ne", "mixed"]:
     """Cheap script/lexical signal; not a full language detector."""
-    devanagari = bool(re.search(r"[\\u0900-\\u097f]", message))
+    devanagari = bool(re.search(r"[\u0900-\u097f]", message))
     words = re.findall(r"[a-z]+", message.casefold())
     romanized = any(word in _ROMANIZED_NEPALI for word in words)
     english = any(word not in _ROMANIZED_NEPALI for word in words)
