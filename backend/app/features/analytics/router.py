@@ -953,12 +953,12 @@ async def submit_evaluation(
         select(AIExecution).where(
             AIExecution.organization_id == user.organization_id,
             AIExecution.id == data.execution_id,
-            AIExecution.kind == "reply_draft",
+            AIExecution.kind.in_(("reply_draft", "widget_reply", "playground")),
             AIExecution.status == "succeeded",
         )
     )
     if execution is None:
-        raise HTTPException(status_code=404, detail="Completed reply draft not found")
+        raise HTTPException(status_code=404, detail="Completed AI execution not found")
     evaluation = await db.scalar(
         select(AIEvaluation)
         .where(
