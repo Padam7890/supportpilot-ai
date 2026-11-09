@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from app.features.ai.application.generation_metrics import (
     log_generation_metrics,
+    normalized_token_totals,
     sanitized_token_usage,
 )
 
@@ -37,7 +38,26 @@ def test_metric_log_omits_private_usage_fields(caplog) -> None:
     record = next(record for record in caplog.records if "ai_generation_metrics " in record.message)
     data = json.loads(record.message.split("ai_generation_metrics ", 1)[1])
     assert data["duration_ms"] == 2500
-    assert data["usage"] == {"input_tokens": 15}
+    assert data["usage"] == {"input_tokens": 15, "output_tokens": None, "total_tokens": None}
     assert data["cost_usd"] is None
     assert "secret" not in record.message
     assert "never-log" not in record.message
+
+
+def test_alias_token_counters_are_not_double_counted() -> None:
+    assert normalized_token_totals({
+        "input_tokens": 40, "prompt_tokens": 40,
+        "output_tokens": 10, "completion_tokens": 10,
+    }) == {"input_tokens": 40, "output_tokens": 10, "total_tokens": 50}
+
+
+def test_missing_provider_usage_is_not_guessed() -> None:
+    assert normalized_token_totals(None) == {
+        "input_tokens": None, "output_tokens": None, "total_tokens": None,
+    }
+
+
+def test_reported_total_is_preserved() -> None:
+    assert normalized_token_totals({
+        "input_tokens": 80, "output_tokens": 20, "total_tokens": 105,
+    }) == {"input_tokens": 80, "output_tokens": 20, "total_tokens": 105}
