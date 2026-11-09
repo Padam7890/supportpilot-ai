@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 import time
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -31,6 +32,8 @@ READ_COUNT = 16
 REDIS_START = "0-0"
 STATUS_OFFSET = "0-1"
 TERMINAL_OFFSET = "18446744073709551615-18446744073709551615"
+COMMITTED_CHUNK_SIZE = 96
+COMMITTED_CHUNK_DELAY_SECONDS = 0.035
 
 
 class StreamPayload(BaseModel):
@@ -137,18 +140,45 @@ async def reply_events(
                 frames.append(encode_event(row, conversation_id, "execution.cancelled"))
                 terminal = True
             elif row.status in {"succeeded", "failed"}:
-                message_id = await db.scalar(select(Message.id).where(
+                committed = await db.scalar(select(Message).where(
                     Message.organization_id == widget.organization_id,
                     Message.conversation_id == conversation_id,
                     Message.source_ai_execution_id == row.id,
                     Message.sender_type == "assistant",
                 ))
+                message_id = committed.id if committed is not None else None
                 event_type = (
                     "execution.failed" if row.status == "failed" or row.error_code
                     else "message.completed" if message_id is not None
                     else "execution.cancelled"
                 )
-                frames.append(encode_event(row, conversation_id, event_type, message_id=message_id if event_type != "execution.cancelled" else None))
+                if event_type == "message.completed" and committed is not None:
+                    # Deliver only text already committed after all grounding,
+                    # source-authorization and conversation-state checks.
+                    # This is verified progressive playback, NOT model-token
+                    # streaming: generation latency is unchanged.
+                    source_citations = row.citations or []
+                    if not await citations_remain_authorized(
+                        db, organization_id=widget.organization_id,
+                        ai_agent_id=row.ai_agent_id, citations=source_citations,
+                    ):
+                        frames.append(encode_event(row, conversation_id, "execution.cancelled"))
+                    else:
+                        text = committed.content or ""
+                        chunks = [text[i:i + COMMITTED_CHUNK_SIZE] for i in range(0, len(text), COMMITTED_CHUNK_SIZE)]
+                        prefix = f"{row.id}:{row.attempt_count}:"
+                        previous = after.removeprefix(prefix) if after.startswith(prefix) else REDIS_START
+                        start = 0
+                        if re.fullmatch(r"1-\\d+", previous):
+                            start = min(len(chunks), int(previous.split("-")[1]))
+                        for index in range(start, len(chunks)):
+                            frames.append(encode_event(
+                                row, conversation_id, "message.delta",
+                                f"1-{index + 1}", text=chunks[index],
+                            ))
+                        frames.append(encode_event(row, conversation_id, "message.completed", message_id=message_id))
+                else:
+                    frames.append(encode_event(row, conversation_id, event_type, message_id=message_id if event_type != "execution.cancelled" else None))
                 terminal = True
             elif not await can_release_deltas(db, row, conversation_id):
                 frames.append(encode_event(row, conversation_id, "execution.cancelled"))
@@ -196,6 +226,8 @@ async def reply_events(
             previous_state = state
         for frame in frames:
             yield frame
+            if terminal and "event: message.delta" in frame:
+                await asyncio.sleep(COMMITTED_CHUNK_DELAY_SECONDS)
         if terminal:
             logger.info(
                 "widget_stream_closed execution_id=%s deltas=%d",
