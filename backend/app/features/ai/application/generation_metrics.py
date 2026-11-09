@@ -51,6 +51,18 @@ def normalized_token_totals(usage: Mapping[str, Any] | None) -> dict[str, int | 
     }
 
 
+def configured_model_prices(model_name: str | None) -> tuple[float | None, float | None]:
+    """Resolve exact-model pricing; never silently price a different model."""
+    if not model_name:
+        return None, None
+    entry = settings.ai_model_prices.get(model_name)
+    if entry is not None:
+        return entry.get("input"), entry.get("output")
+    if model_name == settings.ai_model:
+        return settings.ai_input_cost_per_million, settings.ai_output_cost_per_million
+    return None, None
+
+
 def estimated_generation_cost_usd(
     usage: Mapping[str, Any] | None,
     *,
@@ -105,14 +117,8 @@ def log_generation_metrics(
             "cost_usd": None,  # Actual provider bill is not known.
             "estimated_cost_usd": estimated_generation_cost_usd(
                 usage,
-                input_price_per_million=(
-                    settings.ai_input_cost_per_million
-                    if model_name and settings.ai_model == model_name else None
-                ),
-                output_price_per_million=(
-                    settings.ai_output_cost_per_million
-                    if model_name and settings.ai_model == model_name else None
-                ),
+                input_price_per_million=configured_model_prices(model_name)[0],
+                output_price_per_million=configured_model_prices(model_name)[1],
             ),
         }, sort_keys=True),
     )
