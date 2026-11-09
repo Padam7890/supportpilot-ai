@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Literal
 
 from app.features.ai.application.follow_up import PendingQuestion, pending_from_assistant
 from app.features.ai.application.retrieval import build_retrieval_terms, is_contextual_follow_up
@@ -19,6 +20,9 @@ class ConversationUnderstanding:
     multi_intent: bool
     retrieval_query: str
     pending_state: PendingQuestion | None
+    language: Literal["en", "ne", "mixed"] = "en"
+    candidate_intents: tuple[str, ...] = ()
+    needs_clarification: bool = False
 
 
 def understand_conversation_turn(
@@ -69,6 +73,7 @@ def understand_conversation_turn(
         pending = pending_from_assistant(
             prior_turns[-1], agent_id, now or datetime.now(UTC)
         )
+    language = _detect_language(normalized)
     return ConversationUnderstanding(
         message=normalized,
         contextual_follow_up=contextual,
@@ -76,6 +81,9 @@ def understand_conversation_turn(
         multi_intent=multi_intent,
         retrieval_query=" ".join(query_parts)[:2000],
         pending_state=pending,
+        language=language,
+        candidate_intents=tuple(intent.value for intent in recent_intents.candidate_intents),
+        needs_clarification=bool(contextual and not topic_switch and not previous_customer),
     )
 
 
@@ -96,3 +104,22 @@ def _is_short_prepositional_follow_up(message: str) -> bool:
     """Resolve short 'for Kathmandu?' or 'in Pokhara?' questions against the active topic."""
     tokens = message.strip().casefold().rstrip("?.!").split()
     return 2 <= len(tokens) <= 4 and tokens[0] in {"for", "in", "to"}
+
+_ROMANIZED_NEPALI = frozenset({
+    "mero", "malai", "tapai", "tapaiiko", "cha", "chha", "kati",
+    "kasari", "kahile", "kina", "kaha", "kata", "garna", "garnu",
+    "paisa", "saman", "yo", "tyo", "ani", "huncha", "hunchha",
+})
+
+
+def _detect_language(message: str) -> Literal["en", "ne", "mixed"]:
+    """Cheap script/lexical signal; not a full language detector."""
+    devanagari = bool(re.search(r"[\\u0900-\\u097f]", message))
+    words = re.findall(r"[a-z]+", message.casefold())
+    romanized = any(word in _ROMANIZED_NEPALI for word in words)
+    english = any(word not in _ROMANIZED_NEPALI for word in words)
+    if devanagari and english or romanized and english:
+        return "mixed"
+    if devanagari or romanized:
+        return "ne"
+    return "en"
