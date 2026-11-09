@@ -461,13 +461,13 @@ async def search_agent_knowledge(
         normalized_excerpt = excerpt.casefold()
         if settings.ai_retrieval_dedupe and normalized_excerpt in seen_excerpts:
             continue
-        seen_excerpts.add(normalized_excerpt)
         estimated_tokens = max(1, (len(excerpt) + 3) // 4)
         if estimated_tokens > remaining_tokens:
             continue
         if float(candidate["score"]) < settings.ai_retrieval_min_rrf_score:
             continue
         remaining_tokens -= estimated_tokens
+        seen_excerpts.add(normalized_excerpt)
         matches.append(
             KnowledgeMatch(
                 document_id=row.document_id,
