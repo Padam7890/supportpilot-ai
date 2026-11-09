@@ -25,6 +25,21 @@ run_check frontend_widget_syntax node --check "$ROOT/frontend/public/supportpilo
 run_check frontend_lint bash -c 'cd "$1/frontend" && npm run lint' _ "$ROOT"
 run_check frontend_typecheck bash -c 'cd "$1/frontend" && npm run typecheck' _ "$ROOT"
 run_check frontend_tests bash -c 'cd "$1/frontend" && npm test' _ "$ROOT"
+run_check frontend_build bash -c 'cd "$1/frontend" && npm run build' _ "$ROOT"
+run_check frontend_api_types bash -c 'cd "$1/frontend" && npm run api:types:check' _ "$ROOT"
+run_check backend_rag_corpus bash -c 'cd "$1/backend" && python scripts/rag_release_gate.py' _ "$ROOT"
 printf '\nBaseline results (never treat skipped prerequisites as passing):\n'
 cat "$summary"
 printf '\nLogs saved in %s. Review FAIL entries and distinguish missing services/dependencies from code failures.\n' "$OUT"
+
+# A baseline with any failed check must fail the CI step too.
+if grep -q 
+  printf 'Baseline FAILED: inspect individual logs in %s\\n' "$OUT" >&2
+  exit 1
+fi
+printf 'Baseline PASSED: all configured checks completed successfully.\\n'
+\tFAIL(' "$summary"; then
+  printf 'Baseline FAILED: inspect individual logs in %s\\n' "$OUT" >&2
+  exit 1
+fi
+printf 'Baseline PASSED: all configured checks completed successfully.\\n'
