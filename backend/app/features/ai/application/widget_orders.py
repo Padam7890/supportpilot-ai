@@ -134,12 +134,23 @@ async def refund_verification_is_active(
     """Recheck the specific OTP grant that belongs to this refund continuation."""
     async with SessionLocal() as db:
         await set_tenant_context(db, organization_id)
-        return await db.scalar(
-            select(WidgetOrderVerification.id).where(
+        verification = await db.scalar(
+            select(WidgetOrderVerification).where(
                 WidgetOrderVerification.id == verification_id,
                 WidgetOrderVerification.organization_id == organization_id,
                 WidgetOrderVerification.conversation_id == conversation_id,
                 WidgetOrderVerification.status == "verified",
                 WidgetOrderVerification.expires_at > datetime.now(UTC),
             )
-        ) is not None
+        )
+        decision = authorize_order_action(
+            "refund",
+            verified=verification is not None,
+            verification_tenant_matches=(
+                verification is not None and verification.organization_id == organization_id
+            ),
+            verification_conversation_matches=(
+                verification is not None and verification.conversation_id == conversation_id
+            ),
+        )
+        return decision.decision == "request_human_review"
