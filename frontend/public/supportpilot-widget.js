@@ -933,11 +933,15 @@
     const latestSupportMessage = latestMessages.findLast((message) => message.sender_type !== "customer");
     const verificationPaused = latestSupportMessage?.verification_paused === true;
     const verificationRequired = latestPublicMessage?.verification_required === true;
-    const needsOrderVerification = !verificationPaused && (verificationRequired || (
-      verificationRequested && !/refund request/i.test(latestPublicMessage?.content || "")
-    ) || (
-      containsOrderIntent(latestMessages) && (!verifiedOrder || verificationRequested) && !cancellationWasSubmitted(latestMessages)
-    ));
+    // Order words in a customer message are not enough to open the private
+    // verification form. Let the assistant first understand the request and
+    // explicitly ask for verification; otherwise ordinary questions about
+    // ordering, returns, or store policies get interrupted by a generic form.
+    const needsOrderVerification = !verificationPaused && !cancellationWasSubmitted(latestMessages) && (
+      verificationRequired || (
+        verificationRequested && !/refund request/i.test(latestPublicMessage?.content || "")
+      )
+    );
     if (waitingForAssistant && conversationMode === "ai" && config?.ai_enabled && !needsOrderVerification) {
       const latestCustomer = [...latestMessages].reverse().find((item) => item.sender_type === "customer")?.content || "";
       if (/\b(recommend|suggest|phone|smartphone|mobile|laptop|camera|budget|compare|better|only)\b/i.test(latestCustomer) && window.SupportPilotRecommendationUI) {

@@ -140,8 +140,12 @@ def make_chunks(
     overlap_tokens: int | None = None,
 ) -> list[tuple[str, str | None, int | None]]:
     """Return chunk text plus optional section and page metadata."""
-    max_tokens = max_tokens or settings.ai_ingestion_chunk_tokens
-    overlap_tokens = overlap_tokens or settings.ai_ingestion_chunk_overlap_tokens
+    max_tokens = settings.ai_ingestion_chunk_tokens if max_tokens is None else max_tokens
+    overlap_tokens = (
+        settings.ai_ingestion_chunk_overlap_tokens
+        if overlap_tokens is None
+        else overlap_tokens
+    )
     overlap_tokens = min(overlap_tokens, max(0, max_tokens // 4))
     segments = split_blocks(text)
     if not segments:
