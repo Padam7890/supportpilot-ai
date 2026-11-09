@@ -41,15 +41,18 @@ def understand_conversation_turn(
         and prior_turns[-1].get("content", "").strip() == normalized
     ):
         prior_turns = prior_turns[:-1]
+    recent_customer_turns = [
+        item.get("content", "").strip()
+        for item in reversed(prior_turns[-12:])
+        if item.get("sender") in {"customer", "user"}
+        and item.get("content", "").strip()
+    ]
+    # Prefer the latest explicit subject over acknowledgements and pronouns.
     previous_customer = next(
-        (
-            item.get("content", "")
-            for item in reversed(prior_turns)
-            if item.get("sender") in {"customer", "user"} and item.get("content", "").strip()
-        ),
-        "",
+        (turn for turn in recent_customer_turns if _has_explicit_topic(turn)),
+        recent_customer_turns[0] if recent_customer_turns else "",
     )
-    contextual = is_contextual_follow_up(normalized)
+    contextual = is_contextual_follow_up(normalized) or _is_short_prepositional_follow_up(normalized)
     # A follow-up that names its own subject ("what about shipping?") already
     # forms a usable query. Do not blend an earlier, unrelated question into it.
     topic_switch = _has_explicit_topic(normalized)
@@ -88,3 +91,8 @@ _TOPIC_TERMS = re.compile(
 def _has_explicit_topic(message: str) -> bool:
     """Only explicit subject terms sever the active retrieval topic."""
     return bool(_TOPIC_TERMS.search(message)) and bool(build_retrieval_terms(message))
+
+def _is_short_prepositional_follow_up(message: str) -> bool:
+    """Resolve short 'for Kathmandu?' or 'in Pokhara?' questions against the active topic."""
+    tokens = message.strip().casefold().rstrip("?.!").split()
+    return 2 <= len(tokens) <= 4 and tokens[0] in {"for", "in", "to"}
