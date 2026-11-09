@@ -88,3 +88,37 @@ def test_generation_cost_rejects_invalid_price_values() -> None:
             {"input_tokens": 100, "output_tokens": 100},
             input_price_per_million=price, output_price_per_million=0.60,
         ) is None
+
+
+def test_log_does_not_price_an_unmatched_model(caplog) -> None:
+    with (
+        patch("app.features.ai.application.generation_metrics.settings.ai_model", "configured-model"),
+        patch("app.features.ai.application.generation_metrics.settings.ai_input_cost_per_million", 0.15),
+        patch("app.features.ai.application.generation_metrics.settings.ai_output_cost_per_million", 0.60),
+        caplog.at_level(logging.INFO, logger="app.features.ai.application.generation_metrics"),
+    ):
+        log_generation_metrics(
+            execution_id="execution-2", execution_kind="widget_reply",
+            model_name="different-model", started_monotonic=0.0,
+            usage={"input_tokens": 1000, "output_tokens": 500},
+            streamed=False,
+        )
+    record = next(item for item in caplog.records if "ai_generation_metrics " in item.message)
+    assert json.loads(record.message.split("ai_generation_metrics ", 1)[1])["estimated_cost_usd"] is None
+
+
+def test_log_prices_only_the_configured_model(caplog) -> None:
+    with (
+        patch("app.features.ai.application.generation_metrics.settings.ai_model", "configured-model"),
+        patch("app.features.ai.application.generation_metrics.settings.ai_input_cost_per_million", 0.15),
+        patch("app.features.ai.application.generation_metrics.settings.ai_output_cost_per_million", 0.60),
+        caplog.at_level(logging.INFO, logger="app.features.ai.application.generation_metrics"),
+    ):
+        log_generation_metrics(
+            execution_id="execution-3", execution_kind="widget_reply",
+            model_name="configured-model", started_monotonic=0.0,
+            usage={"input_tokens": 1000, "output_tokens": 500},
+            streamed=False,
+        )
+    record = next(item for item in caplog.records if "ai_generation_metrics " in item.message)
+    assert json.loads(record.message.split("ai_generation_metrics ", 1)[1])["estimated_cost_usd"] == "0.00045000"
