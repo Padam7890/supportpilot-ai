@@ -53,17 +53,16 @@ def understand_conversation_turn(
         if item.get("sender") in {"customer", "user"}
         and item.get("content", "").strip()
     ]
-    # Prefer the latest explicit subject over acknowledgements and pronouns.
-    memory = derive_topic_memory(prior_turns)
+    # Explicit cancellation or correction must not inherit the prior topic.\n    # The caller still decides whether a pending commerce action is cancelled.\n    correction = _is_correction(normalized)\n    # Prefer the latest explicit subject over acknowledgements and pronouns.\n    memory = derive_topic_memory(prior_turns)
     previous_customer = memory.topic_anchor or (recent_customer_turns[0] if recent_customer_turns else "")
-    contextual = is_contextual_follow_up(normalized) or _is_short_prepositional_follow_up(normalized)
+    contextual = (is_contextual_follow_up(normalized) or _is_short_prepositional_follow_up(normalized)) and not correction
     # A follow-up that names its own subject ("what about shipping?") already
     # forms a usable query. Do not blend an earlier, unrelated question into it.
-    topic_switch = _has_explicit_topic(normalized)
+    topic_switch = _has_explicit_topic(normalized) or correction
     retrieval_query = resolve_retrieval_query(
         normalized,
-        topic_anchor=previous_customer,
-        active_topic=memory.active_topic,
+        topic_anchor="" if correction else previous_customer,
+        active_topic=None if correction else memory.active_topic,
         contextual=contextual,
         explicit_topic=topic_switch,
     )
@@ -125,3 +124,21 @@ def _detect_language(message: str) -> Literal["en", "ne", "mixed"]:
     if devanagari or romanized:
         return "ne"
     return "en"
+
+
+_CORRECTION_PATTERN = re.compile(
+    r"^(?:no[,! ]+|actually[,! ]*|wait[,! ]*|instead[,! ]*|"
+    r"never\s+mind\b|don't\s+(?:cancel|refund|return|do)\b|"
+    r"do\s+not\s+(?:cancel|refund|return)\b|"
+    r"होइन\b|बरु\b)",
+    re.IGNORECASE,
+)
+
+
+def _is_correction(message: str) -> bool:
+    """A correction is a fresh instruction, not an implicit follow-up.
+
+    This only protects retrieval query rewriting; commerce actions must still
+    validate their own authorization and cancellation transitions.
+    """
+    return bool(_CORRECTION_PATTERN.search(message.strip()))
