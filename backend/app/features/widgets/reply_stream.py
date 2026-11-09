@@ -167,18 +167,12 @@ async def reply_events(
                             Message.conversation_id == conversation_id,
                         ).order_by(Message.created_at.desc(), Message.id.desc()).limit(1)
                     )
-                    if latest_message_id != committed.id:
-                        frames.append(encode_event(row, conversation_id, "execution.cancelled"))
-                        terminal = True
-                        previous_state = state
-                        # Avoid emitting stale assistant content.
-                        continue
                     # Deliver only text already committed after all grounding,
                     # source-authorization and conversation-state checks.
                     # This is verified progressive playback, NOT model-token
                     # streaming: generation latency is unchanged.
                     source_citations = row.citations or []
-                    if not await citations_remain_authorized(
+                    if latest_message_id != committed.id or not await citations_remain_authorized(
                         db, organization_id=widget.organization_id,
                         ai_agent_id=row.ai_agent_id, citations=source_citations,
                     ):
