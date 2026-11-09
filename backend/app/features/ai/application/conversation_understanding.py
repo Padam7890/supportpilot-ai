@@ -8,6 +8,7 @@ from typing import Literal
 
 from app.features.ai.application.follow_up import PendingQuestion, pending_from_assistant
 from app.features.ai.application.conversation_memory import derive_topic_memory
+from app.features.ai.application.query_resolution import resolve_retrieval_query
 from app.features.ai.application.retrieval import build_retrieval_terms, is_contextual_follow_up
 
 
@@ -59,10 +60,12 @@ def understand_conversation_turn(
     # A follow-up that names its own subject ("what about shipping?") already
     # forms a usable query. Do not blend an earlier, unrelated question into it.
     topic_switch = _has_explicit_topic(normalized)
-    query_parts = (
-        [previous_customer[-240:], normalized]
-        if contextual and not topic_switch and previous_customer
-        else [normalized]
+    retrieval_query = resolve_retrieval_query(
+        normalized,
+        topic_anchor=previous_customer,
+        active_topic=memory.active_topic,
+        contextual=contextual,
+        explicit_topic=topic_switch,
     )
     recent_intents = assess_deterministic_route(normalized, [])
     unique_intents = set(recent_intents.candidate_intents)
@@ -78,7 +81,7 @@ def understand_conversation_turn(
         contextual_follow_up=contextual,
         topic_switch=topic_switch,
         multi_intent=multi_intent,
-        retrieval_query=" ".join(query_parts)[:2000],
+        retrieval_query=retrieval_query,
         pending_state=pending,
         language=language,
         candidate_intents=tuple(intent.value for intent in recent_intents.candidate_intents),
@@ -113,7 +116,7 @@ _ROMANIZED_NEPALI = frozenset({
 
 def _detect_language(message: str) -> Literal["en", "ne", "mixed"]:
     """Cheap script/lexical signal; not a full language detector."""
-    devanagari = bool(re.search(r"[\\u0900-\\u097f]", message))
+    devanagari = bool(re.search(r"[\u0900-\u097f]", message))
     words = re.findall(r"[a-z]+", message.casefold())
     romanized = any(word in _ROMANIZED_NEPALI for word in words)
     english = any(word not in _ROMANIZED_NEPALI for word in words)
