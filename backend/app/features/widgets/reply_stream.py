@@ -87,6 +87,18 @@ def encode_event(row: AIExecution, conversation_id: UUID, event_type, offset=Non
     return f"id: {event.sequence}\nevent: {event.event_type}\ndata: {event.model_dump_json(exclude_none=True)}\n\n"
 
 
+def committed_reply_chunks(text: str, after_offset: str) -> list[tuple[str, str]]:
+    """Deterministic, resumable chunks of already persisted assistant text."""
+    chunks = [
+        text[i:i + COMMITTED_CHUNK_SIZE]
+        for i in range(0, len(text), COMMITTED_CHUNK_SIZE)
+    ]
+    start = 0
+    if re.fullmatch(r"1-\\d+", after_offset):
+        start = min(len(chunks), int(after_offset.split("-")[1]))
+    return [(f"1-{index + 1}", chunks[index]) for index in range(start, len(chunks))]
+
+
 async def latest_execution(db, org: UUID, conversation_id: UUID) -> AIExecution | None:
     return await db.scalar(
         select(AIExecution).where(
@@ -164,17 +176,11 @@ async def reply_events(
                     ):
                         frames.append(encode_event(row, conversation_id, "execution.cancelled"))
                     else:
-                        text = committed.content or ""
-                        chunks = [text[i:i + COMMITTED_CHUNK_SIZE] for i in range(0, len(text), COMMITTED_CHUNK_SIZE)]
                         prefix = f"{row.id}:{row.attempt_count}:"
                         previous = after.removeprefix(prefix) if after.startswith(prefix) else REDIS_START
-                        start = 0
-                        if re.fullmatch(r"1-\\d+", previous):
-                            start = min(len(chunks), int(previous.split("-")[1]))
-                        for index in range(start, len(chunks)):
+                        for offset, chunk in committed_reply_chunks(committed.content or "", previous):
                             frames.append(encode_event(
-                                row, conversation_id, "message.delta",
-                                f"1-{index + 1}", text=chunks[index],
+                                row, conversation_id, "message.delta", offset, text=chunk,
                             ))
                         frames.append(encode_event(row, conversation_id, "message.completed", message_id=message_id))
                 else:
