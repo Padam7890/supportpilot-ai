@@ -20,11 +20,13 @@ depends_on = None
 def _tenant_policy(table_name: str) -> None:
     op.execute(sa.text(f"ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY"))
     op.execute(sa.text(f"ALTER TABLE {table_name} FORCE ROW LEVEL SECURITY"))
-    op.execute(sa.text(
-        f"""CREATE POLICY tenant_isolation ON {table_name}
+    op.execute(
+        sa.text(
+            f"""CREATE POLICY tenant_isolation ON {table_name}
         USING (organization_id = NULLIF(current_setting('app.current_tenant', true), '')::uuid)
         WITH CHECK (organization_id = NULLIF(current_setting('app.current_tenant', true), '')::uuid)"""
-    ))
+        )
+    )
 
 
 def upgrade() -> None:
@@ -43,12 +45,20 @@ def upgrade() -> None:
         sa.CheckConstraint("dimensions > 0", name="ck_document_embeddings_dimensions"),
         sa.ForeignKeyConstraint(
             ["organization_id", "document_id", "chunk_index"],
-            ["document_chunks.organization_id", "document_chunks.document_id", "document_chunks.chunk_index"],
+            [
+                "document_chunks.organization_id",
+                "document_chunks.document_id",
+                "document_chunks.chunk_index",
+            ],
             name="fk_document_embeddings_org_chunk",
             ondelete="CASCADE",
         ),
         sa.UniqueConstraint(
-            "organization_id", "document_id", "chunk_index", "embedding_model", "embedding_version",
+            "organization_id",
+            "document_id",
+            "chunk_index",
+            "embedding_model",
+            "embedding_version",
             name="uq_document_embedding_version",
         ),
     )
@@ -71,12 +81,21 @@ def upgrade() -> None:
         sa.Column("status", sa.String(20), server_default="queued", nullable=False),
         sa.Column("attempt_count", sa.Integer(), server_default="0", nullable=False),
         sa.Column("max_attempts", sa.Integer(), server_default="3", nullable=False),
-        sa.Column("next_attempt_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "next_attempt_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("last_error_code", sa.String(80), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
         sa.CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
             name="ck_document_embedding_jobs_status",
@@ -93,7 +112,10 @@ def upgrade() -> None:
             ondelete="CASCADE",
         ),
         sa.UniqueConstraint(
-            "organization_id", "document_id", "embedding_model", "embedding_version",
+            "organization_id",
+            "document_id",
+            "embedding_model",
+            "embedding_version",
             name="uq_document_embedding_job_version",
         ),
     )

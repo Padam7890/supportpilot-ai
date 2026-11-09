@@ -42,7 +42,9 @@ def serialize_agent(
         status=agent.status,
         config_version=agent.config_version,
         is_default=agent.is_default,
-        allowed_tools=agent.allowed_tools,
+        allowed_tools=agent.allowed_tools
+        if agent.allowed_tools is not None
+        else ["recommend_products", "compare_products"],
         knowledge_base_ids=base_ids,
         created_at=agent.created_at,
         updated_at=agent.updated_at,

@@ -13,7 +13,9 @@ from pypdf import PdfReader
 from sqlalchemy import and_, or_, select
 
 from app.db.session import SessionLocal, set_tenant_context
+from app.features.ai.application.document_chunking import make_chunks as structure_aware_chunks
 from app.features.ai.application.embedding_jobs import enqueue_document_embeddings
+from app.features.ai.domain.content_hash import hash_chunk_text, hash_document_text
 from app.models import (
     DocumentChunk,
     DocumentIngestionJob,
@@ -41,11 +43,22 @@ def extract_text(name: str, content: bytes) -> str:
         reader = PdfReader(io.BytesIO(content), strict=True)
         if reader.is_encrypted:
             raise IngestionInputError(ENCRYPTED_PDF)
-        return "\n".join(page.extract_text() or "" for page in reader.pages).strip()
+        parts: list[str] = []
+        for index, page in enumerate(reader.pages, start=1):
+            page_text = (page.extract_text() or "").strip()
+            if page_text:
+                parts.append(f"--- Page {index} ---\n{page_text}")
+        return "\n\n".join(parts).strip()
     return content.decode("utf-8-sig").strip()
 
 
 def make_chunks(text: str, *, size: int = 1200, overlap: int = 180) -> list[str]:
+    """Backward-compatible char chunker for legacy tests."""
+    use_legacy_only = size != 1200 or overlap != 180
+    if not use_legacy_only:
+        segments = structure_aware_chunks(text)
+        if segments:
+            return [content for content, _, _ in segments]
     normalized = " ".join(text.split())
     chunks: list[str] = []
     start = 0
@@ -230,9 +243,11 @@ async def process_job(organization_id: UUID, job_id: UUID, document_id: UUID) ->
             source_content = bytes(source.content)
             await db.rollback()
 
-        chunks = make_chunks(extract_text(document_name, source_content))
-        if not chunks:
+        extracted = extract_text(document_name, source_content)
+        chunk_rows = structure_aware_chunks(extracted)
+        if not chunk_rows:
             raise IngestionInputError(NO_SEARCHABLE_TEXT)
+        content_revision = hash_document_text(extracted)
 
         # Recheck both rows under a stable lock order before publishing chunks.
         # Deletion locks the document first, then cancels jobs and removes source/chunks.
@@ -278,23 +293,28 @@ async def process_job(organization_id: UUID, job_id: UUID, document_id: UUID) ->
                     organization_id=organization_id,
                     document_id=document_id,
                     chunk_index=index,
-                    content=chunk,
+                    content=content,
+                    content_hash=hash_chunk_text(content),
+                    section_label=section,
+                    page_number=page,
                 )
-                for index, chunk in enumerate(chunks)
+                for index, (content, section, page) in enumerate(chunk_rows)
             )
+            document.content_revision = content_revision
             await db.flush()
             await enqueue_document_embeddings(
                 db,
                 organization_id=organization_id,
                 document_id=document_id,
                 correlation_id=correlation_id,
+                expected_content_revision=content_revision,
             )
             document.status = "ready"
             job.status = "succeeded"
             job.completed_at = datetime.now(UTC)
             job.last_error = None
             await db.commit()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - persist every processing failure and retry or dead-letter it
         input_failure = isinstance(exc, (IngestionInputError, UnicodeDecodeError))
         logger.error(
             "Document ingestion failed",
@@ -336,7 +356,8 @@ async def process_job(organization_id: UUID, job_id: UUID, document_id: UUID) ->
             now = datetime.now(UTC)
             job.status = "failed" if terminal else "queued"
             job.last_error = (
-                str(exc) if isinstance(exc, IngestionInputError)
+                str(exc)
+                if isinstance(exc, IngestionInputError)
                 else f"{type(exc).__name__}: processing failed"[:500]
             )
             job.completed_at = now if terminal else None

@@ -13,7 +13,9 @@ from app.api.deps import get_current_user, require_roles
 from app.core.config import settings
 from app.core.observability import current_correlation_id
 from app.db.session import get_db
+from app.features.ai.application.embedding_diagnostics import document_embedding_diagnostics
 from app.features.ai.application.embedding_jobs import enqueue_document_embeddings
+from app.features.ai.domain.content_hash import PENDING_CONTENT_REVISION
 from app.features.ai.infrastructure.embedding_gateway import is_embedding_provider_configured
 from app.models import (
     DocumentChunk,
@@ -30,6 +32,7 @@ from app.schemas.knowledge import (
     DocumentEmbeddingJobOut,
     IngestionJobOut,
     KnowledgeDocumentMove,
+    DocumentEmbeddingDiagnosticsOut,
     KnowledgeDocumentOut,
     KnowledgeDocumentPage,
     KnowledgeSearchPage,
@@ -39,14 +42,20 @@ from app.schemas.knowledge import (
 from app.services.knowledge_base_audit import record_knowledge_base_audit
 from app.workers.domain.ingestion_errors import requires_replacement
 
-router = APIRouter(prefix="/knowledge/documents", tags=["knowledge"], responses=COMMON_ERROR_RESPONSES)
+router = APIRouter(
+    prefix="/knowledge/documents", tags=["knowledge"], responses=COMMON_ERROR_RESPONSES
+)
 INGESTION_HISTORY_LIMIT = 20
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 SOURCE_PREVIEW_MAX_BYTES = 32 * 1024
 ALLOWED_TYPES = {".pdf": "application/pdf", ".txt": "text/plain", ".md": "text/markdown"}
 
 
-@router.post("/embeddings/backfill", response_model=DocumentEmbeddingBackfillOut, status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/embeddings/backfill",
+    response_model=DocumentEmbeddingBackfillOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 async def backfill_document_embeddings(
     limit: int = Query(default=100, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
@@ -56,36 +65,50 @@ async def backfill_document_embeddings(
     if not is_embedding_provider_configured() or not settings.ai_embedding_model:
         raise HTTPException(status_code=503, detail="Embedding provider is not configured")
     existing = DocumentEmbeddingJob
-    documents = list(await db.scalars(
-        select(KnowledgeDocument)
-        .outerjoin(existing, (existing.organization_id == KnowledgeDocument.organization_id)
-                   & (existing.document_id == KnowledgeDocument.id)
-                   & (existing.embedding_model == settings.ai_embedding_model)
-                   & (existing.embedding_version == settings.ai_embedding_version))
-        .where(KnowledgeDocument.organization_id == user.organization_id,
-               KnowledgeDocument.status == "ready", KnowledgeDocument.deleted_at.is_(None),
-               (existing.id.is_(None)) | existing.status.in_(("failed", "cancelled")))
-        .order_by(KnowledgeDocument.created_at, KnowledgeDocument.id)
-        .limit(limit)
-    ))
+    documents = list(
+        await db.scalars(
+            select(KnowledgeDocument)
+            .outerjoin(
+                existing,
+                (existing.organization_id == KnowledgeDocument.organization_id)
+                & (existing.document_id == KnowledgeDocument.id)
+                & (existing.embedding_model == settings.ai_embedding_model)
+                & (existing.embedding_version == settings.ai_embedding_version),
+            )
+            .where(
+                KnowledgeDocument.organization_id == user.organization_id,
+                KnowledgeDocument.status == "ready",
+                KnowledgeDocument.deleted_at.is_(None),
+                (existing.id.is_(None)) | existing.status.in_(("failed", "cancelled")),
+            )
+            .order_by(KnowledgeDocument.created_at, KnowledgeDocument.id)
+            .limit(limit)
+        )
+    )
     job_ids = []
     for document in documents:
         job_id = await enqueue_document_embeddings(
-            db, organization_id=user.organization_id, document_id=document.id,
+            db,
+            organization_id=user.organization_id,
+            document_id=document.id,
             correlation_id=current_correlation_id(),
         )
         if job_id:
             job_ids.append(job_id)
     await db.commit()
     return DocumentEmbeddingBackfillOut(
-        queued_count=len(job_ids), job_ids=job_ids,
+        queued_count=len(job_ids),
+        job_ids=job_ids,
         embedding_model=settings.ai_embedding_model,
         embedding_version=settings.ai_embedding_version,
     )
 
 
-@router.post("/{document_id}/embeddings/reprocess", response_model=DocumentEmbeddingJobOut,
-            status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/{document_id}/embeddings/reprocess",
+    response_model=DocumentEmbeddingJobOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 async def reprocess_document_embeddings(
     document_id: UUID,
     db: AsyncSession = Depends(get_db),
@@ -94,25 +117,31 @@ async def reprocess_document_embeddings(
     """Requeue embeddings for one ready document without reingesting its source."""
     if not is_embedding_provider_configured() or not settings.ai_embedding_model:
         raise HTTPException(status_code=503, detail="Embedding provider is not configured")
-    document = await db.scalar(select(KnowledgeDocument).where(
-        KnowledgeDocument.organization_id == user.organization_id,
-        KnowledgeDocument.id == document_id,
-        KnowledgeDocument.status == "ready",
-        KnowledgeDocument.deleted_at.is_(None),
-    ))
+    document = await db.scalar(
+        select(KnowledgeDocument).where(
+            KnowledgeDocument.organization_id == user.organization_id,
+            KnowledgeDocument.id == document_id,
+            KnowledgeDocument.status == "ready",
+            KnowledgeDocument.deleted_at.is_(None),
+        )
+    )
     if document is None:
         raise HTTPException(status_code=404, detail="Ready knowledge document not found")
     job_id = await enqueue_document_embeddings(
-        db, organization_id=user.organization_id, document_id=document_id,
+        db,
+        organization_id=user.organization_id,
+        document_id=document_id,
         correlation_id=current_correlation_id(),
     )
     if job_id is None:
         raise HTTPException(status_code=503, detail="Embedding job could not be queued")
     await db.commit()
-    job = await db.scalar(select(DocumentEmbeddingJob).where(
-        DocumentEmbeddingJob.organization_id == user.organization_id,
-        DocumentEmbeddingJob.id == job_id,
-    ))
+    job = await db.scalar(
+        select(DocumentEmbeddingJob).where(
+            DocumentEmbeddingJob.organization_id == user.organization_id,
+            DocumentEmbeddingJob.id == job_id,
+        )
+    )
     if job is None:
         raise HTTPException(status_code=500, detail="Embedding job was not persisted")
     return DocumentEmbeddingJobOut.model_validate(job)
@@ -128,11 +157,18 @@ async def document_out(db: AsyncSession, document: KnowledgeDocument) -> Knowled
         .order_by(DocumentIngestionJob.created_at.desc(), DocumentIngestionJob.id.desc())
         .limit(INGESTION_HISTORY_LIMIT)
     )
-    return serialize_document(document, jobs)
+    diagnostics = await document_embedding_diagnostics(
+        db, organization_id=document.organization_id, document_id=document.id
+    )
+    return serialize_document(
+        document, jobs, DocumentEmbeddingDiagnosticsOut.model_validate(diagnostics)
+    )
 
 
 def serialize_document(
-    document: KnowledgeDocument, jobs: Iterable[DocumentIngestionJob]
+    document: KnowledgeDocument,
+    jobs: Iterable[DocumentIngestionJob],
+    embedding: DocumentEmbeddingDiagnosticsOut | None = None,
 ) -> KnowledgeDocumentOut:
     return KnowledgeDocumentOut(
         id=document.id,
@@ -150,6 +186,7 @@ def serialize_document(
             )
             for job in jobs
         ],
+        embedding=embedding,
     )
 
 
@@ -179,7 +216,9 @@ async def upload_document(
     expected_type = ALLOWED_TYPES.get(suffix)
     supplied_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
     if not expected_type or supplied_type != expected_type:
-        raise HTTPException(status_code=415, detail="Upload a PDF, plain text, or Markdown document")
+        raise HTTPException(
+            status_code=415, detail="Upload a PDF, plain text, or Markdown document"
+        )
     content = bytearray()
     async for part in request.stream():
         if len(content) + len(part) > MAX_UPLOAD_BYTES:
@@ -199,6 +238,7 @@ async def upload_document(
         status="queued",
         uploaded_by_user_id=user.id,
         knowledge_base_id=selected_base.id,
+        content_revision=PENDING_CONTENT_REVISION,
     )
     db.add(document)
     await db.flush()
@@ -241,10 +281,12 @@ async def page_ingestion_history(
     ranked = (
         select(
             DocumentIngestionJob.id,
-            func.row_number().over(
+            func.row_number()
+            .over(
                 partition_by=DocumentIngestionJob.document_id,
                 order_by=(DocumentIngestionJob.created_at.desc(), DocumentIngestionJob.id.desc()),
-            ).label("position"),
+            )
+            .label("position"),
         )
         .where(
             DocumentIngestionJob.organization_id == organization_id,
@@ -282,9 +324,9 @@ async def list_documents(
     if knowledge_base_id:
         await _resolve_knowledge_base(db, user.organization_id, knowledge_base_id)
         predicate.append(KnowledgeDocument.knowledge_base_id == knowledge_base_id)
-    total = await db.scalar(
-        select(func.count()).select_from(KnowledgeDocument).where(*predicate)
-    ) or 0
+    total = (
+        await db.scalar(select(func.count()).select_from(KnowledgeDocument).where(*predicate)) or 0
+    )
     documents = await db.scalars(
         select(KnowledgeDocument)
         .where(*predicate)
@@ -293,7 +335,9 @@ async def list_documents(
         .offset(offset)
     )
     page = documents.all()
-    history = await page_ingestion_history(db, user.organization_id, [document.id for document in page])
+    history = await page_ingestion_history(
+        db, user.organization_id, [document.id for document in page]
+    )
     return KnowledgeDocumentPage(
         items=[serialize_document(document, history.get(document.id, ())) for document in page],
         total=total,
@@ -399,7 +443,9 @@ async def preview_document_source(
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found")
     if document.content_type not in {"text/plain", "text/markdown"}:
-        raise HTTPException(status_code=415, detail="Source preview is available for text and Markdown documents")
+        raise HTTPException(
+            status_code=415, detail="Source preview is available for text and Markdown documents"
+        )
 
     preview_bytes = await db.scalar(
         select(
@@ -414,7 +460,9 @@ async def preview_document_source(
         )
     )
     if preview_bytes is None:
-        raise HTTPException(status_code=410, detail="The retained source file is no longer available")
+        raise HTTPException(
+            status_code=410, detail="The retained source file is no longer available"
+        )
     truncated = len(preview_bytes) > SOURCE_PREVIEW_MAX_BYTES
     content = bytes(preview_bytes[:SOURCE_PREVIEW_MAX_BYTES]).decode("utf-8", errors="replace")
     return KnowledgeSourcePreviewOut(
@@ -455,11 +503,15 @@ async def move_document_to_knowledge_base(
     if target is None:
         raise HTTPException(status_code=404, detail="Knowledge base not found")
     if target.status != "active":
-        raise HTTPException(status_code=409, detail="Documents can only be moved into an active knowledge base")
+        raise HTTPException(
+            status_code=409, detail="Documents can only be moved into an active knowledge base"
+        )
     if document.knowledge_base_id == target.id:
         return await document_out(db, document)
     if document.status in ("queued", "processing"):
-        raise HTTPException(status_code=409, detail="Wait for document processing to finish before moving it")
+        raise HTTPException(
+            status_code=409, detail="Wait for document processing to finish before moving it"
+        )
 
     active_job = await db.scalar(
         select(DocumentIngestionJob.id)
@@ -471,7 +523,9 @@ async def move_document_to_knowledge_base(
         .with_for_update()
     )
     if active_job is not None:
-        raise HTTPException(status_code=409, detail="Wait for document processing to finish before moving it")
+        raise HTTPException(
+            status_code=409, detail="Wait for document processing to finish before moving it"
+        )
 
     source_base_id = document.knowledge_base_id
     document.knowledge_base_id = target.id
@@ -500,11 +554,13 @@ async def reprocess_document(
     user: User = Depends(require_roles("owner", "admin")),
 ) -> KnowledgeDocumentOut:
     document = await db.scalar(
-        select(KnowledgeDocument).where(
+        select(KnowledgeDocument)
+        .where(
             KnowledgeDocument.id == document_id,
             KnowledgeDocument.organization_id == user.organization_id,
             KnowledgeDocument.deleted_at.is_(None),
-        ).with_for_update()
+        )
+        .with_for_update()
     )
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -519,10 +575,14 @@ async def reprocess_document(
             .limit(1)
         )
         if requires_replacement(latest_error):
-            raise HTTPException(status_code=409, detail="Upload a corrected file before processing again")
+            raise HTTPException(
+                status_code=409, detail="Upload a corrected file before processing again"
+            )
     source = await db.get(KnowledgeDocumentSource, (user.organization_id, document.id))
     if source is None:
-        raise HTTPException(status_code=409, detail="Source artifact was cleaned up; upload the document again")
+        raise HTTPException(
+            status_code=409, detail="Source artifact was cleaned up; upload the document again"
+        )
     active_job = await db.scalar(
         select(DocumentIngestionJob.id)
         .where(
@@ -533,7 +593,9 @@ async def reprocess_document(
         .with_for_update()
     )
     if active_job is not None:
-        raise HTTPException(status_code=409, detail="Document ingestion is already queued or running")
+        raise HTTPException(
+            status_code=409, detail="Document ingestion is already queued or running"
+        )
     db.add(
         DocumentIngestionJob(
             organization_id=user.organization_id,
@@ -554,7 +616,15 @@ async def reprocess_document(
     return await document_out(db, document)
 
 
-@router.delete("/{document_id}", status_code=204, responses={204: {"description": "Searchable content removed; document metadata and ingestion history retained"}})
+@router.delete(
+    "/{document_id}",
+    status_code=204,
+    responses={
+        204: {
+            "description": "Searchable content removed; document metadata and ingestion history retained"
+        }
+    },
+)
 async def delete_document(
     document_id: UUID,
     db: AsyncSession = Depends(get_db),
@@ -626,5 +696,7 @@ async def _resolve_knowledge_base(
     if base is None:
         raise HTTPException(status_code=404, detail="Knowledge base not found")
     if require_active and base.status != "active":
-        raise HTTPException(status_code=409, detail="Archived knowledge bases are unavailable for this operation")
+        raise HTTPException(
+            status_code=409, detail="Archived knowledge bases are unavailable for this operation"
+        )
     return base

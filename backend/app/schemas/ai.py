@@ -11,15 +11,24 @@ class AIPlaygroundTurn(BaseModel):
 
 
 class AIPlaygroundRequest(BaseModel):
-    question: Annotated[str, StringConstraints(strip_whitespace=True, min_length=4, max_length=2000)]
+    question: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=4, max_length=2000)
+    ]
     ai_agent_id: uuid.UUID | None = None
     conversation_history: list[AIPlaygroundTurn] = Field(default_factory=list, max_length=6)
 
 
 class AIReplyDraftRequest(BaseModel):
     conversation_id: uuid.UUID
-    instructions: Annotated[str | None, StringConstraints(strip_whitespace=True, max_length=500)] = None
-    shopify_order_number: Annotated[str | None, StringConstraints(strip_whitespace=True, min_length=1, max_length=60, pattern=r"^#?[A-Za-z0-9-]+$")] = None
+    instructions: Annotated[
+        str | None, StringConstraints(strip_whitespace=True, max_length=500)
+    ] = None
+    shopify_order_number: Annotated[
+        str | None,
+        StringConstraints(
+            strip_whitespace=True, min_length=1, max_length=60, pattern=r"^#?[A-Za-z0-9-]+$"
+        ),
+    ] = None
 
 
 class AICitation(BaseModel):
@@ -36,7 +45,9 @@ class AICitation(BaseModel):
 
 
 class AIPlaygroundRetrievalPreviewRequest(BaseModel):
-    question: Annotated[str, StringConstraints(strip_whitespace=True, min_length=4, max_length=2000)]
+    question: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=4, max_length=2000)
+    ]
     ai_agent_id: uuid.UUID | None = None
     conversation_history: list[AIPlaygroundTurn] = Field(default_factory=list, max_length=6)
 
@@ -53,6 +64,10 @@ class AIPlaygroundRetrievalPreviewOut(BaseModel):
     retrieval_method: Literal["keyword", "semantic", "hybrid", "none"] = "none"
     retrieval_latency_ms: int = 0
     embedding_status: str = "disabled"
+    embedding_coverage: float | None = None
+    retrieval_outcome: str = "ok"
+    keyword_candidate_count: int = 0
+    semantic_candidate_count: int = 0
     retrieval_terms: list[Annotated[str, StringConstraints(max_length=80)]] = Field(
         default_factory=list,
         max_length=64,

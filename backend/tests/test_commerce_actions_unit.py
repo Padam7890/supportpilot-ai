@@ -3,7 +3,10 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from app.api.routes.commerce_actions import fingerprint, idempotency_hash
+from app.services.commerce_action_identity import (
+    commerce_action_fingerprint as fingerprint,
+    commerce_idempotency_hash as idempotency_hash,
+)
 from app.schemas.commerce_action import CommerceActionCreate
 from app.services.mock_commerce import MockCommerceService
 

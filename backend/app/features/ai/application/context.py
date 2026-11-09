@@ -217,8 +217,11 @@ async def load_execution_context(
                 "result_count": len(search_result.matches),
                 "retrieval_method": search_result.retrieval_method,
                 "latency_ms": search_result.retrieval_latency_ms,
-                "keyword_candidates": sum(match.keyword_rank is not None for match in search_result.matches),
-                "semantic_candidates": sum(match.semantic_rank is not None for match in search_result.matches),
+                "keyword_candidates": search_result.keyword_candidate_count,
+                "semantic_candidates": search_result.semantic_candidate_count,
+                "embedding_status": search_result.embedding_status,
+                "embedding_coverage": search_result.embedding_coverage,
+                "retrieval_outcome": search_result.retrieval_outcome,
             }
         ]
         if integration_context:

@@ -60,11 +60,12 @@ _STOPWORDS = frozenset(
 _INTENT_TERMS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
     (
         (
-            "return", "returns", "refund", "refunded", "exchange", "रिटर्न", "रिफन्ड",
+            "return", "returns", "refund", "refunds", "refunded", "exchange", "रिटर्न", "रिफन्ड",
             "फिर्ता", "phirta", "firta", "firtā", "return garna", "return kasari",
             "refund kasari", "paisa firta",
+            "page says", "you said", "return window", "refund window", "how many days",
         ),
-        ("return", "returns", "refund", "exchange", "policy", "eligible"),
+        ("return", "returns", "refund", "exchange", "policy", "eligible", "days", "window"),
     ),
     (
         (
@@ -75,6 +76,9 @@ _INTENT_TERMS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
             "shipping fee", "shipping fees", "shipping cost", "shipping charge", "delivery fee",
             "delivery fees", "delivery charge", "delivery charges", "ढुवानी शुल्क", "डेलिभरी शुल्क",
             "delivery charge kati", "shipping kati",
+            "how long does it take", "how long will it take", "how long does shipping take",
+            "how long does delivery take", "delivery time", "shipping time",
+            "when will it arrive", "when will my order arrive",
         ),
         (
             "shipping", "shipment", "delivery", "dispatch", "tracking", "courier",

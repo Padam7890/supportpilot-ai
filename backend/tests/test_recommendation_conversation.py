@@ -391,6 +391,7 @@ def test_agent_conversation_contract_contains_only_safe_shopping_context():
         "channel": "shopify_widget",
         "status": "active",
         "ai_mode": "ai",
+        "ai_agent_id": uuid4(),
         "created_at": datetime.now(UTC),
         "updated_at": datetime.now(UTC),
         "shopping_context": context,

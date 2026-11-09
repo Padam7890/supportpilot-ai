@@ -21,6 +21,16 @@ class IngestionJobOut(BaseModel):
     created_at: datetime
 
 
+class DocumentEmbeddingDiagnosticsOut(BaseModel):
+    chunk_count: int
+    embedded_chunk_count: int
+    coverage: float | None = None
+    latest_job_status: str | None = None
+    latest_job_error_code: str | None = None
+    embedding_model: str | None = None
+    embedding_version: str | None = None
+
+
 class KnowledgeDocumentOut(BaseModel):
     id: uuid.UUID
     knowledge_base_id: uuid.UUID
@@ -32,6 +42,7 @@ class KnowledgeDocumentOut(BaseModel):
     updated_at: datetime
     deleted_at: datetime | None = None
     jobs: list[IngestionJobOut]
+    embedding: DocumentEmbeddingDiagnosticsOut | None = None
 
 
 class KnowledgeSourcePreviewOut(BaseModel):

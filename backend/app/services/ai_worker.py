@@ -54,6 +54,7 @@ from app.services.widget_ai import (
     widget_greeting_reply,
     widget_is_cancellation_request,
     widget_missing_knowledge_reply,
+    WIDGET_PROVIDER_UNAVAILABLE_REPLY,
     widget_purchase_reply,
     widget_request_needs_order_verification,
     widget_sensitive_reply,
@@ -391,6 +392,21 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                     model_name=None,
                 )
                 return
+            conversational = playground_conversational_reply(execution.question)
+            if conversational is not None:
+                draft, _intent = conversational
+                await finish_widget_reply(
+                    organization_id,
+                    execution_id,
+                    draft=draft,
+                    reply_status=delivery_status,
+                    safe_summary="A conversational reply was sent without retrieval or a model call.",
+                    citations=[],
+                    outcomes=[{"tool": "widget_conversation_intent", "status": "completed", "result_count": 0}],
+                    usage={},
+                    model_name=None,
+                )
+                return
             greeting = widget_greeting_reply(execution.question)
             if greeting is not None:
                 await finish_widget_reply(
@@ -538,14 +554,23 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 execution_status="succeeded_with_handoff",
                 delivery_status="escalated",
             )
+            draft = (
+                WIDGET_PROVIDER_UNAVAILABLE_REPLY
+                if context
+                else widget_missing_knowledge_reply(execution.question)
+            )
             await finish_widget_reply(
                 organization_id,
                 execution_id,
-                draft=AI_TEMPORARY_FAILURE_REPLY,
+                draft=draft,
                 reply_status="escalated",
-                safe_summary="The AI provider is unavailable. A safe handoff reply was prepared.",
-                citations=[],
-                outcomes=[],
+                safe_summary=(
+                    "Knowledge was retrieved but the chat provider is unavailable."
+                    if context
+                    else "No matching knowledge was found and the chat provider is unavailable."
+                ),
+                citations=citations if context else [],
+                outcomes=outcomes if context else [],
                 usage={},
                 model_name=None,
                 failure_code="provider_not_configured",
@@ -714,10 +739,15 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 await db.commit()
         if widget_fallback_mode is not None:
             try:
+                fallback_draft = (
+                    WIDGET_PROVIDER_UNAVAILABLE_REPLY
+                    if retrieval_match_count and retrieval_match_count > 0
+                    else AI_TEMPORARY_FAILURE_REPLY
+                )
                 await finish_widget_reply(
                     organization_id,
                     execution_id,
-                    draft=AI_TEMPORARY_FAILURE_REPLY,
+                    draft=fallback_draft,
                     reply_status="escalated",
                     safe_summary="AI generation failed after its retry limit. A safe handoff reply was prepared.",
                     citations=[],

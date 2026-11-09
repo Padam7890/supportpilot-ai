@@ -519,6 +519,9 @@ async def test_widget_draft_only_saves_grounded_result_without_sending(client, m
     async with SessionLocal() as db:
         await set_tenant_context(db, organization_id)
         base = await db.scalar(select(KnowledgeBase).where(KnowledgeBase.organization_id == organization_id, KnowledgeBase.is_default.is_(True)))
+        from tests.rag_fixtures import hash_chunk_text, hash_document_text
+
+        delivery_policy = "Our delivery charges are five dollars per order."
         document = KnowledgeDocument(
             organization_id=organization_id,
             name="delivery-policy.txt",
@@ -527,6 +530,7 @@ async def test_widget_draft_only_saves_grounded_result_without_sending(client, m
             status="ready",
             uploaded_by_user_id=user_id,
             knowledge_base_id=base.id,
+            content_revision=hash_document_text(delivery_policy),
         )
         db.add(document)
         await db.flush()
@@ -535,7 +539,8 @@ async def test_widget_draft_only_saves_grounded_result_without_sending(client, m
                 organization_id=organization_id,
                 document_id=document.id,
                 chunk_index=0,
-                content="Our delivery charges are five dollars per order.",
+                content=delivery_policy,
+                content_hash=hash_chunk_text(delivery_policy),
             )
         )
         await db.commit()
@@ -619,6 +624,9 @@ async def test_widget_uses_server_configured_bot_for_conversation_and_execution(
     assert configured.json()["ai_agent_ids"] == [selected_agent_id, second_agent_id]
     async with SessionLocal() as db:
         await set_tenant_context(db, organization_id)
+        from tests.rag_fixtures import hash_chunk_text, hash_document_text
+
+        shipping_faq = "Delivery tracking and parcel courier shipment information."
         document = KnowledgeDocument(
             organization_id=organization_id,
             knowledge_base_id=UUID(shipping_base.json()["id"]),
@@ -627,15 +635,19 @@ async def test_widget_uses_server_configured_bot_for_conversation_and_execution(
             size_bytes=58,
             status="ready",
             uploaded_by_user_id=UUID(auth["user"]["id"]),
+            content_revision=hash_document_text(shipping_faq),
         )
         db.add(document)
         await db.flush()
-        db.add(DocumentChunk(
-            organization_id=organization_id,
-            document_id=document.id,
-            chunk_index=0,
-            content="Delivery tracking and parcel courier shipment information.",
-        ))
+        db.add(
+            DocumentChunk(
+                organization_id=organization_id,
+                document_id=document.id,
+                chunk_index=0,
+                content=shipping_faq,
+                content_hash=hash_chunk_text(shipping_faq),
+            )
+        )
         await db.commit()
 
     other_auth, _other_organization_id, _other_widget = await setup_widget(
@@ -742,6 +754,9 @@ async def test_widget_human_takeover_during_generation_prevents_late_ai_reply(cl
     async with SessionLocal() as db:
         await set_tenant_context(db, organization_id)
         base = await db.scalar(select(KnowledgeBase).where(KnowledgeBase.organization_id == organization_id, KnowledgeBase.is_default.is_(True)))
+        from tests.rag_fixtures import hash_chunk_text, hash_document_text
+
+        returns_copy = "The blue item is made from cotton fabric."
         document = KnowledgeDocument(
             organization_id=organization_id,
             name="returns.txt",
@@ -750,6 +765,7 @@ async def test_widget_human_takeover_during_generation_prevents_late_ai_reply(cl
             status="ready",
             uploaded_by_user_id=UUID(auth["user"]["id"]),
             knowledge_base_id=base.id,
+            content_revision=hash_document_text(returns_copy),
         )
         db.add(document)
         await db.flush()
@@ -758,7 +774,8 @@ async def test_widget_human_takeover_during_generation_prevents_late_ai_reply(cl
                 organization_id=organization_id,
                 document_id=document.id,
                 chunk_index=0,
-            content="The blue item is made from cotton fabric.",
+                content=returns_copy,
+                content_hash=hash_chunk_text(returns_copy),
             )
         )
         await db.commit()

@@ -83,24 +83,30 @@ async def enqueue_execution(
         raise HTTPException(status_code=429, detail="Too many AI requests are already in progress")
     selected_agent = None
     if conversation_id is not None:
-        conversation_agent_id = await db.scalar(select(Conversation.ai_agent_id).where(
-            Conversation.id == conversation_id,
-            Conversation.organization_id == user.organization_id,
-        ))
+        conversation_agent_id = await db.scalar(
+            select(Conversation.ai_agent_id).where(
+                Conversation.id == conversation_id,
+                Conversation.organization_id == user.organization_id,
+            )
+        )
         if conversation_agent_id is None:
             raise HTTPException(status_code=404, detail="Conversation not found")
-        selected_agent = await db.scalar(select(AIAgent).where(
-            AIAgent.id == conversation_agent_id,
-            AIAgent.organization_id == user.organization_id,
-        ))
+        selected_agent = await db.scalar(
+            select(AIAgent).where(
+                AIAgent.id == conversation_agent_id,
+                AIAgent.organization_id == user.organization_id,
+            )
+        )
         if selected_agent is None or selected_agent.status != "active":
             raise HTTPException(status_code=409, detail="The conversation AI agent is inactive")
     if selected_agent is None:
         if ai_agent_id is not None:
-            selected_agent = await db.scalar(select(AIAgent).where(
-                AIAgent.id == ai_agent_id,
-                AIAgent.organization_id == user.organization_id,
-            ))
+            selected_agent = await db.scalar(
+                select(AIAgent).where(
+                    AIAgent.id == ai_agent_id,
+                    AIAgent.organization_id == user.organization_id,
+                )
+            )
             if selected_agent is None:
                 raise HTTPException(status_code=404, detail="AI agent not found")
             if selected_agent.status != "active":
@@ -185,6 +191,10 @@ async def preview_playground_retrieval(
         retrieval_method=result.retrieval_method,
         retrieval_latency_ms=result.retrieval_latency_ms,
         embedding_status=result.embedding_status,
+        embedding_coverage=result.embedding_coverage,
+        retrieval_outcome=result.retrieval_outcome,
+        keyword_candidate_count=result.keyword_candidate_count,
+        semantic_candidate_count=result.semantic_candidate_count,
         retrieval_terms=[term[:80] for term in build_retrieval_terms(search_text)],
         sources=[
             AICitation(
@@ -354,12 +364,12 @@ async def retry_failed_execution(
 ) -> AIExecutionRetryOut:
     """Requeue one safe, terminal AI failure with bounded manual attempts."""
     if not is_provider_configured():
-        raise HTTPException(status_code=503, detail="AI provider is not configured for this workspace")
+        raise HTTPException(
+            status_code=503, detail="AI provider is not configured for this workspace"
+        )
 
     await db.scalar(
-        select(Organization.id)
-        .where(Organization.id == user.organization_id)
-        .with_for_update()
+        select(Organization.id).where(Organization.id == user.organization_id).with_for_update()
     )
     execution = await db.scalar(
         select(AIExecution)
@@ -374,14 +384,19 @@ async def retry_failed_execution(
     if execution.status != "failed":
         raise HTTPException(status_code=409, detail="Only failed AI executions can be retried")
     if execution.manual_retry_count >= MAX_MANUAL_AI_RETRIES:
-        raise HTTPException(status_code=409, detail="This AI execution has reached its manual retry limit")
-
-    active_count = await db.scalar(
-        select(func.count(AIExecution.id)).where(
-            AIExecution.organization_id == user.organization_id,
-            AIExecution.status.in_(["queued", "running"]),
+        raise HTTPException(
+            status_code=409, detail="This AI execution has reached its manual retry limit"
         )
-    ) or 0
+
+    active_count = (
+        await db.scalar(
+            select(func.count(AIExecution.id)).where(
+                AIExecution.organization_id == user.organization_id,
+                AIExecution.status.in_(["queued", "running"]),
+            )
+        )
+        or 0
+    )
     if active_count >= MAX_ACTIVE_EXECUTIONS_PER_TENANT:
         raise HTTPException(status_code=429, detail="Too many AI requests are already in progress")
 
@@ -399,7 +414,10 @@ async def retry_failed_execution(
             or conversation.ai_mode != "ai"
             or conversation.ai_agent_id != execution.ai_agent_id
         ):
-            raise HTTPException(status_code=409, detail="The conversation has been taken over or routed to another AI bot")
+            raise HTTPException(
+                status_code=409,
+                detail="The conversation has been taken over or routed to another AI bot",
+            )
         latest_message_id = await db.scalar(
             select(Message.id)
             .where(
@@ -410,7 +428,10 @@ async def retry_failed_execution(
             .limit(1)
         )
         if latest_message_id != execution.source_message_id:
-            raise HTTPException(status_code=409, detail="A newer conversation message exists; retry the latest customer message instead")
+            raise HTTPException(
+                status_code=409,
+                detail="A newer conversation message exists; retry the latest customer message instead",
+            )
 
     now = datetime.now(UTC)
     execution.status = "queued"

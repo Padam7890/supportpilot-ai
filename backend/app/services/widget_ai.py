@@ -27,6 +27,10 @@ from app.models import (
 
 HANDOFF_MESSAGE = "I’ll pass this to a support teammate so they can help you."
 AI_TEMPORARY_FAILURE_REPLY = "I’m having trouble checking that right now. Please add any details that might help, and a support teammate can follow up here."
+WIDGET_PROVIDER_UNAVAILABLE_REPLY = (
+    "I found helpful articles for your question, but automated drafting is not available right now. "
+    "A support teammate can follow up here with a personalized answer."
+)
 ORDER_VERIFICATION_MESSAGE = (
     "I can check that securely. A verification card is below; enter the order number and checkout email, "
     "and we’ll email a one-time code before sharing tracking details."

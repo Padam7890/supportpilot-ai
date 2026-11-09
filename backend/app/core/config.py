@@ -30,7 +30,11 @@ class Settings(BaseSettings):
     ai_model: str | None = None
     ai_provider_timeout_seconds: int = Field(default=45, ge=5, le=120)
     ai_provider_max_attempts: int = Field(default=2, ge=1, le=3)
-    ai_embedding_model: str | None = None
+    ai_embedding_base_url: str | None = None
+    ai_embedding_api_key: SecretStr | None = Field(default=None, repr=False)
+    ai_embedding_timeout_seconds: int = Field(default=60, ge=5, le=180)
+    ai_embedding_max_attempts: int = Field(default=3, ge=1, le=6)
+    ai_embedding_model: str | None = "text-embedding-3-small"
     ai_embedding_dimensions: int = Field(default=1536, ge=1, le=4096)
     ai_embedding_version: str = "v1"
     ai_embedding_batch_size: int = Field(default=32, ge=1, le=128)
@@ -42,6 +46,10 @@ class Settings(BaseSettings):
     # unthresholded until a corpus-specific threshold has been measured.
     ai_retrieval_similarity_threshold: float | None = Field(default=None, ge=-1, le=1)
     ai_retrieval_token_budget: int = Field(default=4000, ge=256, le=16000)
+    ai_retrieval_min_rrf_score: float = Field(default=0.0, ge=0, le=0.2)
+    ai_retrieval_rerank_enabled: bool = False
+    ai_ingestion_chunk_tokens: int = Field(default=300, ge=64, le=2000)
+    ai_ingestion_chunk_overlap_tokens: int = Field(default=48, ge=0, le=512)
     worker_concurrency: int = Field(default=4, ge=1, le=32)
     worker_job_timeout_seconds: int = Field(default=110, ge=10, le=150)
     ai_input_cost_per_million: float | None = Field(default=None, ge=0)

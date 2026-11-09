@@ -163,6 +163,9 @@ async def test_ai_reply_draft_is_grounded_safe_and_never_sent(client, monkeypatc
                 ),
             ]
         )
+        from tests.rag_fixtures import hash_chunk_text, hash_document_text
+
+        policy = "Unused products may be returned within thirty days with proof of purchase."
         document = KnowledgeDocument(
             organization_id=organization_id,
             name="returns-policy.txt",
@@ -171,6 +174,7 @@ async def test_ai_reply_draft_is_grounded_safe_and_never_sent(client, monkeypatc
             status="ready",
             uploaded_by_user_id=user_id,
             knowledge_base_id=base.id,
+            content_revision=hash_document_text(policy),
         )
         db.add(document)
         await db.flush()
@@ -179,7 +183,8 @@ async def test_ai_reply_draft_is_grounded_safe_and_never_sent(client, monkeypatc
                 organization_id=organization_id,
                 document_id=document.id,
                 chunk_index=0,
-                content="Unused products may be returned within thirty days with proof of purchase.",
+                content=policy,
+                content_hash=hash_chunk_text(policy),
             )
         )
         await db.commit()

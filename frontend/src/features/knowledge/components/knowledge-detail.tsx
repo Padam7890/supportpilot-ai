@@ -56,6 +56,14 @@ export function KnowledgeDetail() {
       {knowledgeBase.isError && <p role="alert" className="mt-2 text-sm text-destructive">Knowledge library details could not be loaded: {knowledgeBase.error instanceof Error ? knowledgeBase.error.message : "Please try again."}</p>}
     </header>
     {isKnowledgeDocumentProcessing(item) && <p role="status" className="rounded-lg border border-primary/20 bg-primary/5 p-4 text-sm">This page updates automatically while the document is queued or processing.</p>}
+    {item.embedding && !item.deleted_at && <Panel>
+      <PanelHeader title="Embedding coverage" description="Search embeddings for this document and model revision."/>
+      <PanelBody className="space-y-2 text-sm text-muted-foreground">
+        <p>{item.embedding.embedded_chunk_count} of {item.embedding.chunk_count} passage{item.embedding.chunk_count === 1 ? "" : "s"} embedded{item.embedding.coverage != null ? ` (${Math.round(item.embedding.coverage * 100)}% coverage)` : ""}.</p>
+        {(item.embedding.embedding_model || item.embedding.embedding_version) && <p>Model: {[item.embedding.embedding_model, item.embedding.embedding_version].filter(Boolean).join(" · ")}</p>}
+        {item.embedding.latest_job_status && <p className="capitalize">Latest embedding job: {item.embedding.latest_job_status}{item.embedding.latest_job_error_code ? ` (${item.embedding.latest_job_error_code})` : ""}</p>}
+      </PanelBody>
+    </Panel>}
     {item.deleted_at && <p role="status" className="rounded-lg border border-warning/30 bg-warning/10 p-4 text-sm">The source file and searchable passages have been removed. This record remains available for ingestion audit history.</p>}
     {!item.deleted_at && ["text/plain", "text/markdown"].includes(item.content_type) && <Panel>
       <PanelHeader title="Original source preview" description="A bounded plain-text preview of the tenant-owned source file. Content is displayed as text and is not interpreted as HTML."/>

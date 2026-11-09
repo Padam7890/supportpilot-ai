@@ -49,6 +49,9 @@ class FakeSession:
     async def get(self, model, message_id):
         return self.loaded_message
 
+    async def execute(self, statement):
+        return None
+
 
 def incoming_message(organization_id, connection_id):
     return IncomingMessage(
