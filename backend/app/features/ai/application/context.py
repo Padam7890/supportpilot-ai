@@ -149,21 +149,30 @@ async def load_execution_context(
                     conversation_context,
                     agent_id=execution.ai_agent_id,
                 )
-                retrieval_text = await resolve_and_record_topic(
-                    db,
-                    organization_id=organization_id,
-                    conversation_id=conversation.id,
-                    agent_id=execution.ai_agent_id,
-                    message=execution.question,
-                    prior_transcript=conversation_context[:-1] if conversation_context
-                    and conversation_context[-1].get("sender") == "customer"
-                    and conversation_context[-1].get("content", "").strip() == execution.question.strip()
-                    else conversation_context,
-                    retrieval_query=understanding.retrieval_query,
-                    explicit_topic=understanding.topic_switch,
+                # A delayed/retried execution must not overwrite a newer topic.
+                latest_customer_id = await db.scalar(
+                    select(Message.id).where(
+                        Message.organization_id == organization_id,
+                        Message.conversation_id == conversation.id,
+                        Message.sender_type == "customer",
+                    ).order_by(Message.created_at.desc(), Message.id.desc()).limit(1)
                 )
-                await db.commit()
-                await set_tenant_context(db, organization_id)
+                if execution.source_message_id == latest_customer_id:
+                    retrieval_text = await resolve_and_record_topic(
+                        db,
+                        organization_id=organization_id,
+                        conversation_id=conversation.id,
+                        agent_id=execution.ai_agent_id,
+                        message=execution.question,
+                        prior_transcript=conversation_context[:-1] if conversation_context
+                        and conversation_context[-1].get("sender") == "customer"
+                        and conversation_context[-1].get("content", "").strip() == execution.question.strip()
+                        else conversation_context,
+                        retrieval_query=understanding.retrieval_query,
+                        explicit_topic=understanding.topic_switch,
+                    )
+                    await db.commit()
+                    await set_tenant_context(db, organization_id)
             else:
                 question = (
                     f"Draft a reply to the latest customer message. Ticket: {ticket.subject if ticket else 'Support request'}. "
