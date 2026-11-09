@@ -164,6 +164,11 @@ async def create_commerce_action(
             raise HTTPException(
                 status_code=422, detail="Only cancellation actions can execute against Shopify"
             )
+        if data.cancel_refund or data.cancel_restock or data.cancel_notify_customer:
+            raise HTTPException(
+                status_code=422,
+                detail="Shopify cancellation side effects are disabled until separately approved",
+            )
         installation = await installation_for(db, user.organization_id)
         try:
             check_cancellation_scope(installation.granted_scopes)
