@@ -1,17 +1,20 @@
 """Small policy helpers for queued, tenant-scoped storefront AI replies."""
 
+import json
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import func, literal_column, select, union_all
+from sqlalchemy import func, literal_column, select, tuple_, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.observability import current_correlation_id
 from app.features.ai.application.conversational_intents import widget_conversational_reply
-from app.features.ai.application.retrieval import build_retrieval_terms
+from app.features.ai.application.follow_up import PENDING_KEY, assess_widget_follow_up
+from app.features.ai.application.retrieval import build_keyword_tsquery, build_retrieval_terms
 from app.features.ai.domain.shopping_state import SHOPPING_CUES
 from app.models import (
     AIAgent,
@@ -271,7 +274,10 @@ async def enqueue_widget_reply(
 ) -> AIExecution | None:
     if not widget.ai_enabled or conversation.ai_mode != "ai":
         return None
-    agent = await resolve_widget_agent(db, widget, message.content, conversation=conversation)
+    decision = await resolve_widget_agent_decision(
+        db, widget, message.content, conversation=conversation, source_message=message,
+    )
+    agent = decision.agent
     if agent is None:
         return None
     conversation.ai_agent_id = agent.id
@@ -333,6 +339,7 @@ async def resolve_widget_agent_decision(
     conversation: Conversation | None = None,
     configured_agent_ids: list[UUID] | None = None,
     primary_agent_id: UUID | None = None,
+    source_message: Message | None = None,
 ) -> WidgetAgentRoutingDecision:
     """Route to the best configured source match and retain an operator-safe reason."""
     if conversation is not None and conversation.ai_agent_override:
@@ -385,6 +392,29 @@ async def resolve_widget_agent_decision(
     if fallback is None:
         return WidgetAgentRoutingDecision(None, "no_active_bot", 0)
 
+    if (
+        conversation is not None and source_message is not None
+        and widget.ai_reply_mode == "auto_reply" and preferred_agent_id in by_id
+    ):
+        previous = await db.scalar(
+            select(Message).where(
+                Message.organization_id == widget.organization_id,
+                Message.conversation_id == conversation.id,
+                Message.sender_type != "internal_note",
+                tuple_(Message.created_at, Message.id) < (source_message.created_at, source_message.id),
+            ).order_by(Message.created_at.desc(), Message.id.desc()).limit(1)
+        )
+        if previous is not None and previous.sender_type == "assistant":
+            turn = {"sender": "assistant", "content": previous.content, "created_at": previous.created_at.isoformat()}
+            if PENDING_KEY in (previous.provider_metadata or {}):
+                turn[PENDING_KEY] = json.dumps(previous.provider_metadata[PENDING_KEY])
+            follow_up, reason = assess_widget_follow_up(
+                message, [turn], agent_id=preferred_agent_id,
+                source_message_id=source_message.id, now=datetime.now(UTC),
+            )
+            if follow_up is not None and reason in {"resolved", "ambiguous"}:
+                return WidgetAgentRoutingDecision(by_id[preferred_agent_id], "pending_follow_up", 0)
+
     if SHOPPING_CUES.search(message):
         required_tool = (
             "compare_products"
@@ -403,7 +433,7 @@ async def resolve_widget_agent_decision(
         return WidgetAgentRoutingDecision(fallback, reason, 0)
 
     simple_config = literal_column("'simple'::regconfig")
-    ts_query = func.to_tsquery(simple_config, " | ".join(terms))
+    ts_query = func.websearch_to_tsquery(simple_config, build_keyword_tsquery(terms))
     content_vector = func.to_tsvector(simple_config, DocumentChunk.content)
     metadata_vector = func.setweight(
         func.to_tsvector(simple_config, KnowledgeDocument.name),

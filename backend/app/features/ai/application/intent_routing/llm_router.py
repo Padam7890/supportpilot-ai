@@ -10,8 +10,15 @@ import time
 from pydantic import ValidationError
 
 from app.core.config import settings
-from app.features.ai.application.intent_routing.schemas import DeterministicRouteAssessment, RoutingDecision
-from app.features.ai.infrastructure.llm_gateway import AIProviderError, generate_completion, is_provider_configured
+from app.features.ai.application.intent_routing.schemas import (
+    DeterministicRouteAssessment,
+    RoutingDecision,
+)
+from app.features.ai.infrastructure.llm_gateway import (
+    AIProviderError,
+    generate_completion,
+    is_provider_configured,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +36,7 @@ def _parse_router_json(content: str) -> dict[str, object]:
     stripped = _JSON_FENCE.sub("", stripped).strip()
     raw = json.loads(stripped)
     if not isinstance(raw, dict):
-        raise ValueError("router output root must be an object")
+        raise TypeError("router output root must be an object")
     return raw
 
 
@@ -38,9 +45,14 @@ def _build_user_prompt(
     transcript: list[dict[str, str]],
     assessment: DeterministicRouteAssessment,
 ) -> str:
+    recent = transcript
+    if recent and recent[-1].get("sender") in {"customer", "user"} and (
+        recent[-1].get("content", "").strip() == message.strip()
+    ):
+        recent = recent[:-1]
     history = [
-        f"{item.get('sender', 'user')}: {str(item.get('content', ''))[:180]}"
-        for item in transcript[-4:]
+        f"{item.get('sender', 'user')}: {str(item.get('content', ''))[:320]}"
+        for item in recent[-6:]
     ]
     candidates = ", ".join(intent.value for intent in assessment.candidate_intents)
     return (

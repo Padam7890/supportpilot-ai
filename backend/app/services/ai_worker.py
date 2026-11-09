@@ -19,9 +19,15 @@ from app.features.ai.application.catalog_search import (
 from app.features.ai.application.context import load_execution_context
 from app.features.ai.application.conversation_orchestration import (
     plan_playground_turn,
+    plan_widget_turn,
     playground_missing_knowledge_reply,
 )
 from app.features.ai.application.conversational_intents import widget_conversational_reply
+from app.features.ai.application.follow_up import (
+    VERIFY_REFUND,
+    assess_widget_follow_up,
+    infer_assistant_question,
+)
 from app.features.ai.application.intent_extraction import extract_intent
 from app.features.ai.application.intent_routing import (
     apply_routing_to_widget_plan,
@@ -32,9 +38,11 @@ from app.features.ai.application.knowledge_inventory import (
     is_knowledge_inventory_question,
     load_knowledge_inventory,
 )
+from app.features.ai.application.retrieval import is_contextual_follow_up
 from app.features.ai.application.retrieval_search import citations_remain_authorized
 from app.features.ai.application.widget_orders import (
     _question_order_number,
+    refund_verification_is_active,
     verified_widget_order_reply,
 )
 from app.features.ai.application.widget_replies import (
@@ -49,14 +57,18 @@ from app.features.ai.domain.failure_codes import (
     safe_ai_failure_code as _safe_ai_failure_code,
 )
 from app.features.ai.domain.ranking import build_recommendation_result
-from app.features.ai.infrastructure.llm_gateway import execution_token_budget
+from app.features.ai.infrastructure.llm_gateway import (
+    AIProviderError,
+    execution_token_budget,
+    provider_configuration_error,
+)
 from app.features.ai.infrastructure.widget_stream import publish_widget_deltas
 from app.models import (
     AIAgent,
     AIExecution,
     RecommendationSettings,
 )
-from app.services.ai_execution import create_grounded_draft, is_provider_configured
+from app.services.ai_execution import create_grounded_draft
 from app.services.widget_ai import (
     AI_TEMPORARY_FAILURE_REPLY,
     VERIFIED_CANCELLATION_REPLY,
@@ -209,6 +221,19 @@ def _can_stream_transcript(transcript: list[dict[str, str]]) -> bool:
     return True
 
 
+def _stream_conversation_context(
+    question: str, transcript: list[dict[str, str]],
+) -> list[dict[str, str]] | None:
+    if _can_stream_transcript(transcript):
+        return transcript
+    if is_contextual_follow_up(question):
+        # A reference can depend on an earlier reply with private order data.
+        return None
+    # Standalone turns already have the current question and authorized sources.
+    # Do not send historical assistant or staff content to a provisional reply.
+    return []
+
+
 async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> None:
     now = datetime.now(UTC)
     started_at = time.monotonic()
@@ -357,21 +382,83 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 row.completed_at = now
                 await db.commit()
             return
+        routed_question = execution.question if execution.kind == "widget_reply" else question
+        follow_up_query = None
         if execution.kind == "widget_reply":
             if await widget_reply_is_stale(organization_id, execution_id):
                 return
             delivery_status = "draft_ready" if execution.delivery_mode == "draft_only" else "sent"
-            routing = await resolve_customer_routing(
-                execution.question, transcript, channel="widget"
-            )
-            intent_router_outcome = routing.tool_outcome()
-            _log_ai_execution_event(
-                "intent_router_resolved",
-                execution_id=str(execution_id),
-                correlation_id=correlation_id,
-                **{k: intent_router_outcome.get(k) for k in ("mode", "primary_intent", "metrics")},
-            )
-            turn = apply_routing_to_widget_plan(execution.question, transcript, routing)
+            follow_up = None
+            if execution.delivery_mode == "auto_reply":
+                follow_up, follow_up_reason = assess_widget_follow_up(
+                    execution.question, transcript, agent_id=execution.ai_agent_id,
+                    source_message_id=getattr(execution, "source_message_id", None), now=now,
+                )
+                _log_ai_execution_event(
+                    "widget_follow_up_routing", execution_id=str(execution_id),
+                    correlation_id=correlation_id, reason=follow_up_reason,
+                    decision=follow_up.decision if follow_up else None,
+                    confidence="deterministic" if follow_up else "deferred",
+                )
+            if follow_up is not None and (follow_up.draft or follow_up.review):
+                draft, next_question, reply_status = follow_up.draft, follow_up.pending, delivery_status
+                review_citations = []
+                safe_summary = "The shopper continued a support workflow."
+                if review := follow_up.review:
+                    failure_stage = "refund_verification"
+                    if (
+                        review.verification_id and review.item_message_id and review.refund_reason
+                        and await refund_verification_is_active(
+                            organization_id, execution.conversation_id, review.verification_id
+                        )
+                    ):
+                        failure_stage = "knowledge_retrieval"
+                        policy = await load_execution_context(
+                            organization_id, execution_id, include_knowledge=True,
+                            follow_up_query=f"refund return eligibility policy {review.refund_reason.replace('_', ' ')}",
+                        )
+                        if policy is None:
+                            return
+                        review_citations = policy[4]
+                        draft = "I’ll send your verified refund request to the store team to check eligibility. No refund has been issued."
+                        reply_status = "escalated"
+                        safe_summary = "The shopper verified their order and requested staff review for refund eligibility."
+                    else:
+                        draft = VERIFY_REFUND
+                        next_question = review.model_copy(update={
+                            "stage": "refund_verification", "expected_answer_type": "otp",
+                            "verification_status": "required", "verification_id": None,
+                        })
+                await finish_widget_reply(
+                    organization_id, execution_id, draft=draft or "",
+                    reply_status=reply_status,
+                    safe_summary=safe_summary,
+                    citations=review_citations,
+                    outcomes=[{
+                        "tool": "widget_follow_up", "status": follow_up.decision,
+                        "result_count": len(review_citations),
+                    }],
+                    usage={}, model_name=None, pending_question=next_question,
+                )
+                return
+            if follow_up is not None and follow_up.routed_question:
+                routed_question = follow_up.routed_question
+                if follow_up.decision == "policy_timing":
+                    follow_up_query = routed_question
+                turn = plan_widget_turn(routed_question, transcript)
+                intent_router_outcome = {"tool": "widget_follow_up", "status": follow_up.decision}
+            else:
+                routing = await resolve_customer_routing(
+                    routed_question, transcript, channel="widget"
+                )
+                intent_router_outcome = routing.tool_outcome()
+                _log_ai_execution_event(
+                    "intent_router_resolved",
+                    execution_id=str(execution_id),
+                    correlation_id=correlation_id,
+                    **{k: intent_router_outcome.get(k) for k in ("mode", "primary_intent", "metrics")},
+                )
+                turn = apply_routing_to_widget_plan(routed_question, transcript, routing)
             router_outcomes = [intent_router_outcome] if intent_router_outcome else []
             if turn.route in {"direct", "purchase", "clarification"}:
                 await finish_widget_reply(
@@ -390,16 +477,16 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 draft = turn.draft or ""
                 reply_status = turn.reply_status
                 safe_summary = turn.safe_summary or ""
-                if widget_is_cancellation_request(execution.question):
+                if widget_is_cancellation_request(routed_question):
                     order_verified, _order_reply = await verified_widget_order_reply(
-                        organization_id, execution.conversation_id, execution.question
+                        organization_id, execution.conversation_id, routed_question
                     )
                     if order_verified:
                         draft = VERIFIED_CANCELLATION_REPLY
                         safe_summary = "A previously verified order cancellation still requires human approval."
-                elif widget_request_needs_order_verification(execution.question):
+                elif widget_request_needs_order_verification(routed_question):
                     order_verified, order_reply = await verified_widget_order_reply(
-                        organization_id, execution.conversation_id, execution.question
+                        organization_id, execution.conversation_id, routed_question
                     )
                     if order_verified:
                         draft = order_reply or (
@@ -424,16 +511,26 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                     model_name=None,
                 )
                 return
-            shopping_outcome = await process_widget_shopping_execution(
-                organization_id, execution_id, question=execution.question
+            shopping_outcome = not follow_up_query and await process_widget_shopping_execution(
+                organization_id, execution_id, question=routed_question
             )
             if shopping_outcome:
+                return
+            if follow_up is not None and follow_up.decision == "product_reference":
+                await finish_widget_reply(
+                    organization_id, execution_id,
+                    draft="What would you like to know about that option? You can also tell me its name.",
+                    reply_status=delivery_status,
+                    safe_summary="The shopper referred to a previously displayed product.",
+                    citations=[], outcomes=router_outcomes, usage={}, model_name=None,
+                )
                 return
             failure_stage = "knowledge_retrieval"
             loaded = await load_execution_context(
                 organization_id,
                 execution_id,
                 include_knowledge=True,
+                **({"follow_up_query": follow_up_query} if follow_up_query else {}),
             )
             if loaded is None:
                 return
@@ -442,6 +539,8 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             )
             if intent_router_outcome:
                 outcomes = [intent_router_outcome, *outcomes]
+            if follow_up_query:
+                question = f"Customer follow-up: {follow_up_query}"
             retrieval_match_count = len(citations)
             _log_ai_execution_event(
                 "ai_knowledge_retrieval_completed",
@@ -538,57 +637,24 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 return
             await finish_no_knowledge_execution(organization_id, execution_id, question=question)
             return
-        if execution.kind == "widget_reply" and not is_provider_configured():
-            _log_ai_execution_event(
-                "ai_execution_failed",
-                execution_id=str(execution_id),
-                correlation_id=correlation_id,
-                execution_kind=execution_kind,
-                ai_agent_id=str(ai_agent_id) if ai_agent_id else None,
-                failure_stage="provider_configuration",
-                error_code="provider_not_configured",
-                provider_http_status=None,
-                attempt_count=attempt_count,
-                elapsed_ms=round((time.monotonic() - started_at) * 1000),
-                retrieval_match_count=retrieval_match_count,
-                execution_status="succeeded_with_handoff",
-                delivery_status="escalated",
-            )
-            draft = (
-                WIDGET_PROVIDER_UNAVAILABLE_REPLY
-                if context
-                else widget_missing_knowledge_reply(execution.question)
-            )
-            await finish_widget_reply(
-                organization_id,
-                execution_id,
-                draft=draft,
-                reply_status="escalated",
-                safe_summary=(
-                    "Knowledge was retrieved but the chat provider is unavailable."
-                    if context
-                    else "No matching knowledge was found and the chat provider is unavailable."
-                ),
-                citations=citations if context else [],
-                outcomes=outcomes if context else [],
-                usage={},
-                model_name=None,
-                failure_code="provider_not_configured",
-            )
-            return
+        if execution.kind == "widget_reply":
+            failure_stage = "provider_configuration"
+            if error := provider_configuration_error():
+                raise error
         failure_stage = "provider_generation"
-        draft_inputs = dict(
-            organization_id=organization_id,
-            execution_id=execution_id,
-            question=question,
-            instructions=execution.instructions,
-            conversation_context=transcript,
-            knowledge_context=context,
-            integration_context=integration_context,
-            auto_reply=(
+        draft_inputs = {
+            "organization_id": organization_id,
+            "execution_id": execution_id,
+            "question": question,
+            "instructions": execution.instructions,
+            "conversation_context": [{"sender": turn["sender"], "content": turn["content"]} for turn in transcript],
+            "knowledge_context": context,
+            "integration_context": integration_context,
+            "auto_reply": (
                 execution.kind == "widget_reply" and execution.delivery_mode == "auto_reply"
             ),
-        )
+        }
+        stream_context = None
         if (
             settings.widget_ai_streaming_enabled
             and execution.kind == "widget_reply"
@@ -596,9 +662,19 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             and execution.conversation_id is not None
             and citations
             and not integration_context
-            and _can_stream_transcript(transcript)
+            and not follow_up_query
         ):
+            stream_context = _stream_conversation_context(execution.question, transcript)
+            _log_ai_execution_event(
+                "ai_widget_stream_decision",
+                execution_id=str(execution_id),
+                correlation_id=correlation_id,
+                decision="streaming" if stream_context is not None else "context_required",
+                historical_context_omitted=stream_context is not None and stream_context != transcript,
+            )
+        if stream_context is not None:
             documents = sorted({str(citation["document_id"]) for citation in citations})
+            draft_inputs["conversation_context"] = [{"sender": turn["sender"], "content": turn["content"]} for turn in stream_context]
             async with publish_widget_deltas(
                 organization_id, execution.conversation_id, execution_id, attempt_count, documents
             ) as publish:
@@ -607,16 +683,18 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             result = await create_grounded_draft(**draft_inputs)
         if execution.kind == "widget_reply":
             failure_stage = "reply_persistence"
+            draft = str(result.get("draft", ""))[:12000]
             await finish_widget_reply(
                 organization_id,
                 execution_id,
-                draft=str(result.get("draft", ""))[:12000],
+                draft=draft,
                 reply_status="draft_ready" if execution.delivery_mode == "draft_only" else "sent",
                 safe_summary=f"Reply grounded in {len(citations)} tenant knowledge source(s).",
                 citations=citations,
                 outcomes=outcomes,
                 usage=result.get("usage", {}) if isinstance(result.get("usage"), dict) else {},
                 model_name=str(result.get("model_name", ""))[:120] or None,
+                pending_question=infer_assistant_question(draft),
             )
             return
         async with SessionLocal() as db:
@@ -696,8 +774,14 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             await db.commit()
     except Exception as exc:  # noqa: BLE001 - record failures safely and keep the worker alive
         failure_code = _safe_ai_failure_code(exc)
+        if failure_stage == "knowledge_retrieval" and failure_code == "ai_execution_failed":
+            failure_code = "knowledge_retrieval_failed"
         status_match = re.fullmatch(r"provider_http_(\d{3})", failure_code)
-        provider_http_status = int(status_match.group(1)) if status_match else None
+        provider_http_status = (
+            exc.http_status if isinstance(exc, AIProviderError) and exc.http_status is not None
+            else int(status_match.group(1)) if status_match else None
+        )
+        provider_reason = exc.provider_reason if isinstance(exc, AIProviderError) else None
         retryable = is_retryable_ai_failure(exc)
         _log_ai_execution_event(
             "ai_execution_failed",
@@ -709,12 +793,14 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             error_code=failure_code,
             error_type=type(exc).__name__,
             provider_http_status=provider_http_status,
+            provider_reason=provider_reason,
             attempt_count=attempt_count,
+            retry_count=max(0, attempt_count - 1),
             elapsed_ms=round((time.monotonic() - started_at) * 1000),
             retrieval_match_count=retrieval_match_count,
             retryable=retryable,
         )
-        widget_fallback_mode: str | None = None
+        widget_needs_fallback = False
         async with SessionLocal() as db:
             await set_tenant_context(db, organization_id)
             row = await db.scalar(
@@ -731,8 +817,24 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 return
             attempt_count = row.attempt_count
             exhausted = not retryable or attempt_count >= row.max_attempts
+            _log_ai_execution_event(
+                "ai_execution_retry_decision",
+                execution_id=str(execution_id),
+                correlation_id=correlation_id,
+                failure_stage=failure_stage,
+                error_code=failure_code,
+                provider_http_status=provider_http_status,
+                provider_reason=provider_reason,
+                attempt_count=attempt_count,
+                retry_count=max(0, attempt_count - 1),
+                max_attempts=row.max_attempts,
+                elapsed_ms=round((time.monotonic() - started_at) * 1000),
+                decision="retry_scheduled" if not exhausted else (
+                    "retry_exhausted" if retryable else "not_retryable"
+                ),
+            )
             if exhausted and row.kind == "widget_reply":
-                widget_fallback_mode = row.delivery_mode
+                widget_needs_fallback = True
                 await db.rollback()
             else:
                 row.status = "failed" if exhausted else "queued"
@@ -753,21 +855,31 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                     )
                 row.completed_at = now if exhausted else None
                 await db.commit()
-        if widget_fallback_mode is not None:
+        if widget_needs_fallback:
             try:
+                provider_failed = (
+                    failure_stage in {"provider_configuration", "provider_generation"}
+                    and isinstance(exc, AIProviderError)
+                )
                 fallback_draft = (
                     WIDGET_PROVIDER_UNAVAILABLE_REPLY
-                    if retrieval_match_count and retrieval_match_count > 0
+                    if provider_failed and retrieval_match_count
                     else AI_TEMPORARY_FAILURE_REPLY
                 )
+                summary = {
+                    "provider_configuration": "Chat provider configuration prevented generation.",
+                    "provider_generation": "AI generation could not complete.",
+                    "knowledge_retrieval": "Knowledge retrieval could not complete.",
+                    "reply_persistence": "The generated reply could not be saved.",
+                }.get(failure_stage, "AI reply processing could not complete.")
                 await finish_widget_reply(
                     organization_id,
                     execution_id,
                     draft=fallback_draft,
                     reply_status="escalated",
-                    safe_summary="AI generation failed after its retry limit. A safe handoff reply was prepared.",
-                    citations=[],
-                    outcomes=[],
+                    safe_summary=summary + " A safe handoff reply was prepared.",
+                    citations=citations if failure_stage == "provider_configuration" else [],
+                    outcomes=outcomes if failure_stage == "provider_configuration" else [],
                     usage={},
                     model_name=None,
                     failure_code=failure_code,

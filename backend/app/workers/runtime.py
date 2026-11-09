@@ -8,6 +8,7 @@ from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from app.core.config import settings
+from app.features.ai.infrastructure.llm_gateway import provider_configuration_error
 from app.workers.application.dispatcher import WorkerDispatcher
 from app.workers.application.heartbeat import WorkerHeartbeat
 
@@ -73,6 +74,15 @@ async def run_worker(
     if worker_count < 1 or worker_count > 32:
         raise ValueError("worker concurrency must be between 1 and 32")
     logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
+    provider_error = provider_configuration_error()
+    logger.info(
+        "worker_ai_provider_configuration configured=%s error_code=%s timeout_seconds=%d max_attempts=%d streaming=%s",
+        provider_error is None,
+        provider_error.code if provider_error else None,
+        settings.ai_provider_timeout_seconds,
+        settings.ai_provider_max_attempts,
+        settings.widget_ai_streaming_enabled,
+    )
     stop = stop_event or asyncio.Event()
     loop = asyncio.get_running_loop()
     installed_signals: list[signal.Signals] = []

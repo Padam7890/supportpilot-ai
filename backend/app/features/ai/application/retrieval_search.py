@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.features.ai.application.retrieval import (
+    build_keyword_tsquery,
     build_retrieval_terms,
     should_skip_semantic_retrieval,
 )
@@ -272,7 +273,7 @@ async def search_agent_knowledge(
     keyword_rows = []
     if terms:
         simple_config = literal_column("'simple'::regconfig")
-        ts_query = func.to_tsquery(simple_config, " | ".join(terms))
+        ts_query = func.websearch_to_tsquery(simple_config, build_keyword_tsquery(terms))
         content_vector = func.to_tsvector(simple_config, DocumentChunk.content)
         document_vector = func.to_tsvector(simple_config, KnowledgeDocument.name)
         base_vector = func.to_tsvector(simple_config, KnowledgeBase.name)

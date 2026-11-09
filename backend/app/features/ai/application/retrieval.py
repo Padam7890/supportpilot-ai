@@ -3,7 +3,6 @@
 import re
 import unicodedata
 
-
 _CONTEXT_REFERENCE_WORDS = frozenset(
     {
         "it", "that", "this", "they", "them", "those", "one", "same", "another",
@@ -176,12 +175,17 @@ def build_retrieval_terms(text: str, *, limit: int = 64) -> list[str]:
         if len(token) > 1 and token not in _STOPWORDS
     ]
     expanded = list(tokens)
-    token_set = set(tokens)
+    set(tokens)
     intent_token_set = set(intent_tokens)
     for triggers, synonyms in _INTENT_TERMS:
         if any(_matches_trigger(intent_token_set, intent_tokens, trigger) for trigger in triggers):
             expanded.extend(synonyms)
     return list(dict.fromkeys(expanded))[:limit]
+
+
+def build_keyword_tsquery(terms: list[str]) -> str:
+    """Join normalized terms and phrase synonyms for websearch_to_tsquery."""
+    return " OR ".join(f'"{term}"' for term in terms)
 
 
 def should_skip_semantic_retrieval(text: str) -> bool:
@@ -195,9 +199,7 @@ def should_skip_semantic_retrieval(text: str) -> bool:
     )
     if greeting:
         return True
-    if len(normalized) <= 48 and is_contextual_follow_up(text) and not build_retrieval_terms(text):
-        return True
-    return False
+    return bool(len(normalized) <= 48 and is_contextual_follow_up(text) and not build_retrieval_terms(text))
 
 
 def _matches_trigger(token_set: set[str], tokens: tuple[str, ...], trigger: str) -> bool:

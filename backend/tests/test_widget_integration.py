@@ -1275,3 +1275,153 @@ def _installation():
 
 async def _token():
     return "mock-token"
+
+
+@pytest.mark.anyio
+async def test_reply_stream_rechecks_handoff_before_releasing_more_deltas(client, monkeypatch):
+    from contextlib import aclosing
+    from types import SimpleNamespace
+
+    from starlette.requests import Request
+
+    from app.features.widgets.reply_stream import reply_events
+
+    monkeypatch.setattr(settings, "widget_ai_streaming_enabled", True)
+    origin = "https://store-stream.example"
+    _, organization_id, public_id = await setup_widget(
+        client, "widget-stream", origin, ai_enabled=True, ai_reply_mode="auto_reply"
+    )
+    started = await client.post(
+        f"/api/v1/widget/{public_id}/messages",
+        headers={"Origin": origin, "Idempotency-Key": f"stream-{uuid4().hex}"},
+        json={"content": "What is your shipping policy?"},
+    )
+    assert started.status_code == 201, started.text
+    conversation_id = UUID(started.json()["conversation_id"])
+    execution_id = await claim_ai_execution(organization_id)
+    assert execution_id is not None
+
+    class DeltaStore:
+        async def xrange(self, key, *, min, count):
+            assert str(organization_id) in key and str(conversation_id) in key
+            return [("123-0", {"text": "Shipping ", "documents": str(uuid4())})]
+
+    async def authorized_sources(*_args, **_kwargs):
+        return True
+
+    monkeypatch.setattr(
+        "app.features.widgets.reply_stream.citations_remain_authorized", authorized_sources
+    )
+    async def receive():
+        await asyncio.Event().wait()
+
+    request = Request({
+        "type": "http",
+        "headers": [(b"origin", origin.encode())],
+        "app": SimpleNamespace(state=SimpleNamespace(redis=DeltaStore())),
+    }, receive)
+    authorization = f"Bearer {started.json()['visitor_token']}"
+    async with aclosing(reply_events(request, conversation_id, authorization, execution_id, "")) as events:
+        assert "event: execution.started" in await anext(events)
+        assert "event: message.delta" in await anext(events)
+        async with SessionLocal() as db:
+            await set_tenant_context(db, organization_id)
+            conversation = await db.get(Conversation, conversation_id)
+            assert conversation is not None
+            conversation.ai_mode = "human"
+            await db.commit()
+        assert "event: conversation.handoff" in await anext(events)
+        with pytest.raises(StopAsyncIteration):
+            await anext(events)
+
+
+@pytest.mark.anyio
+async def test_widget_refund_follow_up_persists_through_otp_and_hands_off(client, monkeypatch):
+    origin = "https://store-refund-otp.example"
+    _, organization_id, public_id = await setup_widget(
+        client, "widget-refund-otp", origin, ai_enabled=True, ai_reply_mode="auto_reply",
+    )
+    captured = {}
+
+    async def send_code(_email, code):
+        captured["code"] = code
+
+    async def installation_for(_db, _organization_id):
+        return _installation()
+
+    async def find_order(**_kwargs):
+        return {
+            "id": "gid://shopify/Order/1001",
+            "name": "#1001",
+            "createdAt": "2026-10-30T12:00:00Z",
+            "currentTotalPriceSet": {"shopMoney": {"amount": "25.00", "currencyCode": "USD"}},
+        }
+
+    for name, replacement in {
+        "smtp_is_configured": lambda: True,
+        "encrypt_credential": lambda value: value,
+        "decrypt_credential": lambda value: value,
+        "installation_for": installation_for,
+        "valid_access_token": lambda _db, _installation: _token(),
+        "lookup_authorized_order": find_order,
+        "send_order_verification_code": send_code,
+    }.items():
+        monkeypatch.setattr(f"app.features.widgets.order_actions.{name}", replacement)
+
+    async def work():
+        execution_id = await claim_ai_execution(organization_id)
+        assert execution_id is not None
+        await process_ai_execution(organization_id, execution_id)
+        return execution_id
+
+    started = await client.post(
+        f"/api/v1/widget/{public_id}/messages",
+        headers={"Origin": origin, "Idempotency-Key": f"refund-{uuid4().hex}"},
+        json={"content": "I want a refund."},
+    )
+    assert started.status_code == 201, started.text
+    conversation_url = f"/api/v1/widget/conversations/{started.json()['conversation_id']}"
+    headers = {"Origin": origin, "Authorization": f"Bearer {started.json()['visitor_token']}"}
+
+    async def history():
+        response = await client.get(conversation_url, headers=headers)
+        assert response.status_code == 200, response.text
+        return response.json()["messages"]
+
+    async def send(content):
+        response = await client.post(
+            f"{conversation_url}/messages",
+            headers={**headers, "Idempotency-Key": f"refund-{uuid4().hex}"},
+            json={"content": content},
+        )
+        assert response.status_code == 200, response.text
+        return await work()
+
+    await work()
+    assert "Was the item damaged" in (await history())[-1]["content"]
+    await send("damaged")
+    assert "Which item was it?" in (await history())[-1]["content"]
+    await send("Two blue mugs")
+    assert (await history())[-1]["verification_required"] is True
+    await send("yes")
+    assert (await history())[-1]["verification_required"] is True
+
+    requested = await client.post(
+        f"{conversation_url}/order-verification",
+        headers=headers,
+        json={"order_number": "#1001", "email": "shopper@example.com", "consent": True},
+    )
+    assert requested.status_code == 202, requested.text
+    verified = await client.post(
+        f"{conversation_url}/order-verification/confirm",
+        headers=headers,
+        json={"code": captured["code"]},
+    )
+    assert verified.status_code == 200, verified.text
+    assert "send this refund request" in (await history())[-1]["content"]
+    execution_id = await send("yes")
+    assert "No refund has been issued" in (await history())[-1]["content"]
+    async with SessionLocal() as db:
+        await set_tenant_context(db, organization_id)
+        execution = await db.get(AIExecution, execution_id)
+        assert execution is not None and execution.reply_status == "escalated"

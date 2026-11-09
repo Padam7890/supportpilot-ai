@@ -6,7 +6,7 @@ import logging
 import math
 import time
 from collections.abc import AsyncIterator
-from contextlib import contextmanager
+from contextlib import AsyncExitStack, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from urllib.parse import urlsplit
@@ -54,9 +54,14 @@ _current_execution_budget: ContextVar[_ExecutionTokenBudget | None] = ContextVar
 class AIProviderError(RuntimeError):
     """Provider failure carrying a safe, stable diagnostic code."""
 
-    def __init__(self, code: str, message: str):
+    def __init__(
+        self, code: str, message: str, *, http_status: int | None = None,
+        provider_reason: str | None = None,
+    ):
         super().__init__(message)
         self.code = code
+        self.http_status = http_status
+        self.provider_reason = provider_reason
 
 
 @contextmanager
@@ -82,8 +87,64 @@ class _CompletionContent(BaseModel):
         return normalized
 
 
+def provider_configuration_error() -> AIProviderError | None:
+    """Validate local settings without making a provider call."""
+    base_url = (settings.ai_provider_base_url or "").strip().rstrip("/")
+    if not base_url or not (settings.ai_model or "").strip():
+        return AIProviderError("provider_not_configured", "AI provider URL or model is missing")
+    try:
+        url = urlsplit(base_url)
+        host = url.hostname
+        port = url.port
+    except ValueError:
+        return AIProviderError("provider_url_invalid", "AI provider URL is invalid")
+    local_http = url.scheme == "http" and host in {"localhost", "127.0.0.1", "::1"}
+    if (
+        (url.scheme != "https" and not local_http)
+        or not host or url.username is not None or url.password is not None
+        or url.query or url.fragment or port == 0
+        or url.path.endswith("/chat/completions")
+    ):
+        return AIProviderError("provider_url_invalid", "AI provider must use a valid base URL")
+    if host == "api.openai.com" and not _provider_key():
+        return AIProviderError("provider_key_missing", "OpenAI API key is missing")
+    return None
+
+
+def _provider_key() -> str:
+    key = settings.ai_provider_api_key
+    return key.get_secret_value().strip() if key else ""
+
+
 def is_provider_configured() -> bool:
-    return bool(settings.ai_provider_base_url and settings.ai_model)
+    """Indicate local readiness. Provider authentication is checked by the request."""
+    return provider_configuration_error() is None
+
+
+_SAFE_PROVIDER_REASONS = {
+    "invalid_api_key", "expired_secret_key", "ip_not_authorized", "insufficient_quota", "rate_limit_exceeded",
+    "model_not_found", "credit_balance_exhausted", "organization_spend_limit_exceeded",
+    "project_spend_limit_exceeded", "organization_usage_limit_exceeded",
+}
+
+
+def provider_http_error(status: int, body: bytes) -> AIProviderError:
+    """Keep only recognized reason codes from untrusted provider errors."""
+    reason = None
+    if len(body) <= 16_384:
+        try:
+            data = json.loads(body)
+        except (ValueError, UnicodeError):
+            data = None
+        error = data.get("error") if isinstance(data, dict) else None
+        if isinstance(error, dict):
+            code = error.get("code")
+            if isinstance(code, str) and code in _SAFE_PROVIDER_REASONS:
+                reason = code
+    return AIProviderError(
+        f"provider_http_{status}", f"AI provider returned HTTP {status}",
+        http_status=status, provider_reason=reason,
+    )
 
 
 def _safe_usage(raw_usage: object) -> dict[str, int]:
@@ -114,30 +175,12 @@ def _prepare_request(messages: list[dict[str, str]], max_tokens: int) -> tuple[s
     if budget is not None:
         budget.reserve(messages, max_tokens)
 
-    base_url = (settings.ai_provider_base_url or "").rstrip("/")
-    if not base_url or not settings.ai_model:
-        raise AIProviderError("provider_not_configured", "AI provider is not configured")
-    parsed_url = urlsplit(base_url)
-    local_http_host = parsed_url.scheme == "http" and parsed_url.hostname in {
-        "localhost",
-        "127.0.0.1",
-        "::1",
-    }
-    if (
-        (parsed_url.scheme != "https" and not local_http_host)
-        or not parsed_url.hostname
-        or parsed_url.username
-        or parsed_url.password
-        or parsed_url.query
-        or parsed_url.fragment
-    ):
-        raise AIProviderError(
-            "provider_url_invalid",
-            "AI provider URL must use HTTPS outside local development",
-        )
+    if error := provider_configuration_error():
+        raise error
+    base_url = (settings.ai_provider_base_url or "").strip().rstrip("/")
     headers = {"content-type": "application/json"}
-    if settings.ai_provider_api_key:
-        headers["authorization"] = f"Bearer {settings.ai_provider_api_key.get_secret_value()}"
+    if key := _provider_key():
+        headers["authorization"] = f"Bearer {key}"
     return f"{base_url}/chat/completions", headers
 
 
@@ -155,7 +198,7 @@ async def generate_completion(
                 url,
                 headers=headers,
                 json={
-                    "model": settings.ai_model,
+                    "model": (settings.ai_model or "").strip(),
                     "messages": messages,
                     "max_completion_tokens": max_tokens,
                 },
@@ -182,10 +225,7 @@ async def generate_completion(
             response.status_code,
             elapsed_ms,
         )
-        raise AIProviderError(
-            f"provider_http_{response.status_code}",
-            f"AI provider returned HTTP {response.status_code}",
-        )
+        raise provider_http_error(response.status_code, getattr(response, "content", b""))
     try:
         body = response.json()
         if not isinstance(body, dict):
@@ -239,63 +279,75 @@ async def stream_completion(
     characters = 0
     finished = False
     try:
-        async with asyncio.timeout(settings.ai_provider_timeout_seconds):
-            async with httpx.AsyncClient(timeout=settings.ai_provider_timeout_seconds) as client:
-                async with client.stream(
-                    "POST", url, headers=headers, json={
-                        "model": settings.ai_model, "messages": messages,
-                        "max_completion_tokens": max_tokens, "stream": True,
-                        "stream_options": {"include_usage": True},
-                    },
-                ) as response:
-                    if not response.is_success:
-                        raise AIProviderError(
-                            f"provider_http_{response.status_code}", "AI streaming request failed"
-                        )
-                    buffer = b""
-                    received = 0
-                    async for chunk in response.aiter_bytes(chunk_size=None):
-                        received += len(chunk)
-                        if received > 2_000_000:
-                            raise ValueError("stream exceeds wire limit")
-                        buffer += chunk
-                        while b"\n" in buffer:
-                            raw, buffer = buffer.split(b"\n", 1)
-                            if not raw.startswith(b"data:"):
-                                continue
-                            data = raw[5:].strip()
-                            if data == b"[DONE]":
-                                if not finished or not characters:
-                                    raise ValueError("stream has no completed answer")
-                                yield CompletionEnd(usage, settings.ai_model)
-                                return
-                            event = json.loads(data)
-                            if not isinstance(event, dict) or "error" in event:
-                                raise ValueError("invalid stream event")
-                            if event.get("usage") is not None:
-                                usage = _safe_usage(event["usage"])
-                            choices = event.get("choices", [])
-                            if not isinstance(choices, list) or len(choices) > 1:
-                                raise ValueError("invalid stream choices")
-                            if not choices:
-                                continue
-                            choice = choices[0]
-                            if not isinstance(choice, dict) or not isinstance(choice.get("delta"), dict):
-                                raise ValueError("invalid stream delta")
-                            delta = choice["delta"].get("content")
-                            if delta is not None and (not isinstance(delta, str) or "\x00" in delta):
-                                raise ValueError("invalid stream content")
-                            reason = choice.get("finish_reason")
-                            if reason not in {None, "stop", "length"}:
-                                raise ValueError("provider blocked or interrupted completion")
-                            if delta:
-                                characters += len(delta)
-                                if characters > 12_000 or finished:
-                                    raise ValueError("invalid stream output length")
-                                yield CompletionDelta(delta)
-                            finished = finished or reason in {"stop", "length"}
-                        if len(buffer) > 64_000:
-                            raise ValueError("stream line exceeds limit")
+        started = time.monotonic()
+        async with asyncio.timeout(settings.ai_provider_timeout_seconds), AsyncExitStack() as stack:
+            client = await stack.enter_async_context(
+                httpx.AsyncClient(timeout=settings.ai_provider_timeout_seconds)
+            )
+            response = await stack.enter_async_context(client.stream(
+                "POST", url, headers=headers, json={
+                    "model": (settings.ai_model or "").strip(), "messages": messages,
+                    "max_completion_tokens": max_tokens, "stream": True,
+                    "stream_options": {"include_usage": True},
+                },
+            ))
+            if not response.is_success:
+                error_body = bytearray()
+                async for chunk in response.aiter_bytes():
+                    error_body.extend(chunk[: 16_385 - len(error_body)])
+                    if len(error_body) > 16_384:
+                        break
+                raise provider_http_error(response.status_code, bytes(error_body))
+            buffer = b""
+            received = 0
+            async for chunk in response.aiter_bytes(chunk_size=None):
+                received += len(chunk)
+                if received > 2_000_000:
+                    raise ValueError("stream exceeds wire limit")
+                buffer += chunk
+                while b"\n" in buffer:
+                    raw, buffer = buffer.split(b"\n", 1)
+                    if not raw.startswith(b"data:"):
+                        continue
+                    if len(raw) > 64_000:
+                        raise ValueError("stream line exceeds limit")
+                    data = raw[5:].strip()
+                    if data == b"[DONE]":
+                        if not finished or not characters:
+                            raise ValueError("stream has no completed answer")
+                        logger.info("ai_stream_completed elapsed_ms=%d usage=%s", round((time.monotonic() - started) * 1000), usage)
+                        yield CompletionEnd(usage, settings.ai_model)
+                        return
+                    event = json.loads(data)
+                    if not isinstance(event, dict) or "error" in event:
+                        raise ValueError("invalid stream event")
+                    if event.get("usage") is not None:
+                        usage = _safe_usage(event["usage"])
+                    choices = event.get("choices", [])
+                    if not isinstance(choices, list) or len(choices) > 1:
+                        raise ValueError("invalid stream choices")
+                    if not choices:
+                        continue
+                    choice = choices[0]
+                    if not isinstance(choice, dict) or not isinstance(choice.get("delta"), dict):
+                        raise TypeError("invalid stream delta")
+                    delta = choice["delta"].get("content")
+                    if delta is not None and (not isinstance(delta, str) or "\x00" in delta):
+                        raise ValueError("invalid stream content")
+                    reason = choice.get("finish_reason")
+                    if reason not in {None, "stop", "length"}:
+                        raise ValueError("provider blocked or interrupted completion")
+                    if delta:
+                        delta.encode("utf-8")
+                        if not characters:
+                            logger.info("ai_stream_first_delta elapsed_ms=%d", round((time.monotonic() - started) * 1000))
+                        characters += len(delta)
+                        if characters > 12_000 or finished:
+                            raise ValueError("invalid stream output length")
+                        yield CompletionDelta(delta)
+                    finished = finished or reason in {"stop", "length"}
+                if len(buffer) > 64_000:
+                    raise ValueError("stream line exceeds limit")
     except (httpx.TimeoutException, TimeoutError) as exc:
         raise AIProviderError("provider_timeout", "AI stream timed out") from exc
     except httpx.RequestError as exc:

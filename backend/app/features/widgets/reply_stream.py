@@ -1,6 +1,7 @@
 """Visitor-authorized SSE for provisional storefront AI replies."""
 
 import asyncio
+import logging
 import time
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -21,8 +22,12 @@ from app.features.widgets.shared import require_visitor_conversation
 from app.models import AIExecution, Message
 
 router = APIRouter(prefix="/widget", tags=["Public storefront chat"])
+logger = logging.getLogger(__name__)
 STREAM_WINDOW_SECONDS = 40
+RUNNING_POLL_SECONDS = 0.2
 REDIS_START = "0-0"
+STATUS_OFFSET = "0-1"
+TERMINAL_OFFSET = "18446744073709551615-18446744073709551615"
 
 
 class StreamPayload(BaseModel):
@@ -60,7 +65,14 @@ class ReplyEvent(BaseModel):
         return self
 
 
-def encode_event(row: AIExecution, conversation_id: UUID, event_type, offset="0-0", **payload) -> str:
+def encode_event(row: AIExecution, conversation_id: UUID, event_type, offset=None, **payload) -> str:
+    if offset is None:
+        if event_type == "execution.started":
+            offset = REDIS_START
+        elif event_type in {"execution.queued", "execution.status"}:
+            offset = STATUS_OFFSET
+        else:
+            offset = TERMINAL_OFFSET
     event = ReplyEvent(
         execution_id=row.id, conversation_id=conversation_id,
         sequence=f"{row.id}:{row.attempt_count}:{offset}",
@@ -92,10 +104,12 @@ async def reply_events(
     request: Request, conversation_id: UUID, authorization: str | None,
     execution_id: UUID, after: str,
 ) -> AsyncIterator[str]:
-    deadline = time.monotonic() + STREAM_WINDOW_SECONDS
+    started_at = time.monotonic()
+    deadline = started_at + STREAM_WINDOW_SECONDS
     redis = getattr(request.app.state, "redis", None)
     cursor = REDIS_START
     previous_state = None
+    delivered_batches = 0
     while time.monotonic() < deadline and not await request.is_disconnected():
         frames = []
         terminal = False
@@ -142,7 +156,7 @@ async def reply_events(
                 if state != previous_state:
                     prefix = f"{row.id}:{row.attempt_count}:"
                     cursor = after.removeprefix(prefix) if after.startswith(prefix) else REDIS_START
-                    if cursor == REDIS_START:
+                    if cursor in {REDIS_START, STATUS_OFFSET}:
                         frames.append(encode_event(row, conversation_id, "execution.started", status="running"))
                 if redis is not None:
                     try:
@@ -164,6 +178,12 @@ async def reply_events(
                             terminal = True
                         else:
                             cursor = offset
+                            delivered_batches += 1
+                            if delivered_batches == 1:
+                                logger.info(
+                                    "widget_stream_first_batch execution_id=%s elapsed_ms=%d",
+                                    execution_id, round((time.monotonic() - started_at) * 1000),
+                                )
                             frames.append(encode_event(
                                 row, conversation_id, "message.delta", cursor,
                                 text="".join(item["text"] for _, item in entries),
@@ -172,13 +192,21 @@ async def reply_events(
         for frame in frames:
             yield frame
         if terminal:
+            logger.info(
+                "widget_stream_closed execution_id=%s delta_batches=%d",
+                execution_id, delivered_batches,
+            )
             return
         if not frames:
             yield ": keepalive\n\n"
-        await asyncio.sleep(0.5 if frames else 1)
+        await asyncio.sleep(RUNNING_POLL_SECONDS if row.status == "running" else 0.5)
 
 
-@router.get("/conversations/{conversation_id}/reply-stream", response_class=StreamingResponse)
+@router.get(
+    "/conversations/{conversation_id}/reply-stream",
+    response_class=StreamingResponse,
+    responses={200: {"content": {"text/event-stream": {"schema": {"type": "string"}}}}},
+)
 async def stream_widget_reply(
     request: Request, conversation_id: UUID,
     authorization: Annotated[str | None, Header()] = None,

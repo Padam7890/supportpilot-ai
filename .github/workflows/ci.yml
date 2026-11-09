@@ -59,6 +59,7 @@ jobs:
       DATABASE_URL: postgresql+asyncpg://supportpilot_app:app_test_password@localhost:5432/supportpilot
       TEST_DATABASE_URL: postgresql+asyncpg://supportpilot_app:app_test_password@localhost:5432/supportpilot
       REDIS_URL: redis://localhost:6379/0
+      TEST_WIDGET_STREAM_REDIS_URL: redis://localhost:6379/0
       CORS_ORIGINS: '["http://localhost:3000"]'
 
     steps:

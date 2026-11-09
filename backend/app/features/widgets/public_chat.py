@@ -337,8 +337,10 @@ async def start_widget_conversation(
             details={"source": "shopify_widget"},
         )
     )
-    await db.flush()
-    return make_start_response(submission, widget)
+    response = make_start_response(submission, widget)
+    # The browser can open SSE as soon as it receives this acknowledgment.
+    await db.commit()
+    return response
 
 
 @router.get("/conversations/{conversation_id}", response_model=WidgetConversationOut)
@@ -351,16 +353,16 @@ async def get_widget_conversation(
     widget, conversation, _ticket = await require_visitor_conversation(
         request, conversation_id, authorization, db
     )
-    messages = await db.scalars(
+    messages = list(await db.scalars(
         select(Message)
         .where(
             Message.organization_id == conversation.organization_id,
             Message.conversation_id == conversation.id,
             Message.sender_type.in_(("customer", "agent", "assistant")),
         )
-        .order_by(Message.created_at.asc(), Message.id.asc())
+        .order_by(Message.created_at.desc(), Message.id.desc())
         .limit(MAX_HISTORY)
-    )
+    ))
     active_verification_id = await db.scalar(
         select(WidgetOrderVerification.id)
         .where(
@@ -377,7 +379,10 @@ async def get_widget_conversation(
         conversation_id=conversation.id,
         order_verified=active_verification_id is not None,
         ai_mode=conversation.ai_mode,
-        messages=[widget_message_out(message) for message in messages],
+        messages=[
+            widget_message_out(message, ai_agent_id=conversation.ai_agent_id)
+            for message in reversed(messages)
+        ],
     )
 
 
@@ -525,11 +530,12 @@ async def continue_widget_conversation(
         conversation_id=conversation.id,
         message_id=message.id,
     )
-    await db.flush()
-    return WidgetMessageOut(
+    response = WidgetMessageOut(
         id=message.id,
         sender_type=message.sender_type,
         content=message.content,
         created_at=message.created_at,
     )
-
+    # Make the message and its execution visible before the widget opens SSE.
+    await db.commit()
+    return response

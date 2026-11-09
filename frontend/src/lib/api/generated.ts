@@ -2925,6 +2925,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/widget/conversations/{conversation_id}/reply-stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream Widget Reply */
+        get: operations["stream_widget_reply_api_v1_widget_conversations__conversation_id__reply_stream_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/widget/{public_id}/config": {
         parameters: {
             query?: never;
@@ -6097,6 +6114,11 @@ export interface components {
             /** Store Name */
             store_name: string;
             /**
+             * Streaming Enabled
+             * @default false
+             */
+            streaming_enabled: boolean;
+            /**
              * Welcome Message
              * @default Hi! How can we help?
              */
@@ -7648,6 +7670,11 @@ export interface components {
             recommendation?: components["schemas"]["RecommendationResult"] | components["schemas"]["ProductComparisonResult"] | null;
             /** Sender Type */
             sender_type: string;
+            /**
+             * Verification Required
+             * @default false
+             */
+            verification_required: boolean;
         };
         /** WidgetOrderVerificationCode */
         WidgetOrderVerificationCode: {
@@ -25140,6 +25167,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RecommendationEventOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stream_widget_reply_api_v1_widget_conversations__conversation_id__reply_stream_get: {
+        parameters: {
+            query?: {
+                after?: string;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
                 };
             };
             /** @description Validation Error */

@@ -25,6 +25,11 @@ def safe_ai_failure_code(exc: Exception) -> str:
 
 def is_retryable_ai_failure(exc: Exception) -> bool:
     """Retry only known transient provider and invalidated database connections."""
+    if getattr(exc, "provider_reason", None) in {
+        "insufficient_quota", "credit_balance_exhausted", "organization_spend_limit_exceeded",
+        "project_spend_limit_exceeded", "organization_usage_limit_exceeded",
+    }:
+        return False
     code = safe_ai_failure_code(exc)
     if code in {"provider_timeout", "provider_unreachable", "workflow_timeout"}:
         return True

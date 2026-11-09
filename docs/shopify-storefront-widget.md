@@ -76,3 +76,43 @@ The snippet resembles:
 - Owner/Admin management: `GET|POST|PUT /api/v1/integrations/widget`
 
 First-message tickets use source `shopify_widget`, status `open`, and a `shopify_widget` conversation channel. Submission receipts are tenant-scoped and preserve idempotency without storing the raw client key. A repeated first request with the same key and payload returns the same ticket/conversation; reusing a key with different content returns `409`.
+
+## Diagnose grounded reply failures in Docker Compose
+
+The widget may find matching articles before the provider rejects the generation
+request. The worker records retrieval and provider failures separately. The
+shopper receives the existing handoff message, while operators can use the safe
+reason codes in the worker logs.
+
+1. Set `AI_PROVIDER_BASE_URL`, `AI_MODEL`, and `AI_PROVIDER_API_KEY` in
+   `backend/.env`. Use the provider base URL, for example
+   `https://api.openai.com/v1`. Replace an expired or revoked key with a valid
+   key for the project. Keep credentials out of the shell command and chat.
+2. Recreate the containers after changing the environment. A Docker restart
+   retains the environment captured when a container was created.
+
+   ```sh
+   docker compose up -d --no-deps --force-recreate api worker
+   docker compose ps api worker
+   ```
+
+3. Run the synthetic probe from the worker. These commands send a short prompt
+   and print only success or safe diagnostics.
+
+   ```sh
+   docker compose exec -T worker python -m scripts.check_ai_provider
+   docker compose exec -T worker python -m scripts.check_ai_provider --stream
+   ```
+
+4. Ask the widget a question covered by an assigned ready article, then inspect
+   the worker's execution and retry decisions.
+
+   ```sh
+   docker compose logs --since=10m worker | rg 'worker_ai_provider_configuration|ai_knowledge_retrieval_completed|ai_execution_failed|ai_execution_retry_decision|ai_stream_'
+   ```
+
+A `provider_http_401` response with `expired_secret_key` requires key replacement.
+A transient timeout or rate limit can be retried within the configured attempt
+limit. Known quota and spend limits require an account change. A local
+`configured=true` startup record only confirms that settings are present and
+valid in format. The probe verifies actual model access.

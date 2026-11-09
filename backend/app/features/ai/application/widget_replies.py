@@ -10,6 +10,11 @@ from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.db.session import SessionLocal, set_tenant_context
+from app.features.ai.application.follow_up import (
+    PENDING_KEY,
+    PendingQuestion,
+    infer_assistant_question,
+)
 from app.features.ai.application.retrieval_search import citations_remain_authorized
 from app.features.ai.domain.policies import widget_reply_is_superseded
 from app.features.ai.tools.recommendations import ToolReference
@@ -246,6 +251,7 @@ async def process_widget_shopping_execution(
             displayed_recommendations=outcome.displayed_recommendations,
             recommendation_payload=outcome.recommendation_payload,
             switch_to_human=outcome.switch_to_human,
+            pending_question=infer_assistant_question(outcome.draft or ""),
         )
         await db.commit()
         return True
@@ -268,6 +274,7 @@ async def finish_widget_reply(
     recommendation_payload: dict[str, object] | None = None,
     switch_to_human: bool = False,
     failure_code: str | None = None,
+    pending_question: PendingQuestion | None = None,
 ) -> None:
     """Persist a draft or send only while holding the conversation row lock."""
     now = datetime.now(UTC)
@@ -458,11 +465,10 @@ async def finish_widget_reply(
                     content=draft,
                     content_type="text",
                     source_ai_execution_id=row.id,
-                    provider_metadata=(
-                        {"recommendation": recommendation_payload}
-                        if recommendation_payload is not None
-                        else {}
-                    ),
+                    provider_metadata={
+                        **({"recommendation": recommendation_payload} if recommendation_payload is not None else {}),
+                        **({PENDING_KEY: pending_question.attached_to(row.ai_agent_id, now)} if pending_question is not None else {}),
+                    },
                 )
                 .on_conflict_do_nothing(constraint="uq_messages_org_ai_execution")
                 .returning(Message.id)

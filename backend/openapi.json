@@ -11889,6 +11889,11 @@
           "sender_type": {
             "title": "Sender Type",
             "type": "string"
+          },
+          "verification_required": {
+            "default": false,
+            "title": "Verification Required",
+            "type": "boolean"
           }
         },
         "required": [
@@ -35736,6 +35741,13 @@
         ],
         "responses": {
           "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "description": "Successful Response"
           },
           "422": {

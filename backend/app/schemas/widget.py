@@ -170,6 +170,7 @@ class WidgetMessageOut(BaseModel):
     content: str
     created_at: datetime
     recommendation: RecommendationResult | ProductComparisonResult | None = None
+    verification_required: bool = False
 
 
 class WidgetConversationOut(BaseModel):

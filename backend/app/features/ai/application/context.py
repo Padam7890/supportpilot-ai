@@ -3,13 +3,13 @@
 import json
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
 
 from app.db.session import SessionLocal, set_tenant_context
 from app.features.ai.application.conversational_intents import (
-    classify_conversational_intent,
     should_skip_knowledge_retrieval,
 )
+from app.features.ai.application.follow_up import PENDING_KEY
 from app.features.ai.application.retrieval import is_contextual_follow_up
 from app.features.ai.application.retrieval_search import search_agent_knowledge
 from app.models import (
@@ -23,7 +23,8 @@ from app.models import (
 
 
 async def load_execution_context(
-    organization_id: UUID, execution_id: UUID, *, include_knowledge: bool | None = None
+    organization_id: UUID, execution_id: UUID, *, include_knowledge: bool | None = None,
+    follow_up_query: str | None = None
 ) -> (
     tuple[
         AIExecution,
@@ -90,21 +91,34 @@ async def load_execution_context(
                 if ticket
                 else None
             )
-            messages = list(
-                await db.scalars(
-                    select(Message)
-                    .where(
-                        Message.organization_id == organization_id,
-                        Message.conversation_id == conversation.id,
-                        Message.sender_type != "internal_note",
-                    )
-                    .order_by(Message.created_at.desc(), Message.id.desc())
-                    .limit(12)
-                )
+            message_query = select(Message).where(
+                Message.organization_id == organization_id,
+                Message.conversation_id == conversation.id,
+                Message.sender_type != "internal_note",
             )
+            if execution.kind == "widget_reply" and execution.source_message_id:
+                source = select(Message.created_at, Message.id).where(
+                    Message.organization_id == organization_id,
+                    Message.conversation_id == conversation.id,
+                    Message.id == execution.source_message_id,
+                )
+                message_query = message_query.where(
+                    tuple_(Message.created_at, Message.id) <= source.scalar_subquery()
+                )
+            messages = list(await db.scalars(
+                message_query.order_by(Message.created_at.desc(), Message.id.desc()).limit(12)
+            ))
             messages.reverse()
             conversation_context = [
-                {"sender": message.sender_type, "content": message.content[:2000]}
+                {
+                    "sender": message.sender_type, "content": message.content[:2000],
+                    "created_at": message.created_at.isoformat(),
+                    **(
+                        {PENDING_KEY: json.dumps(message.provider_metadata[PENDING_KEY])}
+                        if message.sender_type == "assistant"
+                        and PENDING_KEY in (message.provider_metadata or {}) else {}
+                    ),
+                }
                 for message in messages
             ]
             newest_customer_message = next(
@@ -151,7 +165,7 @@ async def load_execution_context(
                 else []
             )
             retrieval_text = " ".join([*previous_questions, question])
-        search_text = retrieval_text[:2000]
+        search_text = (follow_up_query or retrieval_text)[:2000]
         agent = await db.scalar(
             select(AIAgent).where(
                 AIAgent.organization_id == organization_id,

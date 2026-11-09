@@ -42,7 +42,7 @@ export function StorefrontWidgetCard({ onPreviewChange }: { onPreviewChange?: (d
   const [sampleRoutingMessage, setSampleRoutingMessage] = useState("");
   const [copied, setCopied] = useState(false);
   const appBase = (process.env.NEXT_PUBLIC_SUPPORTPILOT_APP_URL || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
-  const widgetScriptVersion = "2026-11-09-stream-v1";
+  const widgetScriptVersion = "2026-11-09-follow-ups-v1";
   const originsText = originsDraft ?? config.data?.allowed_origins.join("\n") ?? "";
   const enabled = enabledDraft ?? config.data?.enabled ?? true;
   const aiEnabled = aiEnabledDraft ?? config.data?.ai_enabled ?? false;

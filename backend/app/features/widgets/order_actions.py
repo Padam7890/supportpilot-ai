@@ -3,6 +3,7 @@
 """Public, narrowly scoped Shopify storefront chat and tenant widget settings."""
 
 import hmac
+import json
 import logging
 import re
 import secrets
@@ -14,6 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db, set_tenant_context
+from app.features.ai.application.follow_up import PENDING_KEY, pending_from_assistant
 from app.integrations.providers.shopify.client import ShopifyAPIError
 from app.integrations.providers.shopify.orders import lookup_authorized_order
 from app.integrations.providers.shopify.security import decrypt_credential, encrypt_credential
@@ -361,6 +363,31 @@ async def confirm_widget_order_verification(
     answer = format_verified_order_status(mapped, opening="I verified order")
     verification.status = "verified"
     verification.verified_at = now
+    continuation = {}
+    if widget.ai_reply_mode == "auto_reply" and conversation.ai_mode == "ai":
+        # Serialize with AI finalization and verify that the visible prompt is
+        # still waiting for OTP. Never resume a superseded refund request.
+        locked = await db.scalar(select(Conversation).where(
+            Conversation.organization_id == widget.organization_id,
+            Conversation.id == conversation.id,
+        ).with_for_update().execution_options(populate_existing=True))
+        latest = await db.scalar(select(Message).where(
+            Message.organization_id == widget.organization_id,
+            Message.conversation_id == conversation.id,
+            Message.sender_type != "internal_note",
+        ).order_by(Message.created_at.desc(), Message.id.desc()).limit(1))
+        if locked is not None and locked.ai_mode == "ai" and latest is not None:
+            state = pending_from_assistant(
+                {"sender": latest.sender_type, PENDING_KEY: json.dumps((latest.provider_metadata or {}).get(PENDING_KEY))},
+                locked.ai_agent_id, now, allow_legacy=False,
+            )
+            if state and state.stage == "refund_verification" and state.refund_reason and state.item_message_id:
+                state = state.model_copy(update={
+                    "stage": "refund_review", "expected_answer_type": "confirmation",
+                    "verification_status": "verified", "verification_id": verification.id,
+                })
+                continuation = {PENDING_KEY: state.attached_to(locked.ai_agent_id, now)}
+                answer = "Your order is verified. Would you like me to send this refund request to the store team for review?"
     if widget.ai_reply_mode == "auto_reply":
         db.add(
             Message(
@@ -369,6 +396,7 @@ async def confirm_widget_order_verification(
                 sender_type="assistant",
                 sender_user_id=None,
                 content=answer,
+                provider_metadata=continuation,
                 content_type="text",
             )
         )

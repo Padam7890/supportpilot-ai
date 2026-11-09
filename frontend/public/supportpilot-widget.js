@@ -6,6 +6,8 @@
     return;
   }
 
+  if (document.getElementById("supportpilot-widget-host")) return;
+
   let apiBase = (script.getAttribute("data-api-base") || new URL("/api", script.src).href).replace(/\/$/, "");
   if (apiBase.endsWith("/api/widget")) apiBase = apiBase.slice(0, -"/widget".length);
 
@@ -23,6 +25,7 @@
       button{cursor:pointer}
       .shell{display:flex;flex-direction:column;align-items:flex-end;gap:12px}
       .launcher{display:flex;align-items:center;gap:10px;border:0;border-radius:999px;background:linear-gradient(135deg,#2355e9,#483de0);color:#fff;padding:13px 17px 13px 13px;box-shadow:0 12px 34px #1d3b8c52;font-weight:700;transition:transform .18s,box-shadow .18s}
+      .launcher[hidden]{display:none}
       .launcher:hover{transform:translateY(-2px);box-shadow:0 16px 40px #1d3b8c60}
       .launcher:focus-visible,.close:focus-visible,.quick:focus-visible,.send:focus-visible,.card-button:focus-visible{outline:3px solid #f6c945;outline-offset:3px}
       .launcher-icon{display:grid;place-items:center;width:31px;height:31px;border-radius:50%;background:#ffffff26}
@@ -48,10 +51,15 @@
       .quick:hover{border-color:#9eb6f5;background:#f2f6ff}
       .quick-icon{color:#4267d9;font-size:14px}
       .message-row{display:flex;flex-direction:column;max-width:88%;gap:3px;animation:rise .18s ease-out}
+      .message-row.streaming-row{animation:none}
       .message-row.customer{align-self:flex-end;align-items:flex-end}
       .message-row.assistant,.message-row.agent{align-self:flex-start;align-items:flex-start}
       @keyframes rise{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
       .message{white-space:pre-wrap;overflow-wrap:anywhere;border-radius:17px;padding:10px 12px;font-size:12px;line-height:1.55}
+      .message p,.message ul,.message ol{margin:0}
+      .message p+p,.message p+ul,.message p+ol,.message ul+p,.message ol+p,.message ul+ol,.message ol+ul{margin-top:6px}
+      .message ul,.message ol{padding-left:19px}
+      .message li+li{margin-top:3px}
       .customer .message{border-bottom-right-radius:5px;background:#3158d8;color:#fff}
       .assistant .message{border:1px solid #e2e8f2;border-bottom-left-radius:5px;background:#fff;color:#25334d;box-shadow:0 2px 8px #19294a0a}
       .agent .message{border-bottom-left-radius:5px;background:#e6edff;color:#263a67}
@@ -120,7 +128,12 @@
   const status = shadow.querySelector(".status");
   let config;
   let session;
-  let polling;
+  const ACTIVE_HISTORY_REFRESH_MS = 5_000;
+  const IDLE_HISTORY_REFRESH_MS = 30_000;
+  const MAX_HISTORY_RETRY_MS = 120_000;
+  let historyTimer;
+  let historyPollController;
+  let historyPollFailures = 0;
   let firstAttempt;
   let followingAttempt;
   let pending = false;
@@ -208,6 +221,55 @@
     return Number.isNaN(date.getTime()) ? "" : new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date);
   }
 
+  function appendReplyText(node, text, partial) {
+    const parts = text.split(/(\*\*[^*\n]+\*\*)/g);
+    for (let index = 0; index < parts.length; index++) {
+      const part = parts[index];
+      if (index % 2 === 1) {
+        const strong = document.createElement("strong");
+        strong.textContent = part.slice(2, -2);
+        node.append(strong);
+      } else {
+        node.append(partial && index === parts.length - 1 ? part.replace(/\*\*([^*]*)\*?$/, "$1").replace(/\*$/, "") : part);
+      }
+    }
+  }
+
+  function renderAssistantMessage(bubble, content, partial = false) {
+    const fragment = document.createDocumentFragment();
+    let block = null;
+    let blockType = "";
+    for (const line of content.split(/\r?\n/)) {
+      if (!line.trim()) {
+        block = null;
+        continue;
+      }
+      const item = line.match(/^\s*(?:([-*+])|(\d+)[.)])\s+(.+)$/);
+      if (item) {
+        const type = item[1] ? "ul" : "ol";
+        if (!block || blockType !== type) {
+          block = document.createElement(type);
+          if (type === "ol") block.start = Number(item[2]);
+          blockType = type;
+          fragment.append(block);
+        }
+        const li = document.createElement("li");
+        appendReplyText(li, item[3], partial);
+        block.append(li);
+      } else {
+        if (!block || blockType !== "p") {
+          block = document.createElement("p");
+          blockType = "p";
+          fragment.append(block);
+        } else {
+          block.append("\n");
+        }
+        appendReplyText(block, line.replace(/^#{1,6}\s+(.+)$/, "**$1**"), partial);
+      }
+    }
+    bubble.replaceChildren(fragment);
+  }
+
   function addMessage(message, { canCompare = false } = {}) {
     const sender = message.sender_type === "customer" ? "customer" : message.sender_type === "agent" ? "agent" : "assistant";
     const row = document.createElement("article");
@@ -215,7 +277,8 @@
     row.setAttribute("aria-label", `${sender === "customer" ? "You" : sender === "agent" ? "Support teammate" : config?.assistant_name || "AI assistant"}, ${timestamp(message.created_at)}`);
     const bubble = document.createElement("div");
     bubble.className = "message";
-    bubble.textContent = message.content;
+    if (sender === "assistant") renderAssistantMessage(bubble, message.content);
+    else bubble.textContent = message.content;
     const meta = document.createElement("div");
     meta.className = "message-meta";
     const name = document.createElement("span");
@@ -300,12 +363,16 @@
 
   function containsOrderIntent(messages) {
     const latestCustomer = [...messages].reverse().find((item) => item.sender_type === "customer")?.content || "";
-    return /\b(order|track|tracking|shipment|shipped|cancel|cancellation)\b/i.test(latestCustomer);
+    return /\b(order|track|tracking|shipment|shipped)\b/i.test(latestCustomer);
   }
 
   function containsCancellationIntent(messages) {
     const latestCustomer = [...messages].reverse().find((item) => item.sender_type === "customer")?.content || "";
-    return /\b(cancel|cancellation)\b/i.test(latestCustomer);
+    const latest = messages.at(-1);
+    if (latest?.sender_type === "assistant") {
+      return /\b(?:submit a cancellation request|use the cancellation request card)\b/i.test(latest.content || "");
+    }
+    return /\b(?:cancel|cancellation)\b.*\b(?:order|purchase)\b/i.test(latestCustomer);
   }
 
   function cancellationWasSubmitted(messages) {
@@ -542,6 +609,7 @@
   }
 
   let streamController = null;
+  let streamGeneration = 0;
   let partialRow = null;
   let partialText = "";
   let streamCursor = "";
@@ -567,8 +635,8 @@
     } else if (!partialRow.isConnected) {
       thread.appendChild(partialRow);
     }
-    partialRow.querySelector(".message").textContent = partialText;
-    thread.scrollTop = thread.scrollHeight;
+    renderAssistantMessage(partialRow.querySelector(".message"), partialText, true);
+    thread.scrollTo({ top: thread.scrollHeight, behavior: "instant" });
   }
 
   function stopReplyStream() {
@@ -578,46 +646,78 @@
     clearPartial();
   }
 
-  function consumeReplyEvent(frame, conversationId) {
+  async function waitForPartialPaint(signal) {
+    if (renderFrame && document.visibilityState === "visible") {
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, 100);
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          clearTimeout(timer);
+          resolve();
+        }));
+      });
+    }
+    return !signal.aborted;
+  }
+
+  async function consumeReplyEvent(frame, conversationId, signal) {
     const data = frame.split("\n").find((line) => line.startsWith("data: "));
     if (!data) return false;
     const event = JSON.parse(data.slice(6));
-    if (event.conversation_id !== conversationId || typeof event.sequence !== "string") return false;
+    if (
+      event?.conversation_id !== conversationId ||
+      typeof event.execution_id !== "string" ||
+      typeof event.sequence !== "string" ||
+      !event.sequence.startsWith(`${event.execution_id}:`) ||
+      !/^[0-9a-f-]{36}:\d{1,5}:\d{1,20}-\d{1,20}$/.test(event.sequence) ||
+      typeof event.timestamp !== "string" ||
+      !event.payload || typeof event.payload !== "object"
+    ) return false;
     switch (event.event_type) {
       case "execution.queued":
       case "execution.started":
       case "execution.status":
         streamCursor = event.sequence;
         clearPartial();
+        if (waitingForAssistant && !thread.querySelector(".typing-row")) addTyping();
         return false;
       case "message.delta":
         if (typeof event.payload?.text !== "string" || event.sequence === streamCursor) return false;
+        // If the network delivered several real SSE batches together, let the
+        // preceding batch paint before adding the next one.
+        if (!await waitForPartialPaint(signal)) return true;
         if (partialText.length + event.payload.text.length > 16000) throw new Error("Reply stream exceeded its limit");
         streamCursor = event.sequence;
         partialText += event.payload.text;
         if (!renderFrame) renderFrame = requestAnimationFrame(renderPartial);
         return false;
       case "message.completed":
+        if (!await waitForPartialPaint(signal)) return true;
+        break;
       case "execution.failed":
       case "execution.cancelled":
       case "conversation.handoff":
-        clearPartial();
-        waitingForAssistant = false;
-        thread.querySelector(".typing-row")?.remove();
-        if (event.event_type === "execution.failed" && !event.payload?.message_id) {
-          setStatus("The assistant couldn’t finish its reply. You can send another message.", true);
-        }
-        return true;
+        break;
       default:
         return false;
     }
+    clearPartial();
+    waitingForAssistant = false;
+    thread.querySelector(".typing-row")?.remove();
+    if (event.event_type === "execution.failed" && !event.payload?.message_id) {
+      setStatus("The assistant couldn’t finish its reply. You can send another message.", true);
+    } else if (event.event_type === "conversation.handoff") {
+      setStatus("A support teammate can follow up here.");
+    } else {
+      setStatus("");
+    }
+    return true;
   }
 
   async function readReplyStream(activeSession, signal) {
     const query = streamCursor ? `?after=${encodeURIComponent(streamCursor)}` : "";
     const response = await fetch(
       `${apiBase}/widget/conversations/${encodeURIComponent(activeSession.conversation_id)}/reply-stream${query}`,
-      { headers: { authorization: `Bearer ${activeSession.visitor_token}` }, credentials: "omit", signal },
+      { headers: { accept: "text/event-stream", authorization: `Bearer ${activeSession.visitor_token}` }, credentials: "omit", signal },
     );
     if (!response.ok || !response.body || !response.headers.get("content-type")?.startsWith("text/event-stream")) return true;
     const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
@@ -631,7 +731,7 @@
         while ((boundary = buffer.indexOf("\n\n")) >= 0) {
           const frame = buffer.slice(0, boundary);
           buffer = buffer.slice(boundary + 2);
-          if (consumeReplyEvent(frame, activeSession.conversation_id)) return true;
+          if (await consumeReplyEvent(frame, activeSession.conversation_id, signal)) return true;
         }
         if (buffer.length > 64000) return true;
       }
@@ -642,11 +742,47 @@
     }
   }
 
+  function canPollHistory() {
+    return session && !streamController && !pending &&
+      document.visibilityState === "visible" && panel.classList.contains("open");
+  }
+
+  function stopHistoryPolling() {
+    clearTimeout(historyTimer);
+    historyTimer = undefined;
+    historyPollController?.abort();
+  }
+
+  function scheduleHistoryPoll(immediate = false) {
+    clearTimeout(historyTimer);
+    historyTimer = undefined;
+    if (!canPollHistory() || historyPollController) return;
+    const interval = waitingForAssistant ? ACTIVE_HISTORY_REFRESH_MS : IDLE_HISTORY_REFRESH_MS;
+    const retryDelay = Math.min(interval * 2 ** historyPollFailures, MAX_HISTORY_RETRY_MS);
+    historyTimer = setTimeout(async () => {
+      historyTimer = undefined;
+      if (!canPollHistory()) return;
+      const controller = new AbortController();
+      historyPollController = controller;
+      try {
+        await loadHistory({ idleOnly: true, signal: controller.signal });
+        historyPollFailures = 0;
+      } catch {
+        if (!controller.signal.aborted) historyPollFailures = Math.min(historyPollFailures + 1, 5);
+      } finally {
+        historyPollController = undefined;
+        scheduleHistoryPoll();
+      }
+    }, immediate ? 0 : retryDelay);
+  }
+
   async function startReplyStream() {
     if (!config?.streaming_enabled || !session || streamController || !panel.classList.contains("open")) return;
+    stopHistoryPolling();
     const activeSession = session;
     const controller = new AbortController();
     streamController = controller;
+    streamGeneration++;
     try {
       for (let retry = 0; retry < 2 && !controller.signal.aborted; retry++) {
         let terminal = false;
@@ -663,19 +799,26 @@
         streamController = null;
         clearPartial();
         streamCursor = "";
-        await loadHistory().catch(() => {});
+        if (panel.classList.contains("open") && document.visibilityState === "visible") {
+          await loadHistory({ idleOnly: true }).catch(() => {});
+        }
+        scheduleHistoryPoll();
       }
     }
   }
 
-  async function loadHistory() {
-    if (!session) return;
+  async function loadHistory({ idleOnly = false, signal } = {}) {
+    if (!session || (idleOnly && streamController)) return;
+    const generationAtRequest = streamGeneration;
     const response = await fetch(`${apiBase}/widget/conversations/${encodeURIComponent(session.conversation_id)}`, {
       headers: { authorization: `Bearer ${session.visitor_token}` },
       credentials: "omit",
+      signal,
     });
     if (!response.ok) throw new Error("Could not load this chat. Start a new conversation.");
     const result = await response.json();
+    // A poll that started before the stream must not overwrite its partial row.
+    if (signal?.aborted || (idleOnly && (streamController || streamGeneration !== generationAtRequest))) return;
     latestMessages = result.messages || [];
     verifiedOrder = Boolean(result.order_verified);
     conversationMode = result.ai_mode === "ai" ? "ai" : "human";
@@ -688,7 +831,13 @@
       assistantWaitStartedAt = 0;
       setStatus("The reply is taking longer than expected. A support teammate can follow up here.");
     }
-    const signature = JSON.stringify(latestMessages.map(({ id, updated_at, created_at, content }) => [id, updated_at, created_at, content]));
+    const signature = JSON.stringify([
+      verifiedOrder,
+      conversationMode,
+      latestMessages.map(({ id, updated_at, created_at, content, verification_required }) =>
+        [id, updated_at, created_at, content, verification_required]
+      ),
+    ]);
     if (signature === lastHistorySignature) {
       if (!waitingForAssistant) thread.querySelector(".typing-row")?.remove();
       return;
@@ -709,7 +858,14 @@
       canCompare: message.id === lastRecommendationId && message.recommendation?.response_type === "recommendations",
     }));
     const assistantAfter = thread.querySelectorAll(".message-row.assistant:not(.typing-row):not(.streaming-row)").length;
-    if (optimisticRow) thread.appendChild(optimisticRow);
+    if (optimisticRow) {
+      const persisted = latestMessages.some((message) =>
+        message.sender_type === "customer" && !optimisticRow.previousIds.has(message.id) &&
+        message.content === optimisticRow.content
+      );
+      if (persisted) optimisticRow = null;
+      else thread.appendChild(optimisticRow.element);
+    }
     if (partialText) renderPartial();
     if (waitingForAssistant && assistantAfter > assistantBefore) {
       stopReplyStream();
@@ -717,7 +873,13 @@
       assistantWaitStartedAt = 0;
     }
     const verificationRequested = latestAssistantRequestsVerification(latestMessages);
-    const needsOrderVerification = containsOrderIntent(latestMessages) && (!verifiedOrder || verificationRequested) && !cancellationWasSubmitted(latestMessages);
+    const latestPublicMessage = latestMessages.at(-1);
+    const refundNeedsVerification = latestPublicMessage?.sender_type === "assistant" && latestPublicMessage.verification_required === true;
+    const needsOrderVerification = refundNeedsVerification || (
+      verificationRequested && !/refund request/i.test(latestPublicMessage?.content || "")
+    ) || (
+      containsOrderIntent(latestMessages) && (!verifiedOrder || verificationRequested) && !cancellationWasSubmitted(latestMessages)
+    );
     if (waitingForAssistant && conversationMode === "ai" && config?.ai_enabled && !needsOrderVerification) {
       const latestCustomer = [...latestMessages].reverse().find((item) => item.sender_type === "customer")?.content || "";
       if (/\b(recommend|suggest|phone|smartphone|mobile|laptop|camera|budget|compare|better|only)\b/i.test(latestCustomer) && window.SupportPilotRecommendationUI) {
@@ -764,10 +926,8 @@
       launcher.hidden = true;
       if (session) {
         await loadHistory();
-        void startReplyStream();
-        if (!polling) polling = setInterval(() => {
-          if (document.visibilityState === "visible" && panel.classList.contains("open")) loadHistory().catch(() => {});
-        }, 5000);
+        if (waitingForAssistant) void startReplyStream();
+        scheduleHistoryPoll();
       } else if (!thread.childElementCount) {
         addWelcome();
       }
@@ -782,6 +942,7 @@
   }
 
   function closeChat() {
+    stopHistoryPolling();
     stopReplyStream();
     panel.classList.remove("open");
     panel.setAttribute("aria-hidden", "true");
@@ -809,11 +970,16 @@
     const content = compose.value.trim();
     if (!content || pending) return;
     pending = true;
+    stopHistoryPolling();
     sendButton.disabled = true;
     setStatus("Sending…");
     stopReplyStream();
     thread.querySelector(".welcome")?.remove();
-    optimisticRow = addMessage({ sender_type: "customer", content, created_at: new Date().toISOString() });
+    optimisticRow = {
+      element: addMessage({ sender_type: "customer", content, created_at: new Date().toISOString() }),
+      content,
+      previousIds: new Set(latestMessages.map((message) => message.id)),
+    };
     thread.scrollTop = thread.scrollHeight;
     try {
       await ensureConfig();
@@ -851,19 +1017,16 @@
         nextRecommendationSelections = null;
         compareSelections = [];
       }
-      optimisticRow.remove();
-      optimisticRow = null;
       compose.value = "";
       resizeComposer();
       waitingForAssistant = Boolean(config?.ai_enabled && conversationMode === "ai");
       assistantWaitStartedAt = waitingForAssistant ? Date.now() : 0;
       setStatus(waitingForAssistant ? "Your assistant is thinking…" : "Message sent. A support teammate will follow up here.");
       void startReplyStream();
-      await loadHistory();
-      if (!polling) polling = setInterval(() => {
-        if (document.visibilityState === "visible" && panel.classList.contains("open")) loadHistory().catch(() => {});
-      }, 5000);
+      await loadHistory({ idleOnly: true });
     } catch (error) {
+      optimisticRow?.element.remove();
+      optimisticRow = null;
       const errorText = error.message || "Could not send your message. Please try again.";
       setStatus(errorText, true);
       if (/\b(recommend|suggest|phone|smartphone|mobile|laptop|camera|budget|compare|better|only)\b/i.test(content) && window.SupportPilotRecommendationUI) {
@@ -874,9 +1037,9 @@
         errorState.scrollIntoView({ block: "nearest" });
       }
     } finally {
-      optimisticRow?.remove();
-      optimisticRow = null;
+      if (!session && !thread.childElementCount) addWelcome();
       pending = false;
+      scheduleHistoryPoll();
       sendButton.disabled = !compose.value.trim();
     }
   }
@@ -887,6 +1050,10 @@
     sendButton.disabled = !compose.value.trim() || pending;
   }
 
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") stopHistoryPolling();
+    else scheduleHistoryPoll(true);
+  });
   launcher.addEventListener("click", openChat);
   shadow.querySelector(".close").addEventListener("click", closeChat);
   shadow.addEventListener("keydown", (event) => {

@@ -115,3 +115,20 @@ async def verified_widget_order_reply(
             True,
             "I’ve verified your order, but I’m having trouble checking its latest status right now. A support teammate can help.",
         )
+
+
+async def refund_verification_is_active(
+    organization_id: UUID, conversation_id: UUID, verification_id: UUID
+) -> bool:
+    """Recheck the specific OTP grant that belongs to this refund continuation."""
+    async with SessionLocal() as db:
+        await set_tenant_context(db, organization_id)
+        return await db.scalar(
+            select(WidgetOrderVerification.id).where(
+                WidgetOrderVerification.id == verification_id,
+                WidgetOrderVerification.organization_id == organization_id,
+                WidgetOrderVerification.conversation_id == conversation_id,
+                WidgetOrderVerification.status == "verified",
+                WidgetOrderVerification.expires_at > datetime.now(UTC),
+            )
+        ) is not None

@@ -20,6 +20,7 @@ from app.api.deps import limit_auth_attempts
 from app.core.config import settings
 from app.core.security import create_widget_visitor_token, decode_widget_visitor_token
 from app.db.session import set_tenant_context
+from app.features.ai.application.follow_up import PENDING_KEY, pending_from_assistant
 from app.models import (
     Conversation,
     Message,
@@ -52,7 +53,7 @@ def _log_order_verification(level: int, event: str, **fields: object) -> None:
     )
 
 
-def widget_message_out(message: Message) -> WidgetMessageOut:
+def widget_message_out(message: Message, *, ai_agent_id: UUID | None = None) -> WidgetMessageOut:
     raw = message.provider_metadata.get("recommendation") if message.provider_metadata else None
     recommendation = None
     if isinstance(raw, dict):
@@ -67,12 +68,21 @@ def widget_message_out(message: Message) -> WidgetMessageOut:
             logger.warning(
                 "Widget recommendation payload failed schema validation: message_id=%s", message.id
             )
+    pending = None
+    if ai_agent_id is not None and message.sender_type == "assistant" and PENDING_KEY in (message.provider_metadata or {}):
+        pending = pending_from_assistant(
+            {"sender": message.sender_type, PENDING_KEY: json.dumps(message.provider_metadata[PENDING_KEY])},
+            ai_agent_id,
+            datetime.now(UTC),
+            allow_legacy=False,
+        )
     return WidgetMessageOut(
         id=message.id,
         sender_type=message.sender_type,
         content=message.content,
         created_at=message.created_at,
         recommendation=recommendation,
+        verification_required=bool(pending and pending.stage == "refund_verification"),
     )
 
 
