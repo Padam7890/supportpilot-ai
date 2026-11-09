@@ -23,3 +23,19 @@ The application already exposes a tenant-scoped `GET /analytics/ai-usage` endpoi
 6. Execute backend pytest, frontend checks and full-stack browser workflows; investigate any failures before merging.
 
 No tests have been executed through the GitHub connector for this PR.
+
+
+## Model pricing configuration
+
+Set `AI_MODEL_PRICES` to a JSON object mapping the **exact provider-reported model identifier** to USD prices per million tokens. Example (illustrative rates only, not verified vendor pricing):
+
+```dotenv
+AI_MODEL_PRICES={"example-model-a":{"input":0.10,"output":0.40},"example-model-b":{"input":0.20,"output":0.80}}
+AI_METRICS_RETENTION_DAYS=90
+```
+
+The legacy `AI_INPUT_COST_PER_MILLION` and `AI_OUTPUT_COST_PER_MILLION` remain fallback rates for `AI_MODEL` only. The tenant analytics endpoint computes cost per recorded execution using its model identifier and token counters. If any execution in the selected window lacks known pricing or complete usage, the aggregate estimate is null rather than a misleading partial total. Per-bot estimates follow the same rule.
+
+The 90-day retention window is enforced at the AI usage analytics endpoint. This **does not physically purge** application logs, AI execution records, customer conversations, backups, or external monitoring data. Configure actual log storage retention in your deployment separately. Historical business records are deliberately not deleted by metrics retention.
+
+The dashboard summarizes AI execution failures and usage. Full spend accounting is **not** complete until embeddings, intent routing, retries, failed billable provider calls, and provider billing reconciliation are captured independently. Model pricing requires a verified price source and effective date. No successful CI run has been verified for these changes.
