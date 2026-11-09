@@ -10,16 +10,15 @@ from sqlalchemy import delete, func, literal_column, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_roles
-from app.core.observability import current_correlation_id
 from app.core.config import settings
+from app.core.observability import current_correlation_id
 from app.db.session import get_db
-from app.services.knowledge_base_audit import record_knowledge_base_audit
 from app.features.ai.application.embedding_jobs import enqueue_document_embeddings
 from app.features.ai.infrastructure.embedding_gateway import is_embedding_provider_configured
 from app.models import (
     DocumentChunk,
-    DocumentIngestionJob,
     DocumentEmbeddingJob,
+    DocumentIngestionJob,
     KnowledgeBase,
     KnowledgeDocument,
     KnowledgeDocumentSource,
@@ -27,17 +26,17 @@ from app.models import (
 )
 from app.schemas.errors import COMMON_ERROR_RESPONSES
 from app.schemas.knowledge import (
+    DocumentEmbeddingBackfillOut,
+    DocumentEmbeddingJobOut,
     IngestionJobOut,
     KnowledgeDocumentMove,
     KnowledgeDocumentOut,
     KnowledgeDocumentPage,
-    KnowledgeSourcePreviewOut,
     KnowledgeSearchPage,
     KnowledgeSearchResult,
-    DocumentEmbeddingJobOut,
-    DocumentEmbeddingBackfillOut,
+    KnowledgeSourcePreviewOut,
 )
-
+from app.services.knowledge_base_audit import record_knowledge_base_audit
 from app.workers.domain.ingestion_errors import requires_replacement
 
 router = APIRouter(prefix="/knowledge/documents", tags=["knowledge"], responses=COMMON_ERROR_RESPONSES)

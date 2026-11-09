@@ -12,9 +12,8 @@ from uuid import UUID
 from pypdf import PdfReader
 from sqlalchemy import and_, or_, select
 
-from app.features.ai.application.embedding_jobs import enqueue_document_embeddings
-from app.workers.domain.lease_policy import DOCUMENT_INGESTION_LEASE as LEASE_TIMEOUT
 from app.db.session import SessionLocal, set_tenant_context
+from app.features.ai.application.embedding_jobs import enqueue_document_embeddings
 from app.models import (
     DocumentChunk,
     DocumentIngestionJob,
@@ -29,6 +28,7 @@ from app.workers.domain.ingestion_errors import (
     SOURCE_UNAVAILABLE,
     IngestionInputError,
 )
+from app.workers.domain.lease_policy import DOCUMENT_INGESTION_LEASE as LEASE_TIMEOUT
 from app.workers.domain.retry_policy import retry_delay_seconds
 
 logger = logging.getLogger(__name__)

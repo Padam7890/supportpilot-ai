@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import httpx
 import pytest
 
 from app.core.config import settings

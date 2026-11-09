@@ -10,7 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.features.ai.application.retrieval import build_retrieval_terms
-from app.features.ai.infrastructure.embedding_gateway import EmbeddingProviderError, embed_texts, is_embedding_provider_configured
+from app.features.ai.infrastructure.embedding_gateway import (
+    EmbeddingProviderError,
+    embed_texts,
+    is_embedding_provider_configured,
+)
 from app.models import (
     AIAgent,
     AIAgentKnowledgeBase,
