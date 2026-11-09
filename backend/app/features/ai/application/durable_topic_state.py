@@ -81,7 +81,17 @@ async def save_topic_state(
             version=1,
             updated_at=now,
             expires_at=expiry,
-        ).on_conflict_do_nothing(index_elements=["organization_id", "conversation_id"])
+        ).on_conflict_do_update(
+            index_elements=["organization_id", "conversation_id"],
+            set_={
+                "ai_agent_id": agent_id,
+                "active_topic": topic,
+                "version": ConversationTopicState.version + 1,
+                "updated_at": now,
+                "expires_at": expiry,
+            },
+            where=ConversationTopicState.expires_at <= now,
+        )
     else:
         stmt = (
             update(ConversationTopicState)
@@ -90,6 +100,7 @@ async def save_topic_state(
                 ConversationTopicState.conversation_id == conversation_id,
                 ConversationTopicState.ai_agent_id == agent_id,
                 ConversationTopicState.version == expected_version,
+                ConversationTopicState.expires_at > now,
             )
             .values(active_topic=topic, version=expected_version + 1, updated_at=now, expires_at=expiry)
         )
