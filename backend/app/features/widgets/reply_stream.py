@@ -215,7 +215,13 @@ async def reply_events(
                         {stream_key: cursor}, count=READ_COUNT, block=REDIS_BLOCK_MS,
                     )
             except (RedisError, TimeoutError):
-                return
+                # Redis is a best-effort delta transport. Keep polling the
+                # durable execution record so the browser can still receive
+                # completion or failure and fetch the persisted reply.
+                logger.warning(
+                    "widget_stream_redis_unavailable execution_id=%s", execution_id
+                )
+                await asyncio.sleep(QUEUED_POLL_SECONDS)
         else:
             await asyncio.sleep(QUEUED_POLL_SECONDS)
 
