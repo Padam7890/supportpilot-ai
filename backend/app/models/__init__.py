@@ -12,6 +12,7 @@ from app.models.automation import (
 from app.models.catalog import CatalogProduct, CatalogSyncJob, CatalogVariant, CatalogWebhookEvent
 from app.models.commerce_action import CommerceAction, CommerceActionAudit
 from app.models.conversation import Conversation
+from app.features.ai.application.durable_topic_state import ConversationTopicState
 from app.models.conversation_attachment import ConversationAttachment
 from app.models.conversation_read_state import ConversationReadState
 from app.models.customer import Customer
@@ -75,6 +76,7 @@ __all__ = [
     "CommerceAction",
     "CommerceActionAudit",
     "Conversation",
+    "ConversationTopicState",
     "ConversationAttachment",
     "ConversationReadState",
     "Customer",
