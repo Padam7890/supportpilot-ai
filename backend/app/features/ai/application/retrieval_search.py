@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import String, func, literal, literal_column, select
+from sqlalchemy import func, literal, literal_column, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -319,7 +319,8 @@ async def search_agent_knowledge(
                         )
                         .where(
                             (document_vector.op("@@")(ts_query)) | (base_vector.op("@@")(ts_query)),
-                            ~func.concat(\n                                func.cast(DocumentChunk.document_id, String), ":",\n                                func.cast(DocumentChunk.chunk_index, String),\n                            ).in_([f"{document_id}:{index}" for document_id, index in seen])\n                            if seen else True,
+                            tuple_(DocumentChunk.document_id, DocumentChunk.chunk_index).not_in(seen)
+                            if seen else True,
                         )
                         .order_by(rank.desc(), DocumentChunk.document_id, DocumentChunk.chunk_index)
                         .limit(keyword_limit - len(keyword_rows))
