@@ -56,3 +56,27 @@ def test_delivery_gate_rejects_bad_explicit_citation():
     )
     assert not result.accepted
     assert result.reason == "invalid_citation_index"
+
+
+def test_stream_segment_rejects_unverified_number():
+    from app.features.ai.application.claim_grounding import check_stream_segment
+
+    assert not check_stream_segment(
+        "Refund in 30 days.", [{"excerpt": "Refund in 7 days."}]
+    ).accepted
+
+
+def test_stream_segment_rejects_missing_sources():
+    from app.features.ai.application.claim_grounding import check_stream_segment
+
+    assert check_stream_segment("Refunds are available.", []).reason == "no_sources"
+
+
+def test_stream_segment_acceptance_does_not_authorize_delivery():
+    from app.features.ai.application.claim_grounding import check_stream_segment
+
+    result = check_stream_segment(
+        "Refund in 7 days.", [{"excerpt": "Refund in 7 days."}]
+    )
+    assert result.accepted
+    assert result.reason == "lexical_checks_passed"
