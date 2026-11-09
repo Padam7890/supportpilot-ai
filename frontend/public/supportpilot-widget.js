@@ -779,9 +779,13 @@
       while (!signal.aborted) {
         const { value, done } = await reader.read();
         if (done) return false;
-        // SSE permits CRLF line endings; normalize across chunk boundaries.
+        // Keep a trailing CR until the next network chunk: CRLF may be
+        // split between reads. Also accept bare CR, permitted by SSE.
         buffer += value;
-        buffer = buffer.replace(/\r\n/g, "\n");
+        const trailingCR = buffer.endsWith("\r");
+        const normalized = (trailingCR ? buffer.slice(0, -1) : buffer)
+          .replace(/\r\n|\r/g, "\n");
+        buffer = normalized + (trailingCR ? "\r" : "");
         let boundary;
         while ((boundary = buffer.indexOf("\n\n")) >= 0) {
           const frame = buffer.slice(0, boundary);
