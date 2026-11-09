@@ -37,13 +37,16 @@ async def resolve_and_record_topic(
         db, organization_id=organization_id, conversation_id=conversation_id,
         agent_id=agent_id,
     )
-    if explicit_topic and current.active_topic in TOPIC_WORDS:
+    if current.active_topic in TOPIC_WORDS:
         if state is None or state.active_topic != current.active_topic:
-            await save_topic_state(
+            saved = await save_topic_state(
                 db, organization_id=organization_id, conversation_id=conversation_id,
                 agent_id=agent_id, topic=current.active_topic,
                 expected_version=state.version if state else None,
             )
+            if not saved:
+                # Concurrent topic update won; do not overwrite it.
+                return retrieval_query
         return retrieval_query
 
     # A recent explicit topic is more reliable than a persisted hint.
