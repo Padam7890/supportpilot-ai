@@ -102,6 +102,11 @@ def log_generation_metrics(
             "duration_ms": elapsed_ms,
             "streamed": streamed,
             "usage": normalized_token_totals(usage),
-            "cost_usd": None,  # Actual provider bill is not known.\n            "estimated_cost_usd": estimated_generation_cost_usd(\n                usage,\n                input_price_per_million=settings.ai_input_cost_per_million,\n                output_price_per_million=settings.ai_output_cost_per_million,\n            ),
+            "cost_usd": None,  # Actual provider bill is not known.
+            "estimated_cost_usd": estimated_generation_cost_usd(
+                usage,
+                input_price_per_million=settings.ai_input_cost_per_million,
+                output_price_per_million=settings.ai_output_cost_per_million,
+            ),
         }, sort_keys=True),
     )
