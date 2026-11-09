@@ -131,7 +131,7 @@
   const ACTIVE_HISTORY_REFRESH_MS = 5_000;
   const FINAL_HISTORY_REFRESH_MS = 500;
   const STREAM_WORD_INTERVAL_MS = 30;
-  const STREAM_CATCH_UP_STEPS = 70;
+  const STREAM_MAX_WORDS_PER_FRAME = 2;
   const IDLE_HISTORY_REFRESH_MS = 30_000;
   const MAX_HISTORY_RETRY_MS = 120_000;
   let historyTimer;
@@ -661,8 +661,9 @@
         visibleLength = partialText.length;
       } else {
         const words = partialText.slice(visibleLength).match(/\s*\S+\s*|\s+/g) || [];
-        const step = Math.ceil(words.length / STREAM_CATCH_UP_STEPS);
-        for (const word of words.slice(0, step)) visibleLength += word.length;
+        // Bound the visual catch-up rate: a buffered network burst must not
+        // instantly paint the entire reply and look like non-streaming output.
+        for (const word of words.slice(0, STREAM_MAX_WORDS_PER_FRAME)) visibleLength += word.length;
       }
       nextWordAt = now + STREAM_WORD_INTERVAL_MS;
       renderPartial();
@@ -778,7 +779,9 @@
       while (!signal.aborted) {
         const { value, done } = await reader.read();
         if (done) return false;
+        // SSE permits CRLF line endings; normalize across chunk boundaries.
         buffer += value;
+        buffer = buffer.replace(/\r\n/g, "\n");
         let boundary;
         while ((boundary = buffer.indexOf("\n\n")) >= 0) {
           const frame = buffer.slice(0, boundary);
