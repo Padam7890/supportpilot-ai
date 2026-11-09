@@ -374,6 +374,7 @@ async def search_agent_knowledge(
                     DocumentEmbedding.embedding_model == settings.ai_embedding_model,
                     DocumentEmbedding.embedding_version == settings.ai_embedding_version,
                     DocumentEmbedding.dimensions == settings.ai_embedding_dimensions,
+                    DocumentEmbedding.content_hash == DocumentChunk.content_hash,
                 )
             )
             if settings.ai_retrieval_similarity_threshold is not None:
