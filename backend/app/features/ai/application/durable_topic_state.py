@@ -6,7 +6,7 @@ Callers must set the tenant DB context before using the repository.
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKeyConstraint, Integer, String, Uuid, select, update
+from sqlalchemy import CheckConstraint, DateTime, ForeignKeyConstraint, Index, Integer, String, Uuid, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
@@ -20,6 +20,9 @@ _TTL = timedelta(hours=24)
 class ConversationTopicState(Base):
     __tablename__ = "conversation_topic_states"
     __table_args__ = (
+        CheckConstraint("version > 0", name="ck_topic_state_version"),
+        CheckConstraint("active_topic IN ('refund','delivery','order','product','payment')", name="ck_topic_state_topic"),
+        Index("ix_topic_state_org_expiry", "organization_id", "expires_at"),
         ForeignKeyConstraint(
             ["organization_id", "conversation_id"],
             ["conversations.organization_id", "conversations.id"],
