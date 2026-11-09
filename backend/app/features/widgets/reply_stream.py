@@ -33,6 +33,7 @@ REDIS_START = "0-0"
 STATUS_OFFSET = "0-1"
 TERMINAL_OFFSET = "18446744073709551615-18446744073709551615"
 COMMITTED_CHUNK_SIZE = 96
+COMMITTED_OFFSET_PREFIX = "18446744073709551614-"
 COMMITTED_CHUNK_DELAY_SECONDS = 0.035
 
 
@@ -94,9 +95,9 @@ def committed_reply_chunks(text: str, after_offset: str) -> list[tuple[str, str]
         for i in range(0, len(text), COMMITTED_CHUNK_SIZE)
     ]
     start = 0
-    if re.fullmatch(r"1-\\d+", after_offset):
+    if re.fullmatch(r"18446744073709551614-\\d+", after_offset):
         start = min(len(chunks), int(after_offset.split("-")[1]))
-    return [(f"1-{index + 1}", chunks[index]) for index in range(start, len(chunks))]
+    return [(f"{COMMITTED_OFFSET_PREFIX}{index + 1}", chunks[index]) for index in range(start, len(chunks))]
 
 
 async def latest_execution(db, org: UUID, conversation_id: UUID) -> AIExecution | None:
