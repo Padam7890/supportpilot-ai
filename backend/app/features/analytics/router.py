@@ -780,6 +780,8 @@ async def ai_usage(
         prompt_tokens=prompt,
         completion_tokens=completion,
         total_tokens=prompt + completion,
+        missing_usage_executions=int(incomplete_usage),
+        unpriced_executions=int(unpriced_executions),
         estimated_cost_usd=estimated_cost,
         input_cost_per_million_usd=settings.ai_input_cost_per_million if estimated_cost is not None else None,
         output_cost_per_million_usd=settings.ai_output_cost_per_million if estimated_cost is not None else None,
