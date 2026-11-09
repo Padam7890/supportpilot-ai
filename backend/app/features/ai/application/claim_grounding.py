@@ -1,0 +1,53 @@
+"""Conservative claim-level checks for knowledge-grounded support responses.
+
+This module never treats retrieval overlap as semantic entailment. It is an
+additional safety gate for citations and numeric claims, not an LLM judge.
+"""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+
+_CITATION = re.compile(r"\\[(?:source|doc)\\s*:?\\s*(\\d+)\\]", re.IGNORECASE)
+_NUMBER = re.compile(r"(?<![\\w])(?:\\d+(?:[.,]\\d+)?)(?:\\s*%|\\s*(?:days?|hours?|weeks?|months?|years?))?", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class ClaimCheck:
+    accepted: bool
+    reason: str
+    cited_source_indices: tuple[int, ...] = ()
+    unsupported_numbers: tuple[str, ...] = ()
+
+
+def check_grounded_claims(
+    response: str,
+    sources: Sequence[Mapping[str, object]],
+    *,
+    require_citations: bool = True,
+) -> ClaimCheck:
+    """Check cited source indices and exact numeric claims against cited excerpts.
+
+    Indexing is one-based. Missing/invalid citations fail closed. Numeric
+    matches are conservative lexical checks, not proof of policy correctness.
+    """
+    cited = tuple(sorted({int(value) for value in _CITATION.findall(response)}))
+    if not sources:
+        return ClaimCheck(False, "no_sources", cited)
+    if require_citations and not cited:
+        return ClaimCheck(False, "missing_citations")
+    if any(index < 1 or index > len(sources) for index in cited):
+        return ClaimCheck(False, "invalid_citation_index", cited)
+    evidence = " ".join(
+        str(sources[index - 1].get("excerpt", ""))
+        for index in cited
+    ) if cited else " ".join(str(source.get("excerpt", "")) for source in sources)
+    answer_without_citations = _CITATION.sub("", response)
+    numbers = {value.casefold().strip() for value in _NUMBER.findall(answer_without_citations)}
+    source_numbers = {value.casefold().strip() for value in _NUMBER.findall(evidence)}
+    missing = tuple(sorted(numbers - source_numbers))
+    if missing:
+        return ClaimCheck(False, "unsupported_numeric_claim", cited, missing)
+    return ClaimCheck(True, "lexical_checks_passed", cited)
