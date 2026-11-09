@@ -16,7 +16,11 @@ from app.features.ai.application.catalog_search import (
     load_candidates,
 )
 from app.features.ai.application.context import load_execution_context
-from app.features.ai.application.conversational_intents import playground_conversational_reply
+from app.features.ai.application.conversation_orchestration import (
+    plan_playground_turn,
+    plan_widget_turn,
+    playground_missing_knowledge_reply,
+)
 from app.features.ai.application.intent_extraction import extract_intent
 from app.features.ai.application.knowledge_inventory import (
     format_knowledge_inventory,
@@ -50,14 +54,10 @@ from app.services.ai_execution import create_grounded_draft, is_provider_configu
 from app.services.widget_ai import (
     AI_TEMPORARY_FAILURE_REPLY,
     VERIFIED_CANCELLATION_REPLY,
-    widget_clarification_reply,
-    widget_greeting_reply,
+    WIDGET_PROVIDER_UNAVAILABLE_REPLY,
     widget_is_cancellation_request,
     widget_missing_knowledge_reply,
-    WIDGET_PROVIDER_UNAVAILABLE_REPLY,
-    widget_purchase_reply,
     widget_request_needs_order_verification,
-    widget_sensitive_reply,
 )
 from app.workers.domain.lease_policy import AI_EXECUTION_LEASE as LEASE_TIMEOUT
 from app.workers.domain.retry_policy import retry_delay_seconds
@@ -131,15 +131,14 @@ async def fail_exhausted_ai_leases(organization_id: UUID) -> bool:
         return True
 
 
-async def finish_no_knowledge_execution(organization_id: UUID, execution_id: UUID) -> None:
+async def finish_no_knowledge_execution(
+    organization_id: UUID, execution_id: UUID, *, question: str = ""
+) -> None:
     """Complete a non-widget run without calling the model when retrieval is empty."""
     await finish_deterministic_ai_execution(
         organization_id,
         execution_id,
-        draft=(
-            "I couldn't find relevant information in this AI bot's assigned knowledge sources, "
-            "so I can't answer accurately yet. Add or assign a source that covers this question."
-        ),
+        draft=playground_missing_knowledge_reply(question),
         safe_summary=(
             "No matching knowledge was found in the active bot’s assigned sources; no model answer was generated."
         ),
@@ -340,24 +339,24 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             if await widget_reply_is_stale(organization_id, execution_id):
                 return
             delivery_status = "draft_ready" if execution.delivery_mode == "draft_only" else "sent"
-            purchase_reply = widget_purchase_reply(execution.question)
-            if purchase_reply is not None:
+            turn = plan_widget_turn(execution.question, transcript)
+            if turn.route in {"direct", "purchase", "clarification"}:
                 await finish_widget_reply(
                     organization_id,
                     execution_id,
-                    draft=purchase_reply,
+                    draft=turn.draft or "",
                     reply_status=delivery_status,
-                    safe_summary="The shopper asked to place an order and was directed to the merchant’s checkout; no purchase was created.",
+                    safe_summary=turn.safe_summary or "",
                     citations=[],
                     outcomes=[],
                     usage={},
                     model_name=None,
                 )
                 return
-            sensitive_reply = widget_sensitive_reply(execution.question)
-            if sensitive_reply is not None:
-                draft, safe_summary = sensitive_reply
-                reply_status = "escalated"
+            if turn.route == "sensitive":
+                draft = turn.draft or ""
+                reply_status = turn.reply_status
+                safe_summary = turn.safe_summary or ""
                 if widget_is_cancellation_request(execution.question):
                     order_verified, _order_reply = await verified_widget_order_reply(
                         organization_id, execution.conversation_id, execution.question
@@ -386,49 +385,6 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                     draft=draft,
                     reply_status=reply_status,
                     safe_summary=safe_summary,
-                    citations=[],
-                    outcomes=[],
-                    usage={},
-                    model_name=None,
-                )
-                return
-            conversational = playground_conversational_reply(execution.question)
-            if conversational is not None:
-                draft, _intent = conversational
-                await finish_widget_reply(
-                    organization_id,
-                    execution_id,
-                    draft=draft,
-                    reply_status=delivery_status,
-                    safe_summary="A conversational reply was sent without retrieval or a model call.",
-                    citations=[],
-                    outcomes=[{"tool": "widget_conversation_intent", "status": "completed", "result_count": 0}],
-                    usage={},
-                    model_name=None,
-                )
-                return
-            greeting = widget_greeting_reply(execution.question)
-            if greeting is not None:
-                await finish_widget_reply(
-                    organization_id,
-                    execution_id,
-                    draft=greeting,
-                    reply_status=delivery_status,
-                    safe_summary="A conversational reply was prepared without using private customer or order data.",
-                    citations=[],
-                    outcomes=[],
-                    usage={},
-                    model_name=None,
-                )
-                return
-            clarification = widget_clarification_reply(execution.question, transcript)
-            if clarification is not None:
-                await finish_widget_reply(
-                    organization_id,
-                    execution_id,
-                    draft=clarification,
-                    reply_status=delivery_status,
-                    safe_summary="A deterministic clarification explained the active support workflow without a model call.",
                     citations=[],
                     outcomes=[],
                     usage={},
@@ -502,17 +458,14 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 await db.commit()
             return
         if execution.kind == "playground":
-            conversational_reply = playground_conversational_reply(question)
-            if conversational_reply is not None:
-                draft, intent = conversational_reply
+            playground_plan = plan_playground_turn(question)
+            if playground_plan is not None:
                 await finish_deterministic_ai_execution(
                     organization_id,
                     execution_id,
-                    draft=draft,
-                    safe_summary=(
-                        f"A deterministic {intent} response was returned without document retrieval or a model call."
-                    ),
-                    tool_name="playground_conversation_intent",
+                    draft=playground_plan.draft or "",
+                    safe_summary=playground_plan.safe_summary or "",
+                    tool_name=playground_plan.tool_name,
                     result_count=0,
                 )
                 return
@@ -536,7 +489,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                     model_name=None,
                 )
                 return
-            await finish_no_knowledge_execution(organization_id, execution_id)
+            await finish_no_knowledge_execution(organization_id, execution_id, question=question)
             return
         if execution.kind == "widget_reply" and not is_provider_configured():
             _log_ai_execution_event(

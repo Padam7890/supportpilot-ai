@@ -469,6 +469,47 @@ async def test_playground_without_assigned_knowledge_completes_without_calling_m
 
 
 @pytest.mark.anyio
+async def test_playground_social_turn_skips_rag_and_preserves_channel_response(client, monkeypatch):
+    platform = await platform_owner(client)
+    owner = await approved_workspace(client, platform, "ai-playground-social")
+    organization_id = UUID(owner["user"]["organization_id"])
+    monkeypatch.setattr(settings, "ai_provider_base_url", "http://127.0.0.1:8012/v1")
+    monkeypatch.setattr(settings, "ai_model", "test-support-model")
+    monkeypatch.setattr(httpx, "AsyncClient", MockProviderClient)
+    MockProviderClient.last_request = None
+
+    async def unexpected_retrieval(*_args, **_kwargs):
+        raise AssertionError("standalone social turns must skip retrieval")
+
+    monkeypatch.setattr(
+        "app.features.ai.application.context.search_agent_knowledge", unexpected_retrieval
+    )
+    queued = await client.post(
+        "/api/v1/ai/playground",
+        headers=bearer(owner["access_token"]),
+        json={
+            "question": "hey whats up",
+            "conversation_history": [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi! What can I help with?"},
+            ],
+        },
+    )
+    assert queued.status_code == 202, queued.text
+    execution_id = UUID(queued.json()["id"])
+    assert await claim_ai_execution(organization_id) == execution_id
+    await process_ai_execution(organization_id, execution_id)
+
+    result = await client.get(f"/api/v1/ai/executions/{execution_id}", headers=bearer(owner["access_token"]))
+    assert result.status_code == 200, result.text
+    assert result.json()["status"] == "succeeded"
+    assert result.json()["draft"] == "Hey! I'm doing well, thanks. How can I help you today?"
+    assert result.json()["citations"] == []
+    assert result.json()["usage"] == {}
+    assert MockProviderClient.last_request is None
+
+
+@pytest.mark.anyio
 async def test_ai_active_execution_limit_is_enforced_under_concurrent_requests(client, monkeypatch):
     platform = await platform_owner(client)
     owner = await approved_workspace(client, platform, "ai-cap")

@@ -6,6 +6,10 @@ from uuid import UUID
 from sqlalchemy import select
 
 from app.db.session import SessionLocal, set_tenant_context
+from app.features.ai.application.conversational_intents import (
+    classify_conversational_intent,
+    should_skip_knowledge_retrieval,
+)
 from app.features.ai.application.retrieval import is_contextual_follow_up
 from app.features.ai.application.retrieval_search import search_agent_knowledge
 from app.models import (
@@ -169,9 +173,10 @@ async def load_execution_context(
             execution.instructions = "\n\n".join(
                 item for item in (agent_instructions, request_instructions) if item
             )[:9000]
+        channel = "playground" if execution.kind == "playground" else "widget"
         if include_knowledge is False or (
             include_knowledge is None and execution.kind == "widget_reply"
-        ):
+        ) or should_skip_knowledge_retrieval(execution.question, channel=channel):
             return execution, question, conversation_context, [], [], [], integration_context
         search_result = (
             await search_agent_knowledge(

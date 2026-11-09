@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.observability import current_correlation_id
+from app.features.ai.application.conversational_intents import widget_conversational_reply
 from app.features.ai.application.retrieval import build_retrieval_terms
 from app.features.ai.domain.shopping_state import SHOPPING_CUES
 from app.models import (
@@ -65,23 +66,6 @@ SENSITIVE_REQUEST = re.compile(
     r"\b(order|tracking|track my|shipment|shipped|package|parcel|cancel|cancellation|"
     r"refund|return|exchange|payment|charged|billing|address|change my|account|"
     r"personal data|private information|password)\b",
-    re.IGNORECASE,
-)
-SIMPLE_GREETING = re.compile(
-    r"^(?:hi|hello|hey|good morning|good afternoon|good evening)(?: there)?[!. ,]*$",
-    re.IGNORECASE,
-)
-SIMPLE_THANKS = re.compile(
-    r"^(?:thanks|thank you|thx|cheers)(?: so much| a lot| there)?[!. ,]*$",
-    re.IGNORECASE,
-)
-CAPABILITIES_QUESTION = re.compile(
-    r"\b(?:what can you do|how can you help|can you help me|are you (?:a bot|an ai)|what are you)\b",
-    re.IGNORECASE,
-)
-CASUAL_CONVERSATION = re.compile(
-    r"^(?:how are you|how are you doing|what.s up|are you there|are you online|"
-    r"can you hear me|नमस्ते,? कस्तो छ|तपाईंलाई कस्तो छ)[?.! ,]*$",
     re.IGNORECASE,
 )
 CLARIFICATION_REQUEST = re.compile(
@@ -163,17 +147,9 @@ def widget_purchase_reply(message: str) -> str | None:
 
 
 def widget_greeting_reply(message: str) -> str | None:
-    """Return a deterministic greeting for a standalone greeting only."""
-    normalized = message.strip()
-    if SIMPLE_GREETING.fullmatch(normalized):
-        return GREETING_REPLY
-    if SIMPLE_THANKS.fullmatch(normalized):
-        return THANKS_REPLY
-    if CASUAL_CONVERSATION.fullmatch(normalized):
-        return "I’m doing well, thanks for asking! What can I help you with today?"
-    if CAPABILITIES_QUESTION.search(normalized):
-        return CAPABILITIES_REPLY
-    return None
+    """Compatibility wrapper around the shared social-intent router."""
+    routed = widget_conversational_reply(message)
+    return routed[0] if routed else None
 
 
 def widget_clarification_reply(message: str, transcript: list[dict[str, str]]) -> str | None:

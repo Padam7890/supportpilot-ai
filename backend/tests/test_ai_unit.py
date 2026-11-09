@@ -6,6 +6,10 @@ from uuid import uuid4
 import pytest
 
 from app.core.config import settings
+from app.features.ai.application.conversational_intents import (
+    classify_conversational_intent,
+    playground_conversational_reply,
+)
 from app.features.ai.application.retrieval import build_retrieval_terms
 from app.features.ai.application.retrieval_search import reciprocal_rank_fusion
 from app.features.ai.domain.failure_codes import is_retryable_ai_failure
@@ -130,6 +134,48 @@ def test_multilingual_retrieval_expands_support_terms(question, expected):
     assert expected.issubset(set(build_retrieval_terms(question)))
 
 
+@pytest.mark.parametrize(
+    ("message", "intent_name"),
+    [
+        ("hey whats up", "casual"),
+        ("Hey, what's up bro?", "casual"),
+        ("how are you doing today", "casual"),
+        ("good morning", "greeting"),
+        ("thanks bro", "thanks"),
+        ("namaste", "greeting"),
+        ("नमस्कार", "greeting"),
+        ("धन्यवाद", "thanks"),
+        ("pachi bhetaula", "goodbye"),
+    ],
+)
+def test_shared_conversational_router_handles_social_variations(message, intent_name):
+    result = classify_conversational_intent(message)
+
+    assert result is not None
+    assert result.name == intent_name
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Hi, what is your refund policy?",
+        "hey whats up, where is my order?",
+        "Good morning, can I return this item?",
+        "Thanks bro, can you check my shipment?",
+        "Namaste, what are your delivery charges?",
+    ],
+)
+def test_shared_conversational_router_keeps_mixed_support_questions_on_support_path(message):
+    assert classify_conversational_intent(message) is None
+
+
+def test_playground_social_reply_uses_expected_natural_response():
+    assert playground_conversational_reply("hey whats up") == (
+        "Hey! I'm doing well, thanks. How can I help you today?",
+        "casual",
+    )
+
+
 def test_retrieval_method_hybrid_when_keyword_and_semantic_candidates_merge():
     merged = {
         "a": {"semantic_rank": 1, "keyword_rank": 1},
@@ -195,7 +241,52 @@ async def test_source_less_playground_skips_model_and_uses_safe_completion(monke
 
     await process_ai_execution(organization_id, execution_id)
 
-    finish_no_knowledge.assert_awaited_once_with(organization_id, execution_id)
+    finish_no_knowledge.assert_awaited_once_with(
+        organization_id, execution_id, question=execution.question
+    )
+    generate.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_playground_casual_message_completes_deterministically_before_missing_knowledge(
+    monkeypatch,
+):
+    import app.services.ai_worker as worker
+
+    organization_id = uuid4()
+    execution_id = uuid4()
+    execution = SimpleNamespace(
+        kind="playground",
+        question="hey whats up",
+        ai_agent_id=uuid4(),
+        attempt_count=1,
+        correlation_id=None,
+    )
+    monkeypatch.setattr(
+        worker,
+        "load_execution_context",
+        AsyncMock(return_value=(execution, execution.question, [], [], [], [], {})),
+    )
+    finish = AsyncMock()
+    no_knowledge = AsyncMock()
+    generate = AsyncMock()
+    monkeypatch.setattr(worker, "finish_deterministic_ai_execution", finish)
+    monkeypatch.setattr(worker, "finish_no_knowledge_execution", no_knowledge)
+    monkeypatch.setattr(worker, "create_grounded_draft", generate)
+
+    await process_ai_execution(organization_id, execution_id)
+
+    finish.assert_awaited_once_with(
+        organization_id,
+        execution_id,
+        draft="Hey! I'm doing well, thanks. How can I help you today?",
+        safe_summary=(
+            "A deterministic casual response was returned without document retrieval or a model call."
+        ),
+        tool_name="playground_conversation_intent",
+        result_count=0,
+    )
+    no_knowledge.assert_not_awaited()
     generate.assert_not_awaited()
 
 
