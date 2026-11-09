@@ -7,6 +7,7 @@ import pytest
 
 from app.core.config import settings
 from app.features.ai.application.retrieval import build_retrieval_terms
+from app.features.ai.domain.failure_codes import is_retryable_ai_failure
 from app.features.ai.domain.policies import widget_reply_is_superseded
 from app.schemas.ai import AIExecutionOut
 from app.services.ai_execution import (
@@ -71,6 +72,25 @@ def test_ai_failures_have_safe_actionable_codes_without_exposing_exception_text(
     assert (
         _safe_ai_failure_code(RuntimeError("checkpoint connection failed")) == "ai_execution_failed"
     )
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        ("provider_timeout", True),
+        ("provider_unreachable", True),
+        ("workflow_timeout", True),
+        ("provider_http_429", True),
+        ("provider_http_503", True),
+        ("provider_http_401", False),
+        ("provider_invalid_response", False),
+        ("provider_not_configured", False),
+        ("execution_token_budget_exceeded", False),
+    ],
+)
+def test_ai_retry_policy_retries_only_transient_provider_failures(code, expected):
+    error = AIProviderError(code, "safe test error")
+    assert is_retryable_ai_failure(error) is expected
 
 
 @pytest.mark.parametrize(

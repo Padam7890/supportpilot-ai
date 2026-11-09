@@ -1,19 +1,22 @@
 """Background execution and tenant-scoped retrieval for AI tasks."""
 
+import json
 import logging
+import re
+import time
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import and_, or_, select
 
-from app.workers.domain.lease_policy import AI_EXECUTION_LEASE as LEASE_TIMEOUT
+from app.core.observability import current_correlation_id
 from app.db.session import SessionLocal, set_tenant_context
 from app.features.ai.application.catalog_search import (
     catalog_has_active_products,
     load_candidates,
 )
-from app.features.ai.application.conversational_intents import playground_conversational_reply
 from app.features.ai.application.context import load_execution_context
+from app.features.ai.application.conversational_intents import playground_conversational_reply
 from app.features.ai.application.intent_extraction import extract_intent
 from app.features.ai.application.knowledge_inventory import (
     format_knowledge_inventory,
@@ -30,7 +33,12 @@ from app.features.ai.application.widget_replies import (
     process_widget_shopping_execution,
     widget_reply_is_stale,
 )
-from app.features.ai.domain.failure_codes import safe_ai_failure_code as _safe_ai_failure_code
+from app.features.ai.domain.failure_codes import (
+    is_retryable_ai_failure,
+)
+from app.features.ai.domain.failure_codes import (
+    safe_ai_failure_code as _safe_ai_failure_code,
+)
 from app.features.ai.domain.ranking import build_recommendation_result
 from app.features.ai.infrastructure.llm_gateway import execution_token_budget
 from app.models import (
@@ -50,6 +58,7 @@ from app.services.widget_ai import (
     widget_request_needs_order_verification,
     widget_sensitive_reply,
 )
+from app.workers.domain.lease_policy import AI_EXECUTION_LEASE as LEASE_TIMEOUT
 from app.workers.domain.retry_policy import retry_delay_seconds
 
 logger = logging.getLogger(__name__)
@@ -169,7 +178,9 @@ async def finish_deterministic_ai_execution(
         row.draft = draft
         row.safe_summary = safe_summary
         row.citations = []
-        row.tool_outcomes = [{"tool": tool_name, "status": "completed", "result_count": result_count}]
+        row.tool_outcomes = [
+            {"tool": tool_name, "status": "completed", "result_count": result_count}
+        ]
         row.usage = {}
         row.model_name = None
         row.error_code = None
@@ -179,13 +190,41 @@ async def finish_deterministic_ai_execution(
 
 async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> None:
     now = datetime.now(UTC)
-    correlation_id: str | None = None
+    started_at = time.monotonic()
+    correlation_id = current_correlation_id()
+    execution_kind = "unknown"
+    ai_agent_id: UUID | None = None
+    attempt_count = 0
+    retrieval_match_count: int | None = None
+    failure_stage = "context_and_retrieval"
     try:
         loaded = await load_execution_context(organization_id, execution_id)
         if loaded is None:
+            _log_ai_execution_event(
+                "ai_execution_skipped",
+                execution_id=str(execution_id),
+                correlation_id=correlation_id,
+                failure_stage="load_execution",
+                execution_status="not_running_or_missing",
+                elapsed_ms=round((time.monotonic() - started_at) * 1000),
+            )
             return
         execution, question, transcript, context, citations, outcomes, integration_context = loaded
-        correlation_id = execution.correlation_id
+        correlation_id = execution.correlation_id or correlation_id
+        execution_kind = execution.kind
+        ai_agent_id = execution.ai_agent_id
+        attempt_count = execution.attempt_count
+        retrieval_match_count = len(citations)
+        _log_ai_execution_event(
+            "ai_execution_started",
+            execution_id=str(execution_id),
+            correlation_id=correlation_id,
+            execution_kind=execution_kind,
+            ai_agent_id=str(ai_agent_id) if ai_agent_id else None,
+            attempt_count=attempt_count,
+            retrieval_match_count=retrieval_match_count,
+        )
+        failure_stage = "deterministic_routing"
         if execution.kind == "recommendation":
             allowed_tools = execution.ai_agent_tools_snapshot
             if allowed_tools is None:
@@ -330,9 +369,14 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                         organization_id, execution.conversation_id, execution.question
                     )
                     if order_verified:
-                        draft = order_reply or AI_TEMPORARY_FAILURE_REPLY
+                        draft = order_reply or (
+                            "Your order is verified, but I couldn’t retrieve its latest status. "
+                            "A store teammate can follow up here."
+                        )
                         reply_status = (
-                            "escalated" if draft == AI_TEMPORARY_FAILURE_REPLY else delivery_status
+                            "escalated"
+                            if order_reply is None or "teammate can help" in order_reply.casefold()
+                            else delivery_status
                         )
                         safe_summary = "A current Shopify order lookup used the shopper’s active email verification."
                 await finish_widget_reply(
@@ -380,6 +424,26 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             )
             if shopping_outcome:
                 return
+            failure_stage = "knowledge_retrieval"
+            loaded = await load_execution_context(
+                organization_id,
+                execution_id,
+                include_knowledge=True,
+            )
+            if loaded is None:
+                return
+            execution, question, transcript, context, citations, outcomes, integration_context = (
+                loaded
+            )
+            retrieval_match_count = len(citations)
+            _log_ai_execution_event(
+                "ai_knowledge_retrieval_completed",
+                execution_id=str(execution_id),
+                correlation_id=correlation_id,
+                execution_kind=execution_kind,
+                ai_agent_id=str(ai_agent_id) if ai_agent_id else None,
+                retrieval_match_count=retrieval_match_count,
+            )
         if execution.kind == "playground" and is_knowledge_inventory_question(question):
             async with SessionLocal() as db:
                 await set_tenant_context(db, organization_id)
@@ -406,9 +470,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 row.playground_history = None
                 row.integration_context_encrypted = None
                 row.draft = answer
-                row.safe_summary = (
-                    f"Listed {document_count} ready document(s) in this bot’s active assigned sources; no model call was made."
-                )
+                row.safe_summary = f"Listed {document_count} ready document(s) in this bot’s active assigned sources; no model call was made."
                 row.citations = []
                 row.tool_outcomes = [
                     {
@@ -447,11 +509,13 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                     reply_status="escalated",
                     safe_summary="No matching knowledge was found in the active bot’s assigned sources. The shopper received a safe next step.",
                     citations=[],
-                    outcomes=[{
-                        "tool": "tenant_knowledge_search",
-                        "status": "completed",
-                        "result_count": 0,
-                    }],
+                    outcomes=[
+                        {
+                            "tool": "tenant_knowledge_search",
+                            "status": "completed",
+                            "result_count": 0,
+                        }
+                    ],
                     usage={},
                     model_name=None,
                 )
@@ -459,10 +523,20 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             await finish_no_knowledge_execution(organization_id, execution_id)
             return
         if execution.kind == "widget_reply" and not is_provider_configured():
-            logger.warning(
-                "Widget AI provider is not configured: execution_id=%s correlation_id=%s",
-                execution_id,
-                correlation_id,
+            _log_ai_execution_event(
+                "ai_execution_failed",
+                execution_id=str(execution_id),
+                correlation_id=correlation_id,
+                execution_kind=execution_kind,
+                ai_agent_id=str(ai_agent_id) if ai_agent_id else None,
+                failure_stage="provider_configuration",
+                error_code="provider_not_configured",
+                provider_http_status=None,
+                attempt_count=attempt_count,
+                elapsed_ms=round((time.monotonic() - started_at) * 1000),
+                retrieval_match_count=retrieval_match_count,
+                execution_status="succeeded_with_handoff",
+                delivery_status="escalated",
             )
             await finish_widget_reply(
                 organization_id,
@@ -474,8 +548,10 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 outcomes=[],
                 usage={},
                 model_name=None,
+                failure_code="provider_not_configured",
             )
             return
+        failure_stage = "provider_generation"
         result = await create_grounded_draft(
             organization_id=organization_id,
             execution_id=execution_id,
@@ -489,6 +565,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             ),
         )
         if execution.kind == "widget_reply":
+            failure_stage = "reply_persistence"
             await finish_widget_reply(
                 organization_id,
                 execution_id,
@@ -502,13 +579,16 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             )
             return
         async with SessionLocal() as db:
+            failure_stage = "result_persistence"
             await set_tenant_context(db, organization_id)
             row = await db.scalar(
-                select(AIExecution).where(
+                select(AIExecution)
+                .where(
                     AIExecution.id == execution_id,
                     AIExecution.organization_id == organization_id,
                     AIExecution.status == "running",
-                ).with_for_update()
+                )
+                .with_for_update()
             )
             if row is None:
                 await db.rollback()
@@ -527,7 +607,9 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 row.integration_context_encrypted = None
                 row.playground_history = None
                 row.draft = "This AI bot is inactive. Activate it and run the request again."
-                row.safe_summary = "The selected AI bot was deactivated before the answer completed."
+                row.safe_summary = (
+                    "The selected AI bot was deactivated before the answer completed."
+                )
                 row.citations = []
                 row.error_code = None
                 row.completed_at = now
@@ -573,12 +655,23 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             await db.commit()
     except Exception as exc:  # noqa: BLE001 - record failures safely and keep the worker alive
         failure_code = _safe_ai_failure_code(exc)
-        logger.warning(
-            "AI execution failed: execution_id=%s correlation_id=%s error_type=%s failure_code=%s",
-            execution_id,
-            correlation_id,
-            type(exc).__name__,
-            failure_code,
+        status_match = re.fullmatch(r"provider_http_(\d{3})", failure_code)
+        provider_http_status = int(status_match.group(1)) if status_match else None
+        retryable = is_retryable_ai_failure(exc)
+        _log_ai_execution_event(
+            "ai_execution_failed",
+            execution_id=str(execution_id),
+            correlation_id=correlation_id,
+            execution_kind=execution_kind,
+            ai_agent_id=str(ai_agent_id) if ai_agent_id else None,
+            failure_stage=failure_stage,
+            error_code=failure_code,
+            error_type=type(exc).__name__,
+            provider_http_status=provider_http_status,
+            attempt_count=attempt_count,
+            elapsed_ms=round((time.monotonic() - started_at) * 1000),
+            retrieval_match_count=retrieval_match_count,
+            retryable=retryable,
         )
         widget_fallback_mode: str | None = None
         async with SessionLocal() as db:
@@ -595,7 +688,8 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             if row is None:
                 await db.rollback()
                 return
-            exhausted = row.attempt_count >= row.max_attempts
+            attempt_count = row.attempt_count
+            exhausted = not retryable or attempt_count >= row.max_attempts
             if exhausted and row.kind == "widget_reply":
                 widget_fallback_mode = row.delivery_mode
                 await db.rollback()
@@ -612,9 +706,10 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                     if exhausted
                     else None
                 )
-                row.next_attempt_at = now + timedelta(
-                    seconds=retry_delay_seconds(row.attempt_count, base_seconds=5, cap_seconds=60)
-                )
+                if not exhausted:
+                    row.next_attempt_at = now + timedelta(
+                        seconds=retry_delay_seconds(attempt_count, base_seconds=5, cap_seconds=60)
+                    )
                 row.completed_at = now if exhausted else None
                 await db.commit()
         if widget_fallback_mode is not None:
@@ -629,13 +724,30 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                     outcomes=[],
                     usage={},
                     model_name=None,
+                    failure_code=failure_code,
                 )
             except Exception as fallback_exc:  # noqa: BLE001 - keep the worker alive if persistence is unavailable.
-                logger.error(
-                    "AI widget fallback persistence failed: execution_id=%s error_type=%s",
-                    execution_id,
-                    type(fallback_exc).__name__,
+                _log_ai_execution_event(
+                    "ai_widget_fallback_persistence_failed",
+                    execution_id=str(execution_id),
+                    correlation_id=correlation_id,
+                    execution_kind=execution_kind,
+                    ai_agent_id=str(ai_agent_id) if ai_agent_id else None,
+                    failure_stage="fallback_persistence",
+                    error_code=_safe_ai_failure_code(fallback_exc),
+                    error_type=type(fallback_exc).__name__,
+                    provider_http_status=None,
+                    attempt_count=attempt_count,
+                    elapsed_ms=round((time.monotonic() - started_at) * 1000),
+                    retrieval_match_count=retrieval_match_count,
+                    execution_status="failed",
+                    delivery_status="failed",
                 )
+
+
+def _log_ai_execution_event(event: str, **fields: object) -> None:
+    """Emit one JSON diagnostic record without prompt, customer, or credential data."""
+    logger.info("ai_execution_event %s", json.dumps({"event": event, **fields}, sort_keys=True))
 
 
 async def process_ai_execution(organization_id: UUID, execution_id: UUID) -> None:

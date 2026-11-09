@@ -47,6 +47,29 @@ class KnowledgeDocumentPage(BaseModel):
     offset: int
 
 
+class DocumentEmbeddingJobOut(BaseModel):
+    id: uuid.UUID
+    document_id: uuid.UUID
+    embedding_model: str
+    embedding_version: str
+    dimensions: int
+    status: Literal["queued", "running", "succeeded", "failed", "cancelled"]
+    attempt_count: int
+    max_attempts: int
+    next_attempt_at: datetime
+    last_error_code: str | None = None
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DocumentEmbeddingBackfillOut(BaseModel):
+    queued_count: int
+    job_ids: list[uuid.UUID]
+    embedding_model: str
+    embedding_version: str
+
+
 class KnowledgeDocumentMove(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

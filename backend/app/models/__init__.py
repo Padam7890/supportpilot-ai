@@ -26,6 +26,8 @@ from app.models.knowledge_base import AIAgent, AIAgentKnowledgeBase, KnowledgeBa
 from app.models.knowledge_base_audit import KnowledgeBaseAudit
 from app.models.knowledge_document import (
     DocumentChunk,
+    DocumentEmbedding,
+    DocumentEmbeddingJob,
     DocumentIngestionJob,
     KnowledgeDocument,
     KnowledgeDocumentSource,
@@ -77,6 +79,8 @@ __all__ = [
     "ConversationReadState",
     "Customer",
     "DocumentChunk",
+    "DocumentEmbedding",
+    "DocumentEmbeddingJob",
     "DocumentIngestionJob",
     "IntegrationConnection",
     "IntegrationConnectionAudit",

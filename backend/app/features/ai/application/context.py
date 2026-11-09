@@ -19,7 +19,7 @@ from app.models import (
 
 
 async def load_execution_context(
-    organization_id: UUID, execution_id: UUID
+    organization_id: UUID, execution_id: UUID, *, include_knowledge: bool | None = None
 ) -> (
     tuple[
         AIExecution,
@@ -58,7 +58,8 @@ async def load_execution_context(
             conversation_context = [
                 {"sender": turn["role"], "content": turn["content"][:600]}
                 for turn in execution.playground_history[-6:]
-                if turn.get("role") in {"user", "assistant"} and isinstance(turn.get("content"), str)
+                if turn.get("role") in {"user", "assistant"}
+                and isinstance(turn.get("content"), str)
             ]
         if execution.conversation_id:
             conversation = await db.scalar(
@@ -129,9 +130,7 @@ async def load_execution_context(
                     if is_contextual_follow_up(execution.question)
                     else []
                 )
-                retrieval_text = " ".join(
-                    [*prior_customer_questions, execution.question[:1200]]
-                )
+                retrieval_text = " ".join([*prior_customer_questions, execution.question[:1200]])
             else:
                 question = (
                     f"Draft a reply to the latest customer message. Ticket: {ticket.subject if ticket else 'Support request'}. "
@@ -149,11 +148,13 @@ async def load_execution_context(
             )
             retrieval_text = " ".join([*previous_questions, question])
         search_text = retrieval_text[:2000]
-        agent = await db.scalar(select(AIAgent).where(
-            AIAgent.organization_id == organization_id,
-            AIAgent.id == execution.ai_agent_id,
-            AIAgent.status == "active",
-        ))
+        agent = await db.scalar(
+            select(AIAgent).where(
+                AIAgent.organization_id == organization_id,
+                AIAgent.id == execution.ai_agent_id,
+                AIAgent.status == "active",
+            )
+        )
         if agent is None:
             execution.instructions = None
         else:
@@ -168,6 +169,10 @@ async def load_execution_context(
             execution.instructions = "\n\n".join(
                 item for item in (agent_instructions, request_instructions) if item
             )[:9000]
+        if include_knowledge is False or (
+            include_knowledge is None and execution.kind == "widget_reply"
+        ):
+            return execution, question, conversation_context, [], [], [], integration_context
         search_result = (
             await search_agent_knowledge(
                 db,
@@ -178,7 +183,7 @@ async def load_execution_context(
             if agent is not None
             else None
         )
-        if search_result is None or not search_result.terms_available:
+        if search_result is None:
             return execution, question, conversation_context, [], [], [], integration_context
         context = [
             {
@@ -198,11 +203,23 @@ async def load_execution_context(
                 "chunk_index": match.chunk_index,
                 "excerpt": match.excerpt[:320],
                 "match_basis": match.match_basis,
+                "rrf_score": match.rrf_score,
+                "semantic_similarity": match.semantic_similarity,
+                "keyword_rank": match.keyword_rank,
+                "semantic_rank": match.semantic_rank,
             }
             for match in search_result.matches
         ]
         outcomes: list[dict[str, str | int]] = [
-            {"tool": "tenant_knowledge_search", "status": "completed", "result_count": len(search_result.matches)}
+            {
+                "tool": "tenant_knowledge_search",
+                "status": "completed",
+                "result_count": len(search_result.matches),
+                "retrieval_method": search_result.retrieval_method,
+                "latency_ms": search_result.retrieval_latency_ms,
+                "keyword_candidates": sum(match.keyword_rank is not None for match in search_result.matches),
+                "semantic_candidates": sum(match.semantic_rank is not None for match in search_result.matches),
+            }
         ]
         if integration_context:
             outcomes.append(

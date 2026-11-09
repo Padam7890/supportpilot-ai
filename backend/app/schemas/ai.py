@@ -28,7 +28,11 @@ class AICitation(BaseModel):
     knowledge_base_name: str | None = None
     chunk_index: int
     excerpt: str
-    match_basis: Literal["chunk_content", "source_title"] | None = None
+    match_basis: Literal["chunk_content", "source_title", "semantic", "hybrid"] | None = None
+    rrf_score: float | None = None
+    semantic_similarity: float | None = None
+    keyword_rank: int | None = None
+    semantic_rank: int | None = None
 
 
 class AIPlaygroundRetrievalPreviewRequest(BaseModel):
@@ -46,6 +50,9 @@ class AIPlaygroundRetrievalPreviewOut(BaseModel):
     active_assigned_base_count: int
     ready_document_count: int
     matched_passage_count: int
+    retrieval_method: Literal["keyword", "semantic", "hybrid", "none"] = "none"
+    retrieval_latency_ms: int = 0
+    embedding_status: str = "disabled"
     retrieval_terms: list[Annotated[str, StringConstraints(max_length=80)]] = Field(
         default_factory=list,
         max_length=64,

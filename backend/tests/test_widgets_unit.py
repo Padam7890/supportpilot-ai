@@ -56,7 +56,9 @@ def test_widget_first_message_requires_explicit_consent_for_contact_details():
     with pytest.raises(ValidationError):
         WidgetFirstMessage(content="Where is my package?", visitor_email="shopper@example.com")
     accepted = WidgetFirstMessage(
-        content="  Where is my package?  ", visitor_email="shopper@example.com", contact_consent=True
+        content="  Where is my package?  ",
+        visitor_email="shopper@example.com",
+        contact_consent=True,
     )
     assert accepted.content == "Where is my package?"
     assert accepted.contact_consent is True
@@ -122,7 +124,11 @@ def test_widget_ai_handles_simple_conversation_without_model_call(message, expec
 
 @pytest.mark.parametrize(
     "message",
-    ["hello, where is my order?", "hey can I get a refund?", "hello there! can you help with an order?"],
+    [
+        "hello, where is my order?",
+        "hey can I get a refund?",
+        "hello there! can you help with an order?",
+    ],
 )
 def test_widget_ai_does_not_treat_requests_as_standalone_greetings(message):
     assert widget_greeting_reply(message) is None
@@ -151,6 +157,14 @@ def test_widget_missing_knowledge_replies_are_specific_to_the_question_type():
     assert "exact policy" in policy
     assert "more detail" in general
     assert len({product, policy, general}) == 3
+
+
+@pytest.mark.parametrize("message", ["How are you?", "Are you there?", "what's up?"])
+def test_widget_casual_conversation_does_not_require_rag_or_provider(message):
+    assert (
+        widget_greeting_reply(message)
+        == "I’m doing well, thanks for asking! What can I help you with today?"
+    )
 
 
 @pytest.mark.parametrize(
@@ -194,7 +208,9 @@ def test_verified_order_followups_only_select_an_explicit_order_number(question,
 
 
 def test_widget_order_verification_requires_order_email_and_six_digit_code():
-    assert WidgetOrderVerificationStart(order_number="#1001", email="shopper@example.com", consent=True)
+    assert WidgetOrderVerificationStart(
+        order_number="#1001", email="shopper@example.com", consent=True
+    )
     assert WidgetOrderVerificationCode(code="042681").code == "042681"
     with pytest.raises(ValidationError):
         WidgetOrderVerificationCode(code="123")

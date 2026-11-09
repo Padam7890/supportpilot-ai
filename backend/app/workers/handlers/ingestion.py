@@ -12,6 +12,7 @@ from uuid import UUID
 from pypdf import PdfReader
 from sqlalchemy import and_, or_, select
 
+from app.features.ai.application.embedding_jobs import enqueue_document_embeddings
 from app.workers.domain.lease_policy import DOCUMENT_INGESTION_LEASE as LEASE_TIMEOUT
 from app.db.session import SessionLocal, set_tenant_context
 from app.models import (
@@ -280,6 +281,13 @@ async def process_job(organization_id: UUID, job_id: UUID, document_id: UUID) ->
                     content=chunk,
                 )
                 for index, chunk in enumerate(chunks)
+            )
+            await db.flush()
+            await enqueue_document_embeddings(
+                db,
+                organization_id=organization_id,
+                document_id=document_id,
+                correlation_id=correlation_id,
             )
             document.status = "ready"
             job.status = "succeeded"

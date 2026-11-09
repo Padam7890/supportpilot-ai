@@ -30,6 +30,18 @@ class Settings(BaseSettings):
     ai_model: str | None = None
     ai_provider_timeout_seconds: int = Field(default=45, ge=5, le=120)
     ai_provider_max_attempts: int = Field(default=2, ge=1, le=3)
+    ai_embedding_model: str | None = None
+    ai_embedding_dimensions: int = Field(default=1536, ge=1, le=4096)
+    ai_embedding_version: str = "v1"
+    ai_embedding_batch_size: int = Field(default=32, ge=1, le=128)
+    ai_retrieval_dedupe: bool = True
+    ai_retrieval_keyword_limit: int = Field(default=12, ge=1, le=50)
+    ai_retrieval_semantic_limit: int = Field(default=12, ge=1, le=50)
+    ai_retrieval_result_limit: int = Field(default=6, ge=1, le=10)
+    # Cosine similarity lies in [-1, 1]. None keeps the evaluation baseline
+    # unthresholded until a corpus-specific threshold has been measured.
+    ai_retrieval_similarity_threshold: float | None = Field(default=None, ge=-1, le=1)
+    ai_retrieval_token_budget: int = Field(default=4000, ge=256, le=16000)
     worker_concurrency: int = Field(default=4, ge=1, le=32)
     worker_job_timeout_seconds: int = Field(default=110, ge=10, le=150)
     ai_input_cost_per_million: float | None = Field(default=None, ge=0)

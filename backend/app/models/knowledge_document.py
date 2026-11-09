@@ -16,9 +16,27 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.types import UserDefinedType
 
 from app.db.base import Base
 from app.models.mixins import TimestampMixin, UUIDPrimaryKey
+
+
+class Vector(UserDefinedType):
+    """Driver-neutral pgvector binding; the database extension owns vector math."""
+
+    cache_ok = True
+
+    def get_col_spec(self, **_kw: object) -> str:
+        return "VECTOR"
+
+    def bind_processor(self, _dialect: object):
+        def process(value: list[float] | None) -> str | None:
+            if value is None:
+                return None
+            return "[" + ",".join(format(float(item), ".9g") for item in value) + "]"
+
+        return process
 
 
 class KnowledgeDocument(UUIDPrimaryKey, TimestampMixin, Base):
@@ -106,6 +124,65 @@ class DocumentChunk(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )
+
+
+class DocumentEmbedding(Base):
+    __tablename__ = "document_embeddings"
+    __table_args__ = (
+        CheckConstraint("dimensions > 0", name="ck_document_embeddings_dimensions"),
+        ForeignKeyConstraint(
+            ["organization_id", "document_id", "chunk_index"],
+            ["document_chunks.organization_id", "document_chunks.document_id", "document_chunks.chunk_index"],
+            name="fk_document_embeddings_org_chunk",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "organization_id", "document_id", "chunk_index", "embedding_model", "embedding_version",
+            name="uq_document_embedding_version",
+        ),
+        Index("ix_document_embeddings_org_model", "organization_id", "embedding_model", "embedding_version", "dimensions"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    document_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    embedding_model: Mapped[str] = mapped_column(String(255), nullable=False)
+    embedding_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    dimensions: Mapped[int] = mapped_column(Integer, nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(Vector(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False)
+
+
+class DocumentEmbeddingJob(UUIDPrimaryKey, TimestampMixin, Base):
+    __tablename__ = "document_embedding_jobs"
+    __table_args__ = (
+        CheckConstraint("status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')", name="ck_document_embedding_jobs_status"),
+        CheckConstraint("max_attempts > 0", name="ck_document_embedding_jobs_max_attempts"),
+        CheckConstraint("attempt_count >= 0 AND attempt_count <= max_attempts", name="ck_document_embedding_jobs_attempt_count"),
+        ForeignKeyConstraint(
+            ["organization_id", "document_id"],
+            ["knowledge_documents.organization_id", "knowledge_documents.id"],
+            name="fk_document_embedding_jobs_org_document",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint("organization_id", "document_id", "embedding_model", "embedding_version", name="uq_document_embedding_job_version"),
+        Index("ix_document_embedding_jobs_queue", "organization_id", "status", "next_attempt_at", "created_at"),
+    )
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    document_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    correlation_id: Mapped[str | None] = mapped_column(String(64))
+    embedding_model: Mapped[str] = mapped_column(String(255), nullable=False)
+    embedding_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    dimensions: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="queued", nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error_code: Mapped[str | None] = mapped_column(String(80))
 
 
 class DocumentIngestionJob(UUIDPrimaryKey, TimestampMixin, Base):

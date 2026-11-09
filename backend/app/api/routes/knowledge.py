@@ -11,11 +11,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_roles
 from app.core.observability import current_correlation_id
+from app.core.config import settings
 from app.db.session import get_db
 from app.services.knowledge_base_audit import record_knowledge_base_audit
+from app.features.ai.application.embedding_jobs import enqueue_document_embeddings
+from app.features.ai.infrastructure.embedding_gateway import is_embedding_provider_configured
 from app.models import (
     DocumentChunk,
     DocumentIngestionJob,
+    DocumentEmbeddingJob,
     KnowledgeBase,
     KnowledgeDocument,
     KnowledgeDocumentSource,
@@ -30,6 +34,8 @@ from app.schemas.knowledge import (
     KnowledgeSourcePreviewOut,
     KnowledgeSearchPage,
     KnowledgeSearchResult,
+    DocumentEmbeddingJobOut,
+    DocumentEmbeddingBackfillOut,
 )
 
 from app.workers.domain.ingestion_errors import requires_replacement
@@ -39,6 +45,78 @@ INGESTION_HISTORY_LIMIT = 20
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 SOURCE_PREVIEW_MAX_BYTES = 32 * 1024
 ALLOWED_TYPES = {".pdf": "application/pdf", ".txt": "text/plain", ".md": "text/markdown"}
+
+
+@router.post("/embeddings/backfill", response_model=DocumentEmbeddingBackfillOut, status_code=status.HTTP_202_ACCEPTED)
+async def backfill_document_embeddings(
+    limit: int = Query(default=100, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_roles("owner", "admin")),
+) -> DocumentEmbeddingBackfillOut:
+    """Queue a bounded backfill for ready tenant documents using configured model version."""
+    if not is_embedding_provider_configured() or not settings.ai_embedding_model:
+        raise HTTPException(status_code=503, detail="Embedding provider is not configured")
+    existing = DocumentEmbeddingJob
+    documents = list(await db.scalars(
+        select(KnowledgeDocument)
+        .outerjoin(existing, (existing.organization_id == KnowledgeDocument.organization_id)
+                   & (existing.document_id == KnowledgeDocument.id)
+                   & (existing.embedding_model == settings.ai_embedding_model)
+                   & (existing.embedding_version == settings.ai_embedding_version))
+        .where(KnowledgeDocument.organization_id == user.organization_id,
+               KnowledgeDocument.status == "ready", KnowledgeDocument.deleted_at.is_(None),
+               (existing.id.is_(None)) | existing.status.in_(("failed", "cancelled")))
+        .order_by(KnowledgeDocument.created_at, KnowledgeDocument.id)
+        .limit(limit)
+    ))
+    job_ids = []
+    for document in documents:
+        job_id = await enqueue_document_embeddings(
+            db, organization_id=user.organization_id, document_id=document.id,
+            correlation_id=current_correlation_id(),
+        )
+        if job_id:
+            job_ids.append(job_id)
+    await db.commit()
+    return DocumentEmbeddingBackfillOut(
+        queued_count=len(job_ids), job_ids=job_ids,
+        embedding_model=settings.ai_embedding_model,
+        embedding_version=settings.ai_embedding_version,
+    )
+
+
+@router.post("/{document_id}/embeddings/reprocess", response_model=DocumentEmbeddingJobOut,
+            status_code=status.HTTP_202_ACCEPTED)
+async def reprocess_document_embeddings(
+    document_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_roles("owner", "admin")),
+) -> DocumentEmbeddingJobOut:
+    """Requeue embeddings for one ready document without reingesting its source."""
+    if not is_embedding_provider_configured() or not settings.ai_embedding_model:
+        raise HTTPException(status_code=503, detail="Embedding provider is not configured")
+    document = await db.scalar(select(KnowledgeDocument).where(
+        KnowledgeDocument.organization_id == user.organization_id,
+        KnowledgeDocument.id == document_id,
+        KnowledgeDocument.status == "ready",
+        KnowledgeDocument.deleted_at.is_(None),
+    ))
+    if document is None:
+        raise HTTPException(status_code=404, detail="Ready knowledge document not found")
+    job_id = await enqueue_document_embeddings(
+        db, organization_id=user.organization_id, document_id=document_id,
+        correlation_id=current_correlation_id(),
+    )
+    if job_id is None:
+        raise HTTPException(status_code=503, detail="Embedding job could not be queued")
+    await db.commit()
+    job = await db.scalar(select(DocumentEmbeddingJob).where(
+        DocumentEmbeddingJob.organization_id == user.organization_id,
+        DocumentEmbeddingJob.id == job_id,
+    ))
+    if job is None:
+        raise HTTPException(status_code=500, detail="Embedding job was not persisted")
+    return DocumentEmbeddingJobOut.model_validate(job)
 
 
 async def document_out(db: AsyncSession, document: KnowledgeDocument) -> KnowledgeDocumentOut:

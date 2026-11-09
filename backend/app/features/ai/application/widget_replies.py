@@ -1,5 +1,6 @@
 """Tenant-safe widget reply gating, recommendation routing, and persistence."""
 
+import json
 import logging
 import re
 from datetime import UTC, datetime, timedelta
@@ -9,13 +10,16 @@ from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.db.session import SessionLocal, set_tenant_context
-from app.features.ai.domain.policies import widget_reply_is_superseded
 from app.features.ai.application.retrieval_search import citations_remain_authorized
+from app.features.ai.domain.policies import widget_reply_is_superseded
 from app.features.ai.tools.recommendations import ToolReference
-from app.features.notifications.application.events import TicketNotificationPayload, enqueue_notification_event
+from app.features.notifications.application.events import (
+    TicketNotificationPayload,
+    enqueue_notification_event,
+)
 from app.models import (
-    AIExecution,
     AIAgent,
+    AIExecution,
     Conversation,
     Message,
     RecommendationEvent,
@@ -51,7 +55,9 @@ async def widget_reply_is_stale(organization_id: UUID, execution_id: UUID) -> bo
         if active_agent is None:
             execution.status = "succeeded"
             execution.reply_status = "escalated"
-            execution.safe_summary = "The selected AI bot is inactive. No automated response was generated."
+            execution.safe_summary = (
+                "The selected AI bot is inactive. No automated response was generated."
+            )
             execution.draft = None
             execution.completed_at = datetime.now(UTC)
             await db.commit()
@@ -67,9 +73,7 @@ async def widget_reply_is_stale(organization_id: UUID, execution_id: UUID) -> bo
         if conversation.ai_agent_id != execution.ai_agent_id:
             execution.status = "succeeded"
             execution.reply_status = "escalated"
-            execution.safe_summary = (
-                "A teammate changed the bot for this conversation. The older bot reply was suppressed."
-            )
+            execution.safe_summary = "A teammate changed the bot for this conversation. The older bot reply was suppressed."
             execution.draft = None
             execution.completed_at = datetime.now(UTC)
             await db.commit()
@@ -187,7 +191,9 @@ async def process_widget_shopping_execution(
         if agent is None:
             execution.status = "succeeded"
             execution.reply_status = "escalated"
-            execution.safe_summary = "The selected AI bot is inactive. No automated response was generated."
+            execution.safe_summary = (
+                "The selected AI bot is inactive. No automated response was generated."
+            )
             execution.draft = None
             execution.completed_at = datetime.now(UTC)
             await db.commit()
@@ -261,6 +267,7 @@ async def finish_widget_reply(
     displayed_recommendations: list[dict[str, object]] | None = None,
     recommendation_payload: dict[str, object] | None = None,
     switch_to_human: bool = False,
+    failure_code: str | None = None,
 ) -> None:
     """Persist a draft or send only while holding the conversation row lock."""
     now = datetime.now(UTC)
@@ -317,9 +324,7 @@ async def finish_widget_reply(
         if conversation.ai_agent_id != row.ai_agent_id:
             row.status = "succeeded"
             row.reply_status = "escalated"
-            row.safe_summary = (
-                "A teammate changed the bot for this conversation. The older bot reply was suppressed."
-            )
+            row.safe_summary = "A teammate changed the bot for this conversation. The older bot reply was suppressed."
             row.draft = None
             row.completed_at = now
             await db.commit()
@@ -421,7 +426,7 @@ async def finish_widget_reply(
         row.tool_outcomes = outcomes
         row.usage = usage
         row.model_name = model_name
-        row.error_code = None
+        row.error_code = failure_code
         row.completed_at = now
         if reply_status == "escalated":
             await enqueue_notification_event(
@@ -523,3 +528,26 @@ async def finish_widget_reply(
                 .on_conflict_do_nothing(constraint="uq_recommendation_events_org_event")
             )
         await db.commit()
+        logger.info(
+            "ai_execution_event %s",
+            json.dumps(
+                {
+                    "event": "ai_widget_reply_finalized",
+                    "execution_id": str(row.id),
+                    "correlation_id": row.correlation_id,
+                    "execution_kind": row.kind,
+                    "ai_agent_id": str(row.ai_agent_id),
+                    "attempt_count": row.attempt_count,
+                    "elapsed_ms": (
+                        max(0, round((now - row.started_at).total_seconds() * 1000))
+                        if row.started_at
+                        else None
+                    ),
+                    "retrieval_match_count": len(citations),
+                    "error_code": failure_code,
+                    "execution_status": row.status,
+                    "delivery_status": row.reply_status,
+                },
+                sort_keys=True,
+            ),
+        )

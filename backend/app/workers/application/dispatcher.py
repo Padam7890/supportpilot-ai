@@ -18,6 +18,7 @@ from app.workers.handlers.automation import AutomationExecutionHandler
 from app.workers.handlers.catalog import CatalogSyncHandler, CatalogWebhookHandler
 from app.workers.handlers.commerce import CommerceActionHandler
 from app.workers.handlers.ingestion_jobs import IngestionHandler
+from app.workers.handlers.embedding_jobs import DocumentEmbeddingHandler
 from app.workers.handlers.maintenance import MaintenanceHandler
 from app.workers.handlers.outbound import OutboundDeliveryHandler
 from app.workers.handlers.notifications import NotificationHandler
@@ -39,6 +40,7 @@ def default_handlers() -> tuple[JobHandler, ...]:
         CommerceActionHandler(),
         AutomationExecutionHandler(),
         IngestionHandler(),
+        DocumentEmbeddingHandler(),
         AIExecutionHandler(),
         MaintenanceHandler(),
     )

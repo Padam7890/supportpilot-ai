@@ -26,9 +26,7 @@ from app.models import (
 )
 
 HANDOFF_MESSAGE = "I’ll pass this to a support teammate so they can help you."
-AI_TEMPORARY_FAILURE_REPLY = (
-    "I’m having trouble checking that right now. Please add any details that might help, and a support teammate can follow up here."
-)
+AI_TEMPORARY_FAILURE_REPLY = "I’m having trouble checking that right now. Please add any details that might help, and a support teammate can follow up here."
 ORDER_VERIFICATION_MESSAGE = (
     "I can check that securely. A verification card is below; enter the order number and checkout email, "
     "and we’ll email a one-time code before sharing tracking details."
@@ -75,6 +73,11 @@ SIMPLE_THANKS = re.compile(
 )
 CAPABILITIES_QUESTION = re.compile(
     r"\b(?:what can you do|how can you help|can you help me|are you (?:a bot|an ai)|what are you)\b",
+    re.IGNORECASE,
+)
+CASUAL_CONVERSATION = re.compile(
+    r"^(?:how are you|how are you doing|what.s up|are you there|are you online|"
+    r"can you hear me|नमस्ते,? कस्तो छ|तपाईंलाई कस्तो छ)[?.! ,]*$",
     re.IGNORECASE,
 )
 CLARIFICATION_REQUEST = re.compile(
@@ -139,7 +142,11 @@ def widget_request_needs_human(message: str) -> bool:
 
 
 def widget_request_needs_order_verification(message: str) -> bool:
-    return bool(re.search(r"\b(order|tracking|track|shipment|shipped|package|parcel)\b", message, re.IGNORECASE))
+    return bool(
+        re.search(
+            r"\b(order|tracking|track|shipment|shipped|package|parcel)\b", message, re.IGNORECASE
+        )
+    )
 
 
 def widget_is_cancellation_request(message: str) -> bool:
@@ -158,6 +165,8 @@ def widget_greeting_reply(message: str) -> str | None:
         return GREETING_REPLY
     if SIMPLE_THANKS.fullmatch(normalized):
         return THANKS_REPLY
+    if CASUAL_CONVERSATION.fullmatch(normalized):
+        return "I’m doing well, thanks for asking! What can I help you with today?"
     if CAPABILITIES_QUESTION.search(normalized):
         return CAPABILITIES_REPLY
     return None
@@ -168,10 +177,18 @@ def widget_clarification_reply(message: str, transcript: list[dict[str, str]]) -
     if not CLARIFICATION_REQUEST.fullmatch(message.strip()):
         return None
     previous_assistant = next(
-        (item.get("content", "") for item in reversed(transcript[:-1]) if item.get("sender") == "assistant"),
+        (
+            item.get("content", "")
+            for item in reversed(transcript[:-1])
+            if item.get("sender") == "assistant"
+        ),
         "",
     )
-    if re.search(r"\b(order|verification|one-time code|cancellation|cancel)\b", previous_assistant, re.IGNORECASE):
+    if re.search(
+        r"\b(order|verification|one-time code|cancellation|cancel)\b",
+        previous_assistant,
+        re.IGNORECASE,
+    ):
         return (
             "Sorry for the confusion. Use the secure order card in this chat: enter the order number and checkout email, "
             "then enter the one-time code sent to that email. After verification, you can submit a cancellation request; "
@@ -189,13 +206,17 @@ def format_verified_order_status(order: Any, *, opening: str) -> str:
         if financial_status:
             parts.append(f"Shopify payment status: {financial_status}.")
             if financial_status not in {"refunded", "partially refunded"}:
-                parts.append("This does not confirm a refund; contact the store admin to check refund status.")
+                parts.append(
+                    "This does not confirm a refund; contact the store admin to check refund status."
+                )
         return " ".join(parts)
 
     fulfillment = (order.fulfillment_status or "").strip()
     fulfillment_normalized = fulfillment.upper().replace(" ", "_")
     if fulfillment_normalized == "NOT_REQUIRED":
-        parts.append("This order does not require fulfillment, so shipment tracking is not available.")
+        parts.append(
+            "This order does not require fulfillment, so shipment tracking is not available."
+        )
         return " ".join(parts)
     if fulfillment:
         parts.append(f"Fulfillment status: {fulfillment.replace('_', ' ').lower()}.")
@@ -219,15 +240,27 @@ def widget_sensitive_reply(message: str) -> tuple[str, str] | None:
     """Handle workflows that must not be answered from unverified customer claims."""
     normalized = message.strip()
     if CANCELLATION_REQUEST.search(normalized):
-        return ORDER_ACTION_REPLY, "The shopper requested an order change that requires verification and human approval."
+        return (
+            ORDER_ACTION_REPLY,
+            "The shopper requested an order change that requires verification and human approval.",
+        )
     if REFUND_ACTION.search(normalized) or RETURN_ACTION.search(normalized):
-        return REFUND_ACTION_REPLY, "The shopper requested a return, exchange, or refund review. Eligibility was not inferred."
+        return (
+            REFUND_ACTION_REPLY,
+            "The shopper requested a return, exchange, or refund review. Eligibility was not inferred.",
+        )
     if widget_request_needs_order_verification(normalized):
-        return ORDER_VERIFICATION_MESSAGE, "The shopper must verify the order before private order details can be shared."
+        return (
+            ORDER_VERIFICATION_MESSAGE,
+            "The shopper must verify the order before private order details can be shared.",
+        )
     if HUMAN_REQUEST.search(normalized):
         return HANDOFF_MESSAGE, "The shopper explicitly requested a support teammate."
     if PRIVATE_ACCOUNT_REQUEST.search(normalized):
-        return ACCOUNT_HELP_REPLY, "The shopper asked about private account or billing information and needs a support teammate."
+        return (
+            ACCOUNT_HELP_REPLY,
+            "The shopper asked about private account or billing information and needs a support teammate.",
+        )
     return None
 
 
@@ -365,15 +398,9 @@ async def resolve_widget_agent_decision(
     agents.sort(key=lambda agent: configured_order.get(agent.id, len(configured_order)))
     by_id = {agent.id: agent for agent in agents}
     primary = primary_agent_id or widget.ai_agent_id
-    preferred_agent_id = (
-        conversation.ai_agent_id
-        if conversation is not None
-        else primary
-    )
+    preferred_agent_id = conversation.ai_agent_id if conversation is not None else primary
     fallback = (
-        by_id.get(preferred_agent_id)
-        or by_id.get(primary)
-        or (agents[0] if agents else None)
+        by_id.get(preferred_agent_id) or by_id.get(primary) or (agents[0] if agents else None)
     )
     if fallback is None:
         return WidgetAgentRoutingDecision(None, "no_active_bot", 0)
@@ -384,17 +411,11 @@ async def resolve_widget_agent_decision(
             if re.search(r"\bcompare\b|तुलना", message, re.IGNORECASE)
             else "recommend_products"
         )
-        capable_agents = [
-            agent for agent in agents if required_tool in (agent.allowed_tools or [])
-        ]
+        capable_agents = [agent for agent in agents if required_tool in (agent.allowed_tools or [])]
         if capable_agents:
             agents = capable_agents
             by_id = {agent.id: agent for agent in agents}
-            fallback = (
-                by_id.get(preferred_agent_id)
-                or by_id.get(primary)
-                or agents[0]
-            )
+            fallback = by_id.get(preferred_agent_id) or by_id.get(primary) or agents[0]
 
     terms = build_retrieval_terms(message)
     if not terms:
@@ -404,16 +425,13 @@ async def resolve_widget_agent_decision(
     simple_config = literal_column("'simple'::regconfig")
     ts_query = func.to_tsquery(simple_config, " | ".join(terms))
     content_vector = func.to_tsvector(simple_config, DocumentChunk.content)
-    metadata_vector = (
+    metadata_vector = func.setweight(
+        func.to_tsvector(simple_config, KnowledgeDocument.name),
+        literal_column("'A'::\"char\""),
+    ).op("||")(
         func.setweight(
-            func.to_tsvector(simple_config, KnowledgeDocument.name),
-            literal_column("'A'::\"char\""),
-        )
-        .op("||")(
-            func.setweight(
-                func.to_tsvector(simple_config, KnowledgeBase.name),
-                literal_column("'B'::\"char\""),
-            )
+            func.to_tsvector(simple_config, KnowledgeBase.name),
+            literal_column("'B'::\"char\""),
         )
     )
 
@@ -440,17 +458,14 @@ async def resolve_widget_agent_decision(
                 (DocumentChunk.organization_id == KnowledgeDocument.organization_id)
                 & (DocumentChunk.document_id == KnowledgeDocument.id),
             )
-        return (
-            query.where(
-                AIAgentKnowledgeBase.organization_id == widget.organization_id,
-                AIAgentKnowledgeBase.ai_agent_id.in_(by_id),
-                KnowledgeBase.status == "active",
-                KnowledgeDocument.status == "ready",
-                KnowledgeDocument.deleted_at.is_(None),
-                match_vector.op("@@")(ts_query),
-            )
-            .group_by(AIAgentKnowledgeBase.ai_agent_id)
-        )
+        return query.where(
+            AIAgentKnowledgeBase.organization_id == widget.organization_id,
+            AIAgentKnowledgeBase.ai_agent_id.in_(by_id),
+            KnowledgeBase.status == "active",
+            KnowledgeDocument.status == "ready",
+            KnowledgeDocument.deleted_at.is_(None),
+            match_vector.op("@@")(ts_query),
+        ).group_by(AIAgentKnowledgeBase.ai_agent_id)
 
     # UNION keeps chunk matching as an independently indexable branch while
     # allowing verified source labels to contribute when another bot has a

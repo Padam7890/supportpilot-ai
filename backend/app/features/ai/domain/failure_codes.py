@@ -2,6 +2,8 @@
 
 import re
 
+from sqlalchemy.exc import DBAPIError
+
 
 def safe_ai_failure_code(exc: Exception) -> str:
     """Classify known failures without persisting exception contents or secrets."""
@@ -19,3 +21,15 @@ def safe_ai_failure_code(exc: Exception) -> str:
     if message == "AI provider returned an empty draft":
         return "provider_empty_response"
     return "ai_execution_failed"
+
+
+def is_retryable_ai_failure(exc: Exception) -> bool:
+    """Retry only known transient provider and invalidated database connections."""
+    code = safe_ai_failure_code(exc)
+    if code in {"provider_timeout", "provider_unreachable", "workflow_timeout"}:
+        return True
+    provider_status = re.fullmatch(r"provider_http_(\d{3})", code)
+    if provider_status:
+        status = int(provider_status.group(1))
+        return status in {408, 425, 429} or 500 <= status <= 599
+    return isinstance(exc, DBAPIError) and bool(exc.connection_invalidated)

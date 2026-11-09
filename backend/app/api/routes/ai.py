@@ -182,6 +182,9 @@ async def preview_playground_retrieval(
         active_assigned_base_count=result.active_assigned_base_count,
         ready_document_count=result.ready_document_count,
         matched_passage_count=len(result.matches),
+        retrieval_method=result.retrieval_method,
+        retrieval_latency_ms=result.retrieval_latency_ms,
+        embedding_status=result.embedding_status,
         retrieval_terms=[term[:80] for term in build_retrieval_terms(search_text)],
         sources=[
             AICitation(
@@ -191,6 +194,10 @@ async def preview_playground_retrieval(
                 chunk_index=match.chunk_index,
                 excerpt=match.excerpt[:320],
                 match_basis=match.match_basis,
+                rrf_score=match.rrf_score,
+                semantic_similarity=match.semantic_similarity,
+                keyword_rank=match.keyword_rank,
+                semantic_rank=match.semantic_rank,
             )
             for match in result.matches
         ],
