@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from app.features.ai.application.follow_up import PendingQuestion, pending_from_assistant
+from app.features.ai.application.conversation_memory import derive_topic_memory
 from app.features.ai.application.retrieval import build_retrieval_terms, is_contextual_follow_up
 
 
@@ -52,10 +53,8 @@ def understand_conversation_turn(
         and item.get("content", "").strip()
     ]
     # Prefer the latest explicit subject over acknowledgements and pronouns.
-    previous_customer = next(
-        (turn for turn in recent_customer_turns if _has_explicit_topic(turn)),
-        recent_customer_turns[0] if recent_customer_turns else "",
-    )
+    memory = derive_topic_memory(prior_turns)
+    previous_customer = memory.topic_anchor or (recent_customer_turns[0] if recent_customer_turns else "")
     contextual = is_contextual_follow_up(normalized) or _is_short_prepositional_follow_up(normalized)
     # A follow-up that names its own subject ("what about shipping?") already
     # forms a usable query. Do not blend an earlier, unrelated question into it.
