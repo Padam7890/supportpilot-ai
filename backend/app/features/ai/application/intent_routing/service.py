@@ -19,6 +19,7 @@ from app.features.ai.application.intent_routing.metrics import (
 )
 from app.features.ai.application.intent_routing.policy import should_invoke_llm_router
 from app.features.ai.application.intent_routing.schemas import Intent, RoutingDecision
+from app.core.config import settings
 from app.services import widget_ai
 
 CLARIFICATION_PROMPT = (
@@ -77,10 +78,21 @@ async def resolve_customer_routing(
         llm_invoked = True
         metrics.llm_router_invocation_count = 1
         decision, usage, _model, failure = await invoke_llm_intent_router(message, transcript, assessment)
-        if decision is not None and not assessment.requires_tools and any(\n            item.requires_tools or item.intent in {Intent.ORDER, Intent.REFUND}\n            for item in decision.intents\n        ) and assessment.intent not in {Intent.ORDER, Intent.REFUND}:\n            # Model-suggested commerce actions cannot upgrade a deterministic\n            # non-commerce request into an actionable order/refund workflow.\n            decision = None\n            failure = "unsafe_llm_commerce_escalation"\n        if decision is not None:\n            resolution.mode = "llm"
+        if decision is not None and not assessment.requires_tools and any(
+            item.requires_tools or item.intent in {Intent.ORDER, Intent.REFUND}
+            for item in decision.intents
+        ) and assessment.intent not in {Intent.ORDER, Intent.REFUND}:
+            # Model-suggested commerce actions cannot upgrade a deterministic
+            # non-commerce request into an actionable order/refund workflow.
+            decision = None
+            failure = "unsafe_llm_commerce_escalation"
+        if decision is not None:
+            resolution.mode = "llm"
             resolution.llm = decision
             resolution.multi_intent = len(decision.intents) > 1
-            resolution.clarify = decision.should_clarify or any(\n                item.confidence < 0.65 for item in decision.intents\n            )
+            resolution.clarify = decision.should_clarify or any(
+                item.confidence < settings.ai_intent_router_low_confidence for item in decision.intents
+            )
             if resolution.multi_intent:
                 metrics.multi_intent_count = 1
             metrics.router_prompt_tokens = usage.get("prompt_tokens", 0)
@@ -92,7 +104,7 @@ async def resolve_customer_routing(
         else:
             metrics.llm_router_failure_count = 1
             resolution.failure_code = failure
-            resolution.clarify = assessment.confidence < 0.65
+            resolution.clarify = assessment.confidence < settings.ai_intent_router_low_confidence
             resolution.mode = "deterministic_fallback"
 
     metrics.routing_latency_ms = round((time.monotonic() - started) * 1000)
@@ -132,7 +144,10 @@ def apply_routing_to_widget_plan(
     should_clarify = resolution.clarify
     if resolution.llm is not None:
         should_clarify = should_clarify or resolution.llm.should_clarify
-    if should_clarify and resolution.deterministic.confidence < 0.7:
+    if should_clarify and (
+        resolution.llm is not None
+        or resolution.deterministic.confidence < settings.ai_intent_router_low_confidence
+    ):
         return CustomerTurnPlan(
             route="clarification",
             draft=CLARIFICATION_PROMPT,
