@@ -53,7 +53,9 @@ def understand_conversation_turn(
         if item.get("sender") in {"customer", "user"}
         and item.get("content", "").strip()
     ]
-    # Explicit cancellation or correction must not inherit the prior topic.\n    # The caller still decides whether a pending commerce action is cancelled.\n    correction = _is_correction(normalized)\n    # Prefer the latest explicit subject over acknowledgements and pronouns.\n    memory = derive_topic_memory(prior_turns)
+    # Explicit cancellation or correction must not inherit the prior topic.
+    # The caller still decides whether a pending commerce action is cancelled.\n    correction = _is_correction(normalized) 
+    # Prefer the latest explicit subject over acknowledgements and pronouns.\n    memory = derive_topic_memory(prior_turns)
     previous_customer = memory.topic_anchor or (recent_customer_turns[0] if recent_customer_turns else "")
     contextual = (is_contextual_follow_up(normalized) or _is_short_prepositional_follow_up(normalized)) and not correction
     # A follow-up that names its own subject ("what about shipping?") already
