@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import func, literal, literal_column, select
+from sqlalchemy import String, func, literal, literal_column, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -145,7 +145,7 @@ async def _embedding_readiness(
                     *common_filters,
                     DocumentEmbedding.embedding_model == settings.ai_embedding_model,
                     DocumentEmbedding.embedding_version == settings.ai_embedding_version,
-                    DocumentEmbedding.dimensions == settings.ai_embedding_dimensions,
+                    DocumentEmbedding.dimensions == settings.ai_embedding_dimensions,\n                    DocumentEmbedding.content_hash == DocumentChunk.content_hash,
                     DocumentEmbedding.content_hash == DocumentChunk.content_hash,
                 )
             )
@@ -310,7 +310,7 @@ async def search_agent_knowledge(
             ).all()
         )
         if len(keyword_rows) < keyword_limit:
-            seen = {row.document_id for row in keyword_rows}
+            seen = {(row.document_id, row.chunk_index) for row in keyword_rows}
             keyword_rows.extend(
                 (
                     await db.execute(
@@ -319,7 +319,7 @@ async def search_agent_knowledge(
                         )
                         .where(
                             (document_vector.op("@@")(ts_query)) | (base_vector.op("@@")(ts_query)),
-                            DocumentChunk.document_id.not_in(seen) if seen else True,
+                            ~func.concat(\n                                func.cast(DocumentChunk.document_id, String), ":",\n                                func.cast(DocumentChunk.chunk_index, String),\n                            ).in_([f"{document_id}:{index}" for document_id, index in seen])\n                            if seen else True,
                         )
                         .order_by(rank.desc(), DocumentChunk.document_id, DocumentChunk.chunk_index)
                         .limit(keyword_limit - len(keyword_rows))
