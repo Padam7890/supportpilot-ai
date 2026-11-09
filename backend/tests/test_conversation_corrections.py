@@ -54,3 +54,42 @@ def test_retraction_stops_pending_cancellation() -> None:
     assert follow_up is not None
     assert follow_up.decision == "declined"
     assert follow_up.pending is None
+
+
+def test_pending_prompt_survives_intervening_customer_turn() -> None:
+    from datetime import UTC, datetime
+    from uuid import uuid4
+
+    from app.features.ai.application.follow_up import PENDING_KEY, refund_start
+
+    agent_id = uuid4()
+    now = datetime.now(UTC)
+    pending = refund_start().attached_to(agent_id, now)
+    import json
+    transcript = [
+        {"sender": "assistant", "content": "Was the item damaged?", PENDING_KEY: json.dumps(pending)},
+        {"sender": "customer", "content": "Could you repeat that?"},
+    ]
+    result = understand_conversation_turn("It was damaged", transcript, agent_id=agent_id, now=now)
+    assert result.pending_state is not None
+    assert result.pending_state.stage == "refund_reason"
+
+
+def test_new_explicit_topic_does_not_inherit_old_pending_refund_slot() -> None:
+    from datetime import UTC, datetime
+    from uuid import uuid4
+
+    from app.features.ai.application.follow_up import PENDING_KEY, assess_widget_follow_up, refund_start
+    import json
+
+    agent_id = uuid4()
+    now = datetime.now(UTC)
+    transcript = [
+        {"sender": "assistant", "content": "Was the item damaged?", PENDING_KEY: json.dumps(refund_start().attached_to(agent_id, now))},
+    ]
+    result, status = assess_widget_follow_up(
+        "What are your delivery charges?", transcript, agent_id=agent_id,
+        source_message_id=None, now=now,
+    )
+    assert result is None
+    assert status == "no_matching_pending_question"
