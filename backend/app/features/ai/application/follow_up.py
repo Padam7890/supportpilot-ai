@@ -52,7 +52,7 @@ _CODE_INTERRUPTED = re.compile(
 YES = re.compile(
     r"(?:yes|yeah|yep|sure|ok(?:ay)?|please do|continue|yes please)[.! ]*", re.IGNORECASE
 )
-NO = re.compile(
+ACTION_RETRACTION = re.compile(\n    r"^(?:please\\s+)?(?:don.t|do\\s+not|never)\\s+(?:cancel|refund|return)\\b|^(?:wait[,! ]*|actually[,! ]*)\\s*(?:don.t|do\\s+not)\\s+(?:cancel|refund|return)\\b",\n    re.IGNORECASE,\n)\nNO = re.compile(
     r"(?:no|no thanks|not now|never mind|nevermind|stop this request)[.! ]*", re.IGNORECASE
 )
 TOPIC_SWITCH = re.compile(
@@ -371,6 +371,8 @@ def resolve_follow_up(
     source_message_id: UUID | None,
 ) -> FollowUp | None:
     answer = " ".join(message.strip().split())
+    if ACTION_RETRACTION.search(answer):
+        return FollowUp("declined", draft="Understood. I won’t proceed with that request. What else can I help with?")
     if order_follow_up := resolve_order_support(answer, state, source_message_id=source_message_id):
         return order_follow_up
     if NO.fullmatch(answer) or (
@@ -458,6 +460,10 @@ def assess_widget_follow_up(
     allow_refund_workflow: bool = True,
 ) -> tuple[FollowUp | None, str]:
     from app.services import widget_ai
+
+    # A negated commerce command must never initiate a positive action flow.
+    if ACTION_RETRACTION.search(question.strip()):
+        return FollowUp("declined", draft="Understood. I won’t proceed with that request. What else can I help with?"), "retracted"
 
     previous = transcript
     if (
