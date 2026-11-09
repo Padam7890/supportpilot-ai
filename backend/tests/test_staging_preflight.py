@@ -1,5 +1,4 @@
 """Read-only staging readiness preflight regression tests."""
-import io
 import json
 from unittest.mock import patch
 from urllib.error import URLError
