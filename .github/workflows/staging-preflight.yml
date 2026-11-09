@@ -1,0 +1,28 @@
+name: Staging release preflight
+
+on:
+  workflow_dispatch:
+    inputs:
+      staging_api_url:
+        description: "HTTPS origin of the deployed staging API (no path or credentials)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: Read-only staging dependency check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate staging API readiness
+        env:
+          STAGING_API_URL: ${{ inputs.staging_api_url }}
+        run: python backend/scripts/staging_preflight.py --api-url "$STAGING_API_URL"
