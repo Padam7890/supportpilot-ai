@@ -93,3 +93,15 @@ def test_new_explicit_topic_does_not_inherit_old_pending_refund_slot() -> None:
     )
     assert result is None
     assert status == "no_matching_pending_question"
+
+
+def test_multiple_support_subjects_detected() -> None:
+    result = understand_conversation_turn(
+        "Where is my order and what is your refund policy?", []
+    )
+    assert result.multi_intent is True
+
+
+def test_unrelated_single_subject_not_multi_intent() -> None:
+    result = understand_conversation_turn("What is your delivery policy?", [])
+    assert result.multi_intent is False
