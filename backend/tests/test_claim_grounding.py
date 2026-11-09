@@ -27,3 +27,32 @@ def test_missing_citation_fails_closed():
 
 def test_empty_sources_fail_closed():
     assert check_grounded_claims("Refunds take 7 days", []).reason == "no_sources"
+
+
+def test_delivery_gate_blocks_unsupported_numeric_claim():
+    from app.features.ai.application.claim_grounding import check_generated_answer
+
+    result = check_generated_answer(
+        "Refunds take 30 days.", [{"excerpt": "Refunds take 7 days."}]
+    )
+    assert not result.accepted
+    assert result.reason == "unsupported_numeric_claim"
+
+
+def test_delivery_gate_preserves_existing_uncited_text_without_numbers():
+    from app.features.ai.application.claim_grounding import check_generated_answer
+
+    result = check_generated_answer(
+        "Please check the returns policy.", [{"excerpt": "Returns policy applies."}]
+    )
+    assert result.accepted
+
+
+def test_delivery_gate_rejects_bad_explicit_citation():
+    from app.features.ai.application.claim_grounding import check_generated_answer
+
+    result = check_generated_answer(
+        "Returns are supported [source: 99].", [{"excerpt": "Returns policy applies."}]
+    )
+    assert not result.accepted
+    assert result.reason == "invalid_citation_index"
