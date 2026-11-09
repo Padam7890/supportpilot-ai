@@ -39,8 +39,11 @@ def probe_health(base_url: str, *, timeout: float = 5.0) -> tuple[bool, str]:
         if "application/json" not in content_type:
             return False, "unexpected_content_type"
         payload = json.loads(body)
-        if not isinstance(payload, dict):
+        if not isinstance(payload, dict) or payload.get("status") != "ready":
             return False, "unexpected_payload"
+        checks = payload.get("checks")
+        if not isinstance(checks, dict) or checks.get("database") != "connected" or checks.get("redis") != "connected":
+            return False, "dependencies_not_ready"
         return True, "ready"
     except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError):
         return False, "readiness_probe_failed"
