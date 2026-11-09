@@ -792,7 +792,7 @@
           buffer = buffer.slice(boundary + 2);
           if (signal.aborted || consumeReplyEvent(frame, activeSession.conversation_id)) return true;
         }
-        if (buffer.length > 64000) return true;
+        if (buffer.length > 64000) throw new Error("Reply stream frame exceeded its limit");
       }
       return true;
     } finally {
@@ -844,7 +844,7 @@
     streamController = controller;
     streamGeneration++;
     try {
-      for (let retry = 0; retry < 2 && !controller.signal.aborted; retry++) {
+      for (let retry = 0; retry < 4 && !controller.signal.aborted; retry++) {
         let terminal = false;
         try {
           terminal = await readReplyStream(activeSession, controller.signal);
@@ -853,6 +853,8 @@
           if (error instanceof SyntaxError) break;
         }
         if (terminal || controller.signal.aborted || !waitingForAssistant) break;
+        // Bound reconnect pressure while preserving the Redis replay cursor.
+        await new Promise((resolve) => setTimeout(resolve, Math.min(250 * 2 ** retry, 1500)));
       }
     } finally {
       if (streamController === controller) {
