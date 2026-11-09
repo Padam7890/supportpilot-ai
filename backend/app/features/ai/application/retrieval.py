@@ -39,22 +39,6 @@ def is_contextual_follow_up(text: str) -> bool:
     return len(tokens) <= 2 and any(token in _SHORT_CONTEXT_QUESTIONS for token in tokens)
 
 
-# An explicit new support subject should not inherit an unrelated prior topic.
-# Keep this conservative: ambiguous references still use conversation context.
-_EXPLICIT_TOPIC_SWITCH = re.compile(
-    r"^\\s*(?:what|how)\\s+about\\s+(?:the\\s+|your\\s+|my\\s+)?"
-    r"(?:shipping|delivery|refunds?|returns?|warranty|payments?|"
-    r"tracking|cancellations?|store\\s+hours|contact|support)"
-    r"\\b",
-    re.IGNORECASE,
-)
-
-
-def should_expand_follow_up(text: str) -> bool:
-    """Use previous customer turns only for an unresolved contextual reference."""
-    return is_contextual_follow_up(text) and not bool(_EXPLICIT_TOPIC_SWITCH.search(text))
-
-
 _STOPWORDS = frozenset(
     {
         "a", "an", "and", "are", "as", "at", "be", "can", "could", "do", "does",
