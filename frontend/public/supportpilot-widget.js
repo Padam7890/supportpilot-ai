@@ -713,7 +713,8 @@
       typeof event.timestamp !== "string" ||
       !event.payload || typeof event.payload !== "object"
     ) return false;
-    if (event.event_type !== "execution.status" && alreadyReadSequence(event.sequence)) return false;
+    // Status events are allowed through for state updates; stale deltas are not.
+    if (event.event_type === "message.delta" && alreadyReadSequence(event.sequence)) return false;
     switch (event.event_type) {
       case "execution.queued":
       case "execution.started":
