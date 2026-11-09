@@ -37,6 +37,8 @@ def check_grounded_claims(
     Indexing is one-based. Missing/invalid citations fail closed. Numeric
     matches are conservative lexical checks, not proof of policy correctness.
     """
+    if not response.strip():
+        return ClaimCheck(False, "empty_answer")
     cited = tuple(sorted({int(value) for value in _CITATION.findall(response)}))
     if not sources:
         return ClaimCheck(False, "no_sources", cited)
@@ -48,6 +50,8 @@ def check_grounded_claims(
         str(sources[index - 1].get("excerpt", ""))
         for index in cited
     ) if cited else " ".join(str(source.get("excerpt", "")) for source in sources)
+    if not evidence.strip():
+        return ClaimCheck(False, "empty_evidence", cited)
     answer_without_citations = _CITATION.sub("", response)
     # Preserve units: 7 days and 7 weeks are not interchangeable.
     # Normalize 1,000 to 1000 while preserving decimal precision.
@@ -75,6 +79,8 @@ def check_generated_answer(
     validate explicit markers when present and always check numeric claims.
     A separate citation-enforcement rollout is needed before requiring markers.
     """
+    if not response.strip():
+        return ClaimCheck(False, "empty_answer")
     if not sources:
         return ClaimCheck(True, "no_knowledge_sources")
     return check_grounded_claims(response, sources, require_citations=False)
