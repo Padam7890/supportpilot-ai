@@ -6,11 +6,11 @@ from uuid import UUID
 from sqlalchemy import select, tuple_
 
 from app.db.session import SessionLocal, set_tenant_context
+from app.features.ai.application.conversation_understanding import understand_conversation_turn
 from app.features.ai.application.conversational_intents import (
     should_skip_knowledge_retrieval,
 )
 from app.features.ai.application.follow_up import PENDING_KEY
-from app.features.ai.application.retrieval import is_contextual_follow_up
 from app.features.ai.application.retrieval_search import search_agent_knowledge
 from app.features.ai.application.widget_stream_context import STREAM_SOURCE_IDS_KEY
 from app.models import (
@@ -140,37 +140,26 @@ async def load_execution_context(
                 # The typed name/email collected by the widget is not identity proof,
                 # so it is deliberately excluded from the prompt.
                 question = f"Customer message: {execution.question[:2000]}"
-                # Short follow-ups often omit the topic (for example, "how long
-                # does it take?"). Carry only a few earlier customer turns into
-                # retrieval so the search remains bounded and never treats an AI
-                # answer as evidence about what the shopper asked.
-                prior_customer_questions = (
-                    [
-                        message.content[:240]
-                        for message in messages
-                        if message.sender_type == "customer"
-                        and message.id != execution.source_message_id
-                    ][-2:]
-                    if is_contextual_follow_up(execution.question)
-                    else []
+                # Resolve underspecified follow-ups against one preceding customer
+                # turn only; previous assistant text is never retrieval evidence.
+                understanding = understand_conversation_turn(
+                    execution.question,
+                    conversation_context,
+                    agent_id=execution.ai_agent_id,
                 )
-                retrieval_text = " ".join([*prior_customer_questions, execution.question[:1200]])
+                retrieval_text = understanding.retrieval_query
             else:
                 question = (
                     f"Draft a reply to the latest customer message. Ticket: {ticket.subject if ticket else 'Support request'}. "
                     f"Customer: {customer.name if customer else 'Customer'}. Latest message: {newest_customer_message[:2000]}"
                 )
         if execution.kind == "playground" and execution.playground_history:
-            previous_questions = (
-                [
-                    turn.get("content", "")[:240]
-                    for turn in execution.playground_history[-6:]
-                    if turn.get("role") == "user" and isinstance(turn.get("content"), str)
-                ][-2:]
-                if is_contextual_follow_up(question)
-                else []
+            understanding = understand_conversation_turn(
+                question,
+                conversation_context,
+                agent_id=execution.ai_agent_id,
             )
-            retrieval_text = " ".join([*previous_questions, question])
+            retrieval_text = understanding.retrieval_query
         search_text = (follow_up_query or retrieval_text)[:2000]
         agent = await db.scalar(
             select(AIAgent).where(

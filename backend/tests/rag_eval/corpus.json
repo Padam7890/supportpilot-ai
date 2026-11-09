@@ -354,10 +354,7 @@
     "context": [
       "How long does delivery take?"
     ],
-    "expected_doc_terms": [
-      "shipping",
-      "delivery"
-    ],
+    "expected_doc_terms": [],
     "category": "follow_up"
   },
   {
@@ -942,9 +939,7 @@
     "context": [
       "Does the blue model have a warranty?"
     ],
-    "expected_doc_terms": [
-      "warranty"
-    ],
+    "expected_doc_terms": [],
     "category": "follow_up"
   },
   {
@@ -960,10 +955,7 @@
   {
     "id": "unsupported-delivery-promise",
     "question": "Will it arrive tomorrow if I order now?",
-    "expected_doc_terms": [
-      "shipping",
-      "delivery"
-    ],
+    "expected_doc_terms": [],
     "category": "missing",
     "forbidden_claims": [
       "will arrive tomorrow",

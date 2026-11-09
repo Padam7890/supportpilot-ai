@@ -434,10 +434,18 @@ async def search_agent_knowledge(
         )
 
     query_terms = set(re.findall(r"[\w\u0900-\u097f]+", search_text.casefold()))
+    rerank_started = time.monotonic()
     ranked = sorted(
         merged.values(),
         key=lambda item: (
-            -(float(item["score"]) + _fast_relevance_boost(query_terms, item["row"])),
+            -(
+                float(item["score"])
+                + (
+                    _fast_relevance_boost(query_terms, item["row"])
+                    if settings.ai_retrieval_rerank_enabled
+                    else 0.0
+                )
+            ),
             str(item["row"].document_id),
             int(item["row"].chunk_index),
         ),
@@ -516,6 +524,8 @@ async def search_agent_knowledge(
             "latency_ms": latency_ms,
             "embedding_status": embedding_status,
             "retrieval_outcome": retrieval_outcome,
+            "reranking_enabled": settings.ai_retrieval_rerank_enabled,
+            "reranking_latency_ms": round((time.monotonic() - rerank_started) * 1000),
         },
     )
     return KnowledgeSearchResult(

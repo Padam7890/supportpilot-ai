@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     ai_retrieval_similarity_threshold: float | None = Field(default=None, ge=-1, le=1)
     ai_retrieval_token_budget: int = Field(default=4000, ge=256, le=16000)
     ai_retrieval_min_rrf_score: float = Field(default=0.0, ge=0, le=0.2)
-    ai_retrieval_rerank_enabled: bool = False
+    ai_retrieval_rerank_enabled: bool = True
     ai_intent_router_enabled: bool = False
     ai_intent_router_high_confidence: float = Field(default=0.90, ge=0.5, le=1.0)
     ai_intent_router_low_confidence: float = Field(default=0.65, ge=0.0, le=1.0)

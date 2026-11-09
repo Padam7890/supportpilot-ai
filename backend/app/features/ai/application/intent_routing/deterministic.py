@@ -16,9 +16,8 @@ def assess_deterministic_route(
 ) -> DeterministicRouteAssessment:
     normalized = message.strip()
     hits: list[tuple[Intent, float, str]] = []
-    requires_context = is_contextual_follow_up(message) or any(
-        is_contextual_follow_up(item.get("content", "")) for item in transcript[-4:]
-    )
+    # Old follow-up wording must not make a fresh customer topic look contextual.
+    requires_context = is_contextual_follow_up(message)
     requires_tools = False
     requires_knowledge = False
     risk_level = "low"

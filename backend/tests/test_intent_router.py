@@ -8,7 +8,11 @@ from app.features.ai.application.intent_routing.deterministic import assess_dete
 from app.features.ai.application.intent_routing.llm_router import _parse_router_json
 from app.features.ai.application.intent_routing.metrics import reset_aggregate_for_tests
 from app.features.ai.application.intent_routing.policy import should_invoke_llm_router
-from app.features.ai.application.intent_routing.schemas import Intent, IntentDecision, RoutingDecision
+from app.features.ai.application.intent_routing.schemas import (
+    Intent,
+    IntentDecision,
+    RoutingDecision,
+)
 from app.features.ai.application.intent_routing.service import (
     apply_routing_to_widget_plan,
     resolve_customer_routing,
@@ -76,6 +80,10 @@ async def test_resolve_customer_routing_uses_deterministic_when_llm_disabled(mon
 async def test_llm_router_failure_falls_back_without_crashing(monkeypatch):
     reset_aggregate_for_tests()
     monkeypatch.setattr(settings, "ai_intent_router_enabled", True)
+    monkeypatch.setattr(
+        "app.features.ai.application.intent_routing.llm_router.is_provider_configured",
+        lambda: True,
+    )
 
     async def fail(*_args, **_kwargs):
         from app.features.ai.infrastructure.llm_gateway import AIProviderError

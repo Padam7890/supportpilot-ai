@@ -5,7 +5,7 @@ import unicodedata
 
 _CONTEXT_REFERENCE_WORDS = frozenset(
     {
-        "it", "that", "this", "they", "them", "those", "one", "same", "another",
+        "it", "that", "this", "they", "them", "those", "one", "same", "another", "other",
         "also", "ani", "tesko", "tyo", "yo", "tiniharu", "tesma", "yesma",
         "त्यो", "यो", "तिनीहरू", "त्यसको", "यसको", "त्यसमा", "यसमा",
     }
@@ -19,7 +19,7 @@ _SHORT_CONTEXT_QUESTIONS = frozenset(
 )
 _CONTEXT_REFERENCE_PHRASES = re.compile(
     r"\b(?:what about|how about|how long|what if|and then|and this|and that|"
-    r"tell me more|same for|what about this|yo pani|tesko barema|ani)\b",
+    r"tell me more|same for|what about this|sounds wrong|the other item|yo pani|tesko barema|ani)\b",
     re.IGNORECASE,
 )
 
