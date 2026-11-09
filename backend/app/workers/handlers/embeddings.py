@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.db.session import SessionLocal, set_tenant_context
 from app.features.ai.infrastructure.embedding_gateway import EmbeddingProviderError, embed_texts
 from app.models import DocumentChunk, DocumentEmbedding, DocumentEmbeddingJob, KnowledgeDocument
+from app.workers.domain.embedding_job_fencing import worker_owns_job
 from app.workers.domain.lease_policy import DOCUMENT_EMBEDDING_LEASE
 from app.workers.domain.retry_policy import retry_delay_seconds
 
@@ -196,17 +197,23 @@ async def process_job(organization_id: UUID, job_id: UUID) -> None:
                 )
                 .with_for_update()
             )
-            if (
-                document is None
-                or job is None
-                or job.status != "running"
-                or job.worker_token != worker_token
+            if document is None or job is None:
+                await db.rollback()
+                return
+            if not worker_owns_job(
+                job_status=job.status,
+                job_token=job.worker_token,
+                held_token=worker_token,
             ):
-                if job is not None and job.status == "running":
-                    job.status = "cancelled"
-                    job.completed_at = datetime.now(UTC)
-                    job.worker_token = None
-                await db.commit()
+                await db.rollback()
+                logger.info(
+                    "document_embeddings_lost_ownership",
+                    extra={
+                        "organization_id": str(organization_id),
+                        "job_id": str(job_id),
+                        "document_id": str(document_id),
+                    },
+                )
                 return
 
             if (
@@ -314,6 +321,13 @@ async def process_job(organization_id: UUID, job_id: UUID) -> None:
                 or 0
             )
             if embedded_count < len(chunk_rows):
+                if not worker_owns_job(
+                    job_status=job.status,
+                    job_token=job.worker_token,
+                    held_token=worker_token,
+                ):
+                    await db.rollback()
+                    return
                 job.status = "queued"
                 job.completed_at = None
                 job.last_error_code = "embedding_incomplete"
@@ -333,6 +347,13 @@ async def process_job(organization_id: UUID, job_id: UUID) -> None:
                 )
                 return
 
+            if not worker_owns_job(
+                job_status=job.status,
+                job_token=job.worker_token,
+                held_token=worker_token,
+            ):
+                await db.rollback()
+                return
             job.status = "succeeded"
             job.completed_at = datetime.now(UTC)
             job.last_error_code = None
@@ -386,7 +407,11 @@ async def _record_failure(
             )
             .with_for_update()
         )
-        if job is None or job.status != "running" or (worker_token and job.worker_token != worker_token):
+        if job is None or not worker_owns_job(
+            job_status=job.status,
+            job_token=job.worker_token,
+            held_token=worker_token,
+        ):
             await db.rollback()
             return
         terminal = not retryable or job.attempt_count >= job.max_attempts

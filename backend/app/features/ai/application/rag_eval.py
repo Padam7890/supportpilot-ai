@@ -15,6 +15,7 @@ class EvalCase:
     category: str
     context: list[str]
     expected_doc_terms: list[str]
+    expected_route: str
     skip_semantic: bool
     skip_retrieval: bool
     forbidden_claims: list[str]
@@ -34,6 +35,7 @@ def load_eval_corpus(path: Path | None = None) -> list[EvalCase]:
                 expected_doc_terms=[
                     str(term) for term in item.get("expected_doc_terms", []) if str(term)
                 ],
+                expected_route=str(item.get("expected_route", "knowledge")),
                 skip_semantic=bool(item.get("skip_semantic", False)),
                 skip_retrieval=bool(item.get("skip_retrieval", False)),
                 forbidden_claims=[

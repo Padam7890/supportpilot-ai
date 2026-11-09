@@ -3,13 +3,63 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.features.ai.domain.content_hash import PENDING_CONTENT_REVISION
 from app.features.ai.infrastructure.embedding_gateway import is_embedding_provider_configured
-from app.models import DocumentEmbeddingJob, KnowledgeDocument
+from app.models import DocumentChunk, DocumentEmbedding, DocumentEmbeddingJob, KnowledgeDocument
+
+
+async def document_embedding_coverage(
+    db: AsyncSession,
+    *,
+    organization_id,
+    document_id,
+) -> tuple[int, int]:
+    """Return (embedded_chunk_count, chunk_count) for the active model where hashes match."""
+    chunk_count = int(
+        (
+            await db.execute(
+                select(func.count())
+                .select_from(DocumentChunk)
+                .where(
+                    DocumentChunk.organization_id == organization_id,
+                    DocumentChunk.document_id == document_id,
+                )
+            )
+        ).scalar_one()
+        or 0
+    )
+    if chunk_count == 0:
+        return 0, 0
+    embedded = int(
+        (
+            await db.execute(
+                select(func.count())
+                .select_from(DocumentEmbedding)
+                .join(
+                    DocumentChunk,
+                    and_(
+                        DocumentChunk.organization_id == DocumentEmbedding.organization_id,
+                        DocumentChunk.document_id == DocumentEmbedding.document_id,
+                        DocumentChunk.chunk_index == DocumentEmbedding.chunk_index,
+                    ),
+                )
+                .where(
+                    DocumentEmbedding.organization_id == organization_id,
+                    DocumentEmbedding.document_id == document_id,
+                    DocumentEmbedding.embedding_model == settings.ai_embedding_model,
+                    DocumentEmbedding.embedding_version == settings.ai_embedding_version,
+                    DocumentEmbedding.dimensions == settings.ai_embedding_dimensions,
+                    DocumentEmbedding.content_hash == DocumentChunk.content_hash,
+                )
+            )
+        ).scalar_one()
+        or 0
+    )
+    return embedded, chunk_count
 
 
 async def enqueue_document_embeddings(
@@ -76,17 +126,20 @@ async def enqueue_document_embeddings(
     if job.status == "running" and job.expected_content_revision == revision:
         return job.id
 
+    embedded, chunk_total = await document_embedding_coverage(
+        db, organization_id=organization_id, document_id=document_id
+    )
     if (
         job.status == "succeeded"
         and job.expected_content_revision == revision
         and job.dimensions == dimensions
+        and chunk_total > 0
+        and embedded >= chunk_total
     ):
         return job.id
 
     if job.status == "running" and job.expected_content_revision != revision:
-        job.status = "cancelled"
-        job.completed_at = now
-        job.last_error_code = "stale_content_revision"
+        job.last_error_code = "superseded_content_revision"
         job.worker_token = None
 
     reset_attempts = job.status != "succeeded" or job.expected_content_revision != revision

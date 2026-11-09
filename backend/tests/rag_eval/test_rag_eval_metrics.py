@@ -20,7 +20,7 @@ def _load_corpus() -> list[dict[str, object]]:
 
 def test_rag_corpus_has_minimum_coverage():
     corpus = _load_corpus()
-    assert len(corpus) >= 50
+    assert len(corpus) >= 100
     categories = {str(item["category"]) for item in corpus}
     assert "refunds" in categories
     assert "shipping" in categories

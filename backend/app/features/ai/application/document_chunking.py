@@ -152,12 +152,11 @@ def make_chunks(
     merged = _merge_to_token_budget(
         segments, max_tokens=max_tokens, overlap_tokens=overlap_tokens
     )
-    min_tokens = max(8, max_tokens // 12)
     seen: set[str] = set()
     output: list[tuple[str, str | None, int | None]] = []
     for segment in merged:
         body = segment.text.strip()
-        if not body or estimate_tokens(body) < min_tokens:
+        if not body:
             continue
         fingerprint = body.casefold()
         if fingerprint in seen:
