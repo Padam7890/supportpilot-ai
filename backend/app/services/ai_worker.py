@@ -725,7 +725,9 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             correlation_id=correlation_id,
         )
         generated_draft = str(result.get("draft", ""))[:12000]
-        grounding_check = check_generated_answer(generated_draft, context)
+        grounding_check = check_generated_answer(
+            generated_draft, context if not integration_context else []
+        )
         if not grounding_check.accepted:
             # Never persist unsupported model-generated numeric claims.
             # Streaming deltas can already have reached the client.
