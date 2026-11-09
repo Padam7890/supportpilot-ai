@@ -97,6 +97,7 @@ class WidgetRoutingPreviewOut(BaseModel):
 
 
 class PublicWidgetConfigOut(BaseModel):
+    streaming_enabled: bool = False
     store_name: str
     collect_contact: bool
     ai_enabled: bool = False

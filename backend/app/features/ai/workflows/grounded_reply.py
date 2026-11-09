@@ -2,12 +2,19 @@
 
 import asyncio
 import json
+from collections.abc import Awaitable, Callable
+from contextlib import aclosing
 from typing import Any, TypedDict
 from uuid import UUID
 
 from app.core.config import settings
 from app.features.ai.infrastructure.checkpoints import tenant_checkpointer
-from app.features.ai.infrastructure.llm_gateway import AIProviderError, generate_completion
+from app.features.ai.infrastructure.llm_gateway import (
+    AIProviderError,
+    CompletionDelta,
+    generate_completion,
+    stream_completion,
+)
 
 
 class ExecutionState(TypedDict, total=False):
@@ -23,7 +30,9 @@ class ExecutionState(TypedDict, total=False):
     auto_reply: bool
 
 
-def build_grounded_draft_graph(checkpointer: Any) -> Any:
+def build_grounded_draft_graph(
+    checkpointer: Any, on_delta: Callable[[str], Awaitable[None]] | None = None
+) -> Any:
     from langgraph.graph import END, START, StateGraph
 
     async def prepare_prompt(state: ExecutionState) -> dict[str, Any]:
@@ -63,6 +72,19 @@ def build_grounded_draft_graph(checkpointer: Any) -> Any:
         }
 
     async def generate(state: ExecutionState) -> dict[str, Any]:
+        if on_delta is not None:
+            parts = []
+            async with aclosing(stream_completion(state.get("prompt", []), max_tokens=400)) as stream:
+                async for event in stream:
+                    if isinstance(event, CompletionDelta):
+                        parts.append(event.text)
+                        await on_delta(event.text)
+                    else:
+                        content = "".join(parts).strip()
+                        if not content:
+                            raise AIProviderError("provider_invalid_response", "AI stream returned an empty answer")
+                        return {"draft": content, "usage": event.usage, "model_name": event.model_name}
+            raise AIProviderError("provider_unreachable", "AI stream ended before completion")
         content, usage, model_name = await generate_completion(
             state.get("prompt", []), max_tokens=400
         )
@@ -87,12 +109,13 @@ async def create_grounded_draft(
     knowledge_context: list[dict[str, str | int]],
     integration_context: dict[str, Any] | None = None,
     auto_reply: bool = False,
+    on_delta: Callable[[str], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
     """Execute one bounded graph call without changing historic checkpoint IDs."""
     try:
         async with asyncio.timeout(settings.ai_provider_timeout_seconds + 10):
             async with tenant_checkpointer(organization_id) as checkpointer:
-                graph = build_grounded_draft_graph(checkpointer)
+                graph = build_grounded_draft_graph(checkpointer, on_delta)
                 return await graph.ainvoke(
                     {
                         "question": question,

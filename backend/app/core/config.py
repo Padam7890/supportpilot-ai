@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     ai_provider_base_url: str | None = None
     ai_provider_api_key: SecretStr | None = Field(default=None, repr=False)
     ai_model: str | None = None
+    widget_ai_streaming_enabled: bool = False
     ai_provider_timeout_seconds: int = Field(default=45, ge=5, le=120)
     ai_provider_max_attempts: int = Field(default=2, ge=1, le=3)
     ai_embedding_base_url: str | None = None

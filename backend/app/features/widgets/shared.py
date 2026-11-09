@@ -220,6 +220,8 @@ async def require_visitor_conversation(
     conversation_id: UUID,
     authorization: str | None,
     db: AsyncSession,
+    *,
+    rate_limit: bool = True,
 ) -> tuple[SupportWidget, Conversation, Ticket]:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Visitor session is required")
@@ -260,7 +262,8 @@ async def require_visitor_conversation(
     )
     if ticket is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    await rate_limit_widget(request, public_id)
+    if rate_limit:
+        await rate_limit_widget(request, public_id)
     return widget, conversation, ticket
 
 

@@ -9,6 +9,7 @@ from uuid import UUID
 
 from sqlalchemy import and_, or_, select
 
+from app.core.config import settings
 from app.core.observability import current_correlation_id
 from app.db.session import SessionLocal, set_tenant_context
 from app.features.ai.application.catalog_search import (
@@ -20,11 +21,12 @@ from app.features.ai.application.conversation_orchestration import (
     plan_playground_turn,
     playground_missing_knowledge_reply,
 )
+from app.features.ai.application.conversational_intents import widget_conversational_reply
+from app.features.ai.application.intent_extraction import extract_intent
 from app.features.ai.application.intent_routing import (
     apply_routing_to_widget_plan,
     resolve_customer_routing,
 )
-from app.features.ai.application.intent_extraction import extract_intent
 from app.features.ai.application.knowledge_inventory import (
     format_knowledge_inventory,
     is_knowledge_inventory_question,
@@ -48,6 +50,7 @@ from app.features.ai.domain.failure_codes import (
 )
 from app.features.ai.domain.ranking import build_recommendation_result
 from app.features.ai.infrastructure.llm_gateway import execution_token_budget
+from app.features.ai.infrastructure.widget_stream import publish_widget_deltas
 from app.models import (
     AIAgent,
     AIExecution,
@@ -189,6 +192,21 @@ async def finish_deterministic_ai_execution(
         row.error_code = None
         row.completed_at = now
         await db.commit()
+
+
+def _can_stream_transcript(transcript: list[dict[str, str]]) -> bool:
+    """Exclude prior staff replies and assistant turns that may contain order facts."""
+    previous_social_reply = None
+    for turn in transcript:
+        sender, content = turn.get("sender"), turn.get("content", "")
+        if sender == "customer":
+            social = widget_conversational_reply(content)
+            previous_social_reply = social[0] if social else None
+        elif sender != "assistant" or previous_social_reply != content:
+            return False
+        else:
+            previous_social_reply = None
+    return True
 
 
 async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> None:
@@ -559,7 +577,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             )
             return
         failure_stage = "provider_generation"
-        result = await create_grounded_draft(
+        draft_inputs = dict(
             organization_id=organization_id,
             execution_id=execution_id,
             question=question,
@@ -571,6 +589,22 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 execution.kind == "widget_reply" and execution.delivery_mode == "auto_reply"
             ),
         )
+        if (
+            settings.widget_ai_streaming_enabled
+            and execution.kind == "widget_reply"
+            and execution.delivery_mode == "auto_reply"
+            and execution.conversation_id is not None
+            and citations
+            and not integration_context
+            and _can_stream_transcript(transcript)
+        ):
+            documents = sorted({str(citation["document_id"]) for citation in citations})
+            async with publish_widget_deltas(
+                organization_id, execution.conversation_id, execution_id, attempt_count, documents
+            ) as publish:
+                result = await create_grounded_draft(**draft_inputs, on_delta=publish)
+        else:
+            result = await create_grounded_draft(**draft_inputs)
         if execution.kind == "widget_reply":
             failure_stage = "reply_persistence"
             await finish_widget_reply(

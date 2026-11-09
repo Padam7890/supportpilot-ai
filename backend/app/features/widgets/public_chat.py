@@ -15,9 +15,13 @@ from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.db.session import get_db
 from app.features.automations.service import enqueue_customer_message_workflows
-from app.features.notifications.application.events import TicketNotificationPayload, enqueue_notification_event
+from app.features.notifications.application.events import (
+    TicketNotificationPayload,
+    enqueue_notification_event,
+)
 from app.models import (
     Conversation,
     Customer,
@@ -185,6 +189,7 @@ async def public_widget_config(
         .execution_options(synchronize_session=False)
     )
     return PublicWidgetConfigOut(
+        streaming_enabled=settings.widget_ai_streaming_enabled and widget.ai_reply_mode == "auto_reply",
         store_name=organization.name,
         collect_contact=widget.collect_contact,
         ai_enabled=widget.ai_enabled,

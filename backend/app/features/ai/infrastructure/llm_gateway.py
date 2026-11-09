@@ -1,8 +1,11 @@
 """Bounded OpenAI-compatible gateway; no workflow or tenant policy lives here."""
 
+import asyncio
 import json
 import logging
+import math
 import time
+from collections.abc import AsyncIterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -89,18 +92,13 @@ def _safe_usage(raw_usage: object) -> dict[str, int]:
     result: dict[str, int] = {}
     for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
         value = raw_usage.get(key, 0)
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or (isinstance(value, float) and not math.isfinite(value)):
             value = 0
         result[key] = min(MAX_REPORTED_TOKEN_COUNT, max(0, int(value)))
     return result
 
 
-async def generate_completion(
-    messages: list[dict[str, str]], *, max_tokens: int = 400
-) -> tuple[str, dict[str, int], str | None]:
-    """Call the configured provider with bounded output, timeout, and safe telemetry."""
-    import httpx
-
+def _prepare_request(messages: list[dict[str, str]], max_tokens: int) -> tuple[str, dict[str, str]]:
     if not 1 <= max_tokens <= MAX_COMPLETION_TOKENS:
         raise ValueError("max_tokens is outside the configured completion budget")
     if not messages or any(
@@ -140,11 +138,21 @@ async def generate_completion(
     headers = {"content-type": "application/json"}
     if settings.ai_provider_api_key:
         headers["authorization"] = f"Bearer {settings.ai_provider_api_key.get_secret_value()}"
+    return f"{base_url}/chat/completions", headers
+
+
+async def generate_completion(
+    messages: list[dict[str, str]], *, max_tokens: int = 400
+) -> tuple[str, dict[str, int], str | None]:
+    """Call the configured provider with bounded output, timeout, and safe telemetry."""
+    import httpx
+
+    url, headers = _prepare_request(messages, max_tokens)
     started = time.monotonic()
     try:
         async with httpx.AsyncClient(timeout=settings.ai_provider_timeout_seconds) as client:
             response = await client.post(
-                f"{base_url}/chat/completions",
+                url,
                 headers=headers,
                 json={
                     "model": settings.ai_model,
@@ -208,3 +216,90 @@ async def generate_completion(
         usage["total_tokens"],
     )
     return validated.content, usage, settings.ai_model
+
+@dataclass(frozen=True)
+class CompletionDelta:
+    text: str
+
+
+@dataclass(frozen=True)
+class CompletionEnd:
+    usage: dict[str, int]
+    model_name: str | None
+
+
+async def stream_completion(
+    messages: list[dict[str, str]], *, max_tokens: int = 400
+) -> AsyncIterator[CompletionDelta | CompletionEnd]:
+    """Read actual provider deltas with bounded framing, output, and wall time."""
+    import httpx
+
+    url, headers = _prepare_request(messages, max_tokens)
+    usage: dict[str, int] = {}
+    characters = 0
+    finished = False
+    try:
+        async with asyncio.timeout(settings.ai_provider_timeout_seconds):
+            async with httpx.AsyncClient(timeout=settings.ai_provider_timeout_seconds) as client:
+                async with client.stream(
+                    "POST", url, headers=headers, json={
+                        "model": settings.ai_model, "messages": messages,
+                        "max_completion_tokens": max_tokens, "stream": True,
+                        "stream_options": {"include_usage": True},
+                    },
+                ) as response:
+                    if not response.is_success:
+                        raise AIProviderError(
+                            f"provider_http_{response.status_code}", "AI streaming request failed"
+                        )
+                    buffer = b""
+                    received = 0
+                    async for chunk in response.aiter_bytes(chunk_size=None):
+                        received += len(chunk)
+                        if received > 2_000_000:
+                            raise ValueError("stream exceeds wire limit")
+                        buffer += chunk
+                        while b"\n" in buffer:
+                            raw, buffer = buffer.split(b"\n", 1)
+                            if not raw.startswith(b"data:"):
+                                continue
+                            data = raw[5:].strip()
+                            if data == b"[DONE]":
+                                if not finished or not characters:
+                                    raise ValueError("stream has no completed answer")
+                                yield CompletionEnd(usage, settings.ai_model)
+                                return
+                            event = json.loads(data)
+                            if not isinstance(event, dict) or "error" in event:
+                                raise ValueError("invalid stream event")
+                            if event.get("usage") is not None:
+                                usage = _safe_usage(event["usage"])
+                            choices = event.get("choices", [])
+                            if not isinstance(choices, list) or len(choices) > 1:
+                                raise ValueError("invalid stream choices")
+                            if not choices:
+                                continue
+                            choice = choices[0]
+                            if not isinstance(choice, dict) or not isinstance(choice.get("delta"), dict):
+                                raise ValueError("invalid stream delta")
+                            delta = choice["delta"].get("content")
+                            if delta is not None and (not isinstance(delta, str) or "\x00" in delta):
+                                raise ValueError("invalid stream content")
+                            reason = choice.get("finish_reason")
+                            if reason not in {None, "stop", "length"}:
+                                raise ValueError("provider blocked or interrupted completion")
+                            if delta:
+                                characters += len(delta)
+                                if characters > 12_000 or finished:
+                                    raise ValueError("invalid stream output length")
+                                yield CompletionDelta(delta)
+                            finished = finished or reason in {"stop", "length"}
+                        if len(buffer) > 64_000:
+                            raise ValueError("stream line exceeds limit")
+    except (httpx.TimeoutException, TimeoutError) as exc:
+        raise AIProviderError("provider_timeout", "AI stream timed out") from exc
+    except httpx.RequestError as exc:
+        raise AIProviderError("provider_unreachable", "AI stream was interrupted") from exc
+    except (TypeError, ValueError) as exc:
+        raise AIProviderError("provider_invalid_response", "AI stream returned invalid data") from exc
+    raise AIProviderError("provider_unreachable", "AI stream ended before completion")

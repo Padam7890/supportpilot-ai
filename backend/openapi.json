@@ -7945,6 +7945,11 @@
             "title": "Store Name",
             "type": "string"
           },
+          "streaming_enabled": {
+            "default": false,
+            "title": "Streaming Enabled",
+            "type": "boolean"
+          },
           "welcome_message": {
             "default": "Hi! How can we help?",
             "title": "Welcome Message",
@@ -35681,6 +35686,70 @@
           }
         },
         "summary": "Record Recommendation Event",
+        "tags": [
+          "Public storefront chat"
+        ]
+      }
+    },
+    "/api/v1/widget/conversations/{conversation_id}/reply-stream": {
+      "get": {
+        "operationId": "stream_widget_reply_api_v1_widget_conversations__conversation_id__reply_stream_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 100,
+              "pattern": "^(?:[0-9a-f-]{36}:\\d{1,5}:\\d{1,20}-\\d{1,20})?$",
+              "title": "After",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stream Widget Reply",
         "tags": [
           "Public storefront chat"
         ]

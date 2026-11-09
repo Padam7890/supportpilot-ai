@@ -246,6 +246,7 @@
     }
     row.appendChild(meta);
     thread.appendChild(row);
+    return row;
   }
 
   function addWelcome() {
@@ -540,6 +541,133 @@
     catch { session = null; }
   }
 
+  let streamController = null;
+  let partialRow = null;
+  let partialText = "";
+  let streamCursor = "";
+  let renderFrame = 0;
+  let optimisticRow = null;
+
+  function clearPartial() {
+    partialRow?.remove();
+    partialRow = null;
+    partialText = "";
+    if (renderFrame) cancelAnimationFrame(renderFrame);
+    renderFrame = 0;
+  }
+
+  function renderPartial() {
+    renderFrame = 0;
+    if (!partialText) return;
+    thread.querySelector(".typing-row")?.remove();
+    if (!partialRow) {
+      partialRow = addMessage({ sender_type: "assistant", content: "" });
+      partialRow.classList.add("streaming-row");
+      partialRow.setAttribute("aria-hidden", "true");
+    } else if (!partialRow.isConnected) {
+      thread.appendChild(partialRow);
+    }
+    partialRow.querySelector(".message").textContent = partialText;
+    thread.scrollTop = thread.scrollHeight;
+  }
+
+  function stopReplyStream() {
+    streamController?.abort();
+    streamController = null;
+    streamCursor = "";
+    clearPartial();
+  }
+
+  function consumeReplyEvent(frame, conversationId) {
+    const data = frame.split("\n").find((line) => line.startsWith("data: "));
+    if (!data) return false;
+    const event = JSON.parse(data.slice(6));
+    if (event.conversation_id !== conversationId || typeof event.sequence !== "string") return false;
+    switch (event.event_type) {
+      case "execution.queued":
+      case "execution.started":
+      case "execution.status":
+        streamCursor = event.sequence;
+        clearPartial();
+        return false;
+      case "message.delta":
+        if (typeof event.payload?.text !== "string" || event.sequence === streamCursor) return false;
+        if (partialText.length + event.payload.text.length > 16000) throw new Error("Reply stream exceeded its limit");
+        streamCursor = event.sequence;
+        partialText += event.payload.text;
+        if (!renderFrame) renderFrame = requestAnimationFrame(renderPartial);
+        return false;
+      case "message.completed":
+      case "execution.failed":
+      case "execution.cancelled":
+      case "conversation.handoff":
+        clearPartial();
+        waitingForAssistant = false;
+        thread.querySelector(".typing-row")?.remove();
+        if (event.event_type === "execution.failed" && !event.payload?.message_id) {
+          setStatus("The assistant couldn’t finish its reply. You can send another message.", true);
+        }
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  async function readReplyStream(activeSession, signal) {
+    const query = streamCursor ? `?after=${encodeURIComponent(streamCursor)}` : "";
+    const response = await fetch(
+      `${apiBase}/widget/conversations/${encodeURIComponent(activeSession.conversation_id)}/reply-stream${query}`,
+      { headers: { authorization: `Bearer ${activeSession.visitor_token}` }, credentials: "omit", signal },
+    );
+    if (!response.ok || !response.body || !response.headers.get("content-type")?.startsWith("text/event-stream")) return true;
+    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buffer = "";
+    try {
+      while (!signal.aborted) {
+        const { value, done } = await reader.read();
+        if (done) return false;
+        buffer += value;
+        let boundary;
+        while ((boundary = buffer.indexOf("\n\n")) >= 0) {
+          const frame = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+          if (consumeReplyEvent(frame, activeSession.conversation_id)) return true;
+        }
+        if (buffer.length > 64000) return true;
+      }
+      return true;
+    } finally {
+      await reader.cancel().catch(() => {});
+      reader.releaseLock();
+    }
+  }
+
+  async function startReplyStream() {
+    if (!config?.streaming_enabled || !session || streamController || !panel.classList.contains("open")) return;
+    const activeSession = session;
+    const controller = new AbortController();
+    streamController = controller;
+    try {
+      for (let retry = 0; retry < 2 && !controller.signal.aborted; retry++) {
+        let terminal = false;
+        try {
+          terminal = await readReplyStream(activeSession, controller.signal);
+        } catch (error) {
+          if (controller.signal.aborted) return;
+          if (error instanceof SyntaxError) break;
+        }
+        if (terminal || controller.signal.aborted || !waitingForAssistant) break;
+      }
+    } finally {
+      if (streamController === controller) {
+        streamController = null;
+        clearPartial();
+        streamCursor = "";
+        await loadHistory().catch(() => {});
+      }
+    }
+  }
+
   async function loadHistory() {
     if (!session) return;
     const response = await fetch(`${apiBase}/widget/conversations/${encodeURIComponent(session.conversation_id)}`, {
@@ -566,7 +694,7 @@
       return;
     }
     lastHistorySignature = signature;
-    const assistantBefore = thread.querySelectorAll(".message-row.assistant:not(.typing-row)").length;
+    const assistantBefore = thread.querySelectorAll(".message-row.assistant:not(.typing-row):not(.streaming-row)").length;
     thread.replaceChildren();
     if (!latestMessages.length) addWelcome();
     const latestRecommendation = [...latestMessages].reverse().find(
@@ -580,8 +708,11 @@
     latestMessages.forEach((message) => addMessage(message, {
       canCompare: message.id === lastRecommendationId && message.recommendation?.response_type === "recommendations",
     }));
-    const assistantAfter = thread.querySelectorAll(".message-row.assistant:not(.typing-row)").length;
+    const assistantAfter = thread.querySelectorAll(".message-row.assistant:not(.typing-row):not(.streaming-row)").length;
+    if (optimisticRow) thread.appendChild(optimisticRow);
+    if (partialText) renderPartial();
     if (waitingForAssistant && assistantAfter > assistantBefore) {
+      stopReplyStream();
       waitingForAssistant = false;
       assistantWaitStartedAt = 0;
     }
@@ -633,6 +764,7 @@
       launcher.hidden = true;
       if (session) {
         await loadHistory();
+        void startReplyStream();
         if (!polling) polling = setInterval(() => {
           if (document.visibilityState === "visible" && panel.classList.contains("open")) loadHistory().catch(() => {});
         }, 5000);
@@ -650,6 +782,7 @@
   }
 
   function closeChat() {
+    stopReplyStream();
     panel.classList.remove("open");
     panel.setAttribute("aria-hidden", "true");
     launcher.hidden = false;
@@ -678,6 +811,10 @@
     pending = true;
     sendButton.disabled = true;
     setStatus("Sending…");
+    stopReplyStream();
+    thread.querySelector(".welcome")?.remove();
+    optimisticRow = addMessage({ sender_type: "customer", content, created_at: new Date().toISOString() });
+    thread.scrollTop = thread.scrollHeight;
     try {
       await ensureConfig();
       readSession();
@@ -714,11 +851,14 @@
         nextRecommendationSelections = null;
         compareSelections = [];
       }
+      optimisticRow.remove();
+      optimisticRow = null;
       compose.value = "";
       resizeComposer();
       waitingForAssistant = Boolean(config?.ai_enabled && conversationMode === "ai");
       assistantWaitStartedAt = waitingForAssistant ? Date.now() : 0;
       setStatus(waitingForAssistant ? "Your assistant is thinking…" : "Message sent. A support teammate will follow up here.");
+      void startReplyStream();
       await loadHistory();
       if (!polling) polling = setInterval(() => {
         if (document.visibilityState === "visible" && panel.classList.contains("open")) loadHistory().catch(() => {});
@@ -734,6 +874,8 @@
         errorState.scrollIntoView({ block: "nearest" });
       }
     } finally {
+      optimisticRow?.remove();
+      optimisticRow = null;
       pending = false;
       sendButton.disabled = !compose.value.trim();
     }

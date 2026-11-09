@@ -38,12 +38,26 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
     if (requestBody && new TextEncoder().encode(requestBody).byteLength > 12_000) {
       return NextResponse.json({ detail: "Widget request is too large" }, { status: 413, headers: corsHeaders });
     }
+    const streaming = request.method === "GET" && path.at(-1) === "reply-stream";
+    if (streaming) headers.set("accept", "text/event-stream");
     const response = await fetch(`${backendUrl}/api/v1/widget/${safePath}${request.nextUrl.search}`, {
       method: request.method,
       headers,
       body: requestBody,
       cache: "no-store",
+      signal: request.signal,
     });
+    if (streaming && response.headers.get("content-type")?.startsWith("text/event-stream")) {
+      return new NextResponse(response.body, {
+        status: response.status,
+        headers: {
+          ...corsHeaders,
+          "content-type": "text/event-stream",
+          "cache-control": "no-store, no-transform",
+          "x-accel-buffering": "no",
+        },
+      });
+    }
     const responseBody = await response.arrayBuffer();
     return new NextResponse(responseBody, {
       status: response.status,
