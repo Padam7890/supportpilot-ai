@@ -23,7 +23,8 @@ run_check backend_openapi bash -c 'cd "$1/backend" && python scripts/export_open
 run_check backend_tests bash -c 'cd "$1/backend" && pytest -q' _ "$ROOT"
 run_check frontend_widget_syntax node --check "$ROOT/frontend/public/supportpilot-widget.js"
 run_check frontend_lint bash -c 'cd "$1/frontend" && npm run lint' _ "$ROOT"
-run_check frontend_typecheck bash -c 'cd "$1/frontend" && npx tsc --noEmit' _ "$ROOT"
+run_check frontend_typecheck bash -c 'cd "$1/frontend" && npm run typecheck' _ "$ROOT"
+run_check frontend_tests bash -c 'cd "$1/frontend" && npm test' _ "$ROOT"
 printf '\nBaseline results (never treat skipped prerequisites as passing):\n'
 cat "$summary"
 printf '\nLogs saved in %s. Review FAIL entries and distinguish missing services/dependencies from code failures.\n' "$OUT"
