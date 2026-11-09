@@ -7,6 +7,7 @@ from sqlalchemy import select, tuple_
 
 from app.db.session import SessionLocal, set_tenant_context
 from app.features.ai.application.conversation_understanding import understand_conversation_turn
+from app.features.ai.application.topic_state_runtime import resolve_and_record_topic
 from app.features.ai.application.evidence_assessment import assess_knowledge_evidence
 from app.features.ai.application.conversational_intents import (
     should_skip_knowledge_retrieval,
@@ -148,7 +149,21 @@ async def load_execution_context(
                     conversation_context,
                     agent_id=execution.ai_agent_id,
                 )
-                retrieval_text = understanding.retrieval_query
+                retrieval_text = await resolve_and_record_topic(
+                    db,
+                    organization_id=organization_id,
+                    conversation_id=conversation.id,
+                    agent_id=execution.ai_agent_id,
+                    message=execution.question,
+                    prior_transcript=conversation_context[:-1] if conversation_context
+                    and conversation_context[-1].get("sender") == "customer"
+                    and conversation_context[-1].get("content", "").strip() == execution.question.strip()
+                    else conversation_context,
+                    retrieval_query=understanding.retrieval_query,
+                    explicit_topic=understanding.topic_switch,
+                )
+                await db.commit()
+                await set_tenant_context(db, organization_id)
             else:
                 question = (
                     f"Draft a reply to the latest customer message. Ticket: {ticket.subject if ticket else 'Support request'}. "
