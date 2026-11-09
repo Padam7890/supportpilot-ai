@@ -39,7 +39,10 @@ async function forward(request: NextRequest, context: { params: Promise<{ path: 
       return NextResponse.json({ detail: "Widget request is too large" }, { status: 413, headers: corsHeaders });
     }
     const streaming = request.method === "GET" && path.at(-1) === "reply-stream";
-    if (streaming) headers.set("accept", "text/event-stream");
+    if (streaming) {
+      headers.set("accept", "text/event-stream");
+      headers.set("accept-encoding", "identity");
+    }
     const response = await fetch(`${backendUrl}/api/v1/widget/${safePath}${request.nextUrl.search}`, {
       method: request.method,
       headers,

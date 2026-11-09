@@ -10,9 +10,9 @@ from app.features.ai.application.conversational_intents import (
     playground_conversational_reply,
     widget_conversational_reply,
 )
+from app.features.ai.application.follow_up import infer_assistant_question, resolve_order_support
 from app.features.ai.application.retrieval import is_contextual_follow_up
 from app.services import widget_ai
-
 
 Route = Literal[
     "direct",
@@ -35,7 +35,24 @@ class CustomerTurnPlan:
     tool_name: str = "conversation_intent"
 
 
-def plan_playground_turn(question: str) -> CustomerTurnPlan | None:
+def plan_playground_turn(
+    question: str, transcript: list[dict[str, str]] | None = None,
+) -> CustomerTurnPlan | None:
+    previous = transcript[-1] if transcript else {}
+    state = infer_assistant_question(previous.get("content", "")) if previous.get("sender") == "assistant" else None
+    order_follow_up = resolve_order_support(" ".join(question.strip().split()), state)
+    if order_follow_up and order_follow_up.draft:
+        return CustomerTurnPlan(
+            route="direct",
+            draft=(
+                "The storefront would pass this conversation to the store team. "
+                "This Playground preview does not contact them."
+                if order_follow_up.handoff else order_follow_up.draft
+            ),
+            safe_summary="Previewed a secure order support next step.",
+            intent="order",
+            tool_name="playground_order_follow_up",
+        )
     conversational = playground_conversational_reply(question)
     if conversational is not None:
         draft, intent = conversational

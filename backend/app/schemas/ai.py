@@ -12,7 +12,7 @@ class AIPlaygroundTurn(BaseModel):
 
 class AIPlaygroundRequest(BaseModel):
     question: Annotated[
-        str, StringConstraints(strip_whitespace=True, min_length=4, max_length=2000)
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)
     ]
     ai_agent_id: uuid.UUID | None = None
     conversation_history: list[AIPlaygroundTurn] = Field(default_factory=list, max_length=6)

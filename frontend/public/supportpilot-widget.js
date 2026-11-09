@@ -129,6 +129,9 @@
   let config;
   let session;
   const ACTIVE_HISTORY_REFRESH_MS = 5_000;
+  const FINAL_HISTORY_REFRESH_MS = 500;
+  const STREAM_WORD_INTERVAL_MS = 30;
+  const STREAM_CATCH_UP_STEPS = 70;
   const IDLE_HISTORY_REFRESH_MS = 30_000;
   const MAX_HISTORY_RETRY_MS = 120_000;
   let historyTimer;
@@ -612,6 +615,11 @@
   let streamGeneration = 0;
   let partialRow = null;
   let partialText = "";
+  let visibleLength = 0;
+  let nextWordAt = 0;
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  let pendingFinalMessageId = null;
+  let firstDeltaExecution = null;
   let streamCursor = "";
   let renderFrame = 0;
   let optimisticRow = null;
@@ -620,13 +628,16 @@
     partialRow?.remove();
     partialRow = null;
     partialText = "";
+    visibleLength = 0;
+    nextWordAt = 0;
+    pendingFinalMessageId = null;
+    firstDeltaExecution = null;
     if (renderFrame) cancelAnimationFrame(renderFrame);
     renderFrame = 0;
   }
 
   function renderPartial() {
-    renderFrame = 0;
-    if (!partialText) return;
+    if (!visibleLength) return;
     thread.querySelector(".typing-row")?.remove();
     if (!partialRow) {
       partialRow = addMessage({ sender_type: "assistant", content: "" });
@@ -635,8 +646,32 @@
     } else if (!partialRow.isConnected) {
       thread.appendChild(partialRow);
     }
-    renderAssistantMessage(partialRow.querySelector(".message"), partialText, true);
+    renderAssistantMessage(partialRow.querySelector(".message"), partialText.slice(0, visibleLength), true);
+    if (firstDeltaExecution) {
+      logStreamTiming("first_dom_update", firstDeltaExecution);
+      firstDeltaExecution = null;
+    }
     thread.scrollTo({ top: thread.scrollHeight, behavior: "instant" });
+  }
+
+  function revealPartial(now) {
+    renderFrame = 0;
+    if (now >= nextWordAt || reducedMotion.matches) {
+      if (reducedMotion.matches) {
+        visibleLength = partialText.length;
+      } else {
+        const words = partialText.slice(visibleLength).match(/\s*\S+\s*|\s+/g) || [];
+        const step = Math.ceil(words.length / STREAM_CATCH_UP_STEPS);
+        for (const word of words.slice(0, step)) visibleLength += word.length;
+      }
+      nextWordAt = now + STREAM_WORD_INTERVAL_MS;
+      renderPartial();
+    }
+    if (visibleLength < partialText.length) {
+      renderFrame = requestAnimationFrame(revealPartial);
+    } else if (pendingFinalMessageId && !streamController) {
+      scheduleHistoryPoll(true);
+    }
   }
 
   function stopReplyStream() {
@@ -646,20 +681,26 @@
     clearPartial();
   }
 
-  async function waitForPartialPaint(signal) {
-    if (renderFrame && document.visibilityState === "visible") {
-      await new Promise((resolve) => {
-        const timer = setTimeout(resolve, 100);
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-          clearTimeout(timer);
-          resolve();
-        }));
-      });
-    }
-    return !signal.aborted;
+  function logStreamTiming(stage, executionId) {
+    const name = `supportpilot:${executionId}:${stage}`;
+    const mark = performance.mark(name);
+    console.debug("SupportPilot reply stream", {
+      stage, executionId, atMs: Math.round(performance.timeOrigin + mark.startTime),
+    });
   }
 
-  async function consumeReplyEvent(frame, conversationId, signal) {
+  function alreadyReadSequence(sequence) {
+    if (!streamCursor) return false;
+    const [executionId, attempt, offset] = sequence.split(":");
+    const [previousExecution, previousAttempt, previousOffset] = streamCursor.split(":");
+    if (executionId !== previousExecution) return false;
+    if (attempt !== previousAttempt) return Number(attempt) < Number(previousAttempt);
+    const [time, index] = offset.split("-").map(BigInt);
+    const [previousTime, previousIndex] = previousOffset.split("-").map(BigInt);
+    return time < previousTime || (time === previousTime && index <= previousIndex);
+  }
+
+  function consumeReplyEvent(frame, conversationId) {
     const data = frame.split("\n").find((line) => line.startsWith("data: "));
     if (!data) return false;
     const event = JSON.parse(data.slice(6));
@@ -672,6 +713,7 @@
       typeof event.timestamp !== "string" ||
       !event.payload || typeof event.payload !== "object"
     ) return false;
+    if (event.event_type !== "execution.status" && alreadyReadSequence(event.sequence)) return false;
     switch (event.event_type) {
       case "execution.queued":
       case "execution.started":
@@ -681,17 +723,18 @@
         if (waitingForAssistant && !thread.querySelector(".typing-row")) addTyping();
         return false;
       case "message.delta":
-        if (typeof event.payload?.text !== "string" || event.sequence === streamCursor) return false;
-        // If the network delivered several real SSE batches together, let the
-        // preceding batch paint before adding the next one.
-        if (!await waitForPartialPaint(signal)) return true;
+        if (typeof event.payload?.text !== "string" || !event.payload.text) return false;
         if (partialText.length + event.payload.text.length > 16000) throw new Error("Reply stream exceeded its limit");
+        if (!partialText) {
+          firstDeltaExecution = event.execution_id;
+          logStreamTiming("first_browser_delta", event.execution_id);
+        }
         streamCursor = event.sequence;
         partialText += event.payload.text;
-        if (!renderFrame) renderFrame = requestAnimationFrame(renderPartial);
+        if (!renderFrame) renderFrame = requestAnimationFrame(revealPartial);
         return false;
       case "message.completed":
-        if (!await waitForPartialPaint(signal)) return true;
+        pendingFinalMessageId = event.payload.message_id || null;
         break;
       case "execution.failed":
       case "execution.cancelled":
@@ -700,7 +743,7 @@
       default:
         return false;
     }
-    clearPartial();
+    if (event.event_type !== "message.completed") clearPartial();
     waitingForAssistant = false;
     thread.querySelector(".typing-row")?.remove();
     if (event.event_type === "execution.failed" && !event.payload?.message_id) {
@@ -731,7 +774,7 @@
         while ((boundary = buffer.indexOf("\n\n")) >= 0) {
           const frame = buffer.slice(0, boundary);
           buffer = buffer.slice(boundary + 2);
-          if (await consumeReplyEvent(frame, activeSession.conversation_id, signal)) return true;
+          if (signal.aborted || consumeReplyEvent(frame, activeSession.conversation_id)) return true;
         }
         if (buffer.length > 64000) return true;
       }
@@ -757,7 +800,8 @@
     clearTimeout(historyTimer);
     historyTimer = undefined;
     if (!canPollHistory() || historyPollController) return;
-    const interval = waitingForAssistant ? ACTIVE_HISTORY_REFRESH_MS : IDLE_HISTORY_REFRESH_MS;
+    const interval = pendingFinalMessageId ? FINAL_HISTORY_REFRESH_MS
+      : waitingForAssistant ? ACTIVE_HISTORY_REFRESH_MS : IDLE_HISTORY_REFRESH_MS;
     const retryDelay = Math.min(interval * 2 ** historyPollFailures, MAX_HISTORY_RETRY_MS);
     historyTimer = setTimeout(async () => {
       historyTimer = undefined;
@@ -777,7 +821,7 @@
   }
 
   async function startReplyStream() {
-    if (!config?.streaming_enabled || !session || streamController || !panel.classList.contains("open")) return;
+    if (!waitingForAssistant || !config?.streaming_enabled || !session || streamController || !panel.classList.contains("open")) return;
     stopHistoryPolling();
     const activeSession = session;
     const controller = new AbortController();
@@ -797,7 +841,6 @@
     } finally {
       if (streamController === controller) {
         streamController = null;
-        clearPartial();
         streamCursor = "";
         if (panel.classList.contains("open") && document.visibilityState === "visible") {
           await loadHistory({ idleOnly: true }).catch(() => {});
@@ -819,6 +862,11 @@
     const result = await response.json();
     // A poll that started before the stream must not overwrite its partial row.
     if (signal?.aborted || (idleOnly && (streamController || streamGeneration !== generationAtRequest))) return;
+    // A terminal frame may arrive in the same network burst as its text.
+    // Keep the preview visible until the words already received have been shown.
+    if (pendingFinalMessageId && result.ai_mode === "ai" && visibleLength < partialText.length &&
+        !reducedMotion.matches && document.visibilityState === "visible") return;
+    const previousLatestMessageId = latestMessages.at(-1)?.id;
     latestMessages = result.messages || [];
     verifiedOrder = Boolean(result.order_verified);
     conversationMode = result.ai_mode === "ai" ? "ai" : "human";
@@ -827,15 +875,21 @@
       assistantWaitStartedAt = 0;
       setStatus("Message sent. A support teammate will follow up here.");
     } else if (waitingForAssistant && Date.now() - assistantWaitStartedAt > 45000) {
+      clearPartial();
       waitingForAssistant = false;
       assistantWaitStartedAt = 0;
       setStatus("The reply is taking longer than expected. A support teammate can follow up here.");
     }
+    if (pendingFinalMessageId && latestMessages.some((message) => message.id === pendingFinalMessageId)) {
+      clearPartial();
+    } else if (conversationMode !== "ai") {
+      clearPartial();
+    }
     const signature = JSON.stringify([
       verifiedOrder,
       conversationMode,
-      latestMessages.map(({ id, updated_at, created_at, content, verification_required }) =>
-        [id, updated_at, created_at, content, verification_required]
+      latestMessages.map(({ id, updated_at, created_at, content, verification_required, verification_paused }) =>
+        [id, updated_at, created_at, content, verification_required, verification_paused]
       ),
     ]);
     if (signature === lastHistorySignature) {
@@ -866,20 +920,24 @@
       if (persisted) optimisticRow = null;
       else thread.appendChild(optimisticRow.element);
     }
-    if (partialText) renderPartial();
-    if (waitingForAssistant && assistantAfter > assistantBefore) {
+    const latestMessage = latestMessages.at(-1);
+    if (!pendingFinalMessageId && waitingForAssistant && latestMessage?.sender_type === "assistant" &&
+        (assistantAfter > assistantBefore || latestMessage.id !== previousLatestMessageId)) {
       stopReplyStream();
       waitingForAssistant = false;
       assistantWaitStartedAt = 0;
     }
     const verificationRequested = latestAssistantRequestsVerification(latestMessages);
-    const latestPublicMessage = latestMessages.at(-1);
-    const refundNeedsVerification = latestPublicMessage?.sender_type === "assistant" && latestPublicMessage.verification_required === true;
-    const needsOrderVerification = refundNeedsVerification || (
+    if (partialText) renderPartial();
+    const latestPublicMessage = latestMessage;
+    const latestSupportMessage = latestMessages.findLast((message) => message.sender_type !== "customer");
+    const verificationPaused = latestSupportMessage?.verification_paused === true;
+    const verificationRequired = latestPublicMessage?.verification_required === true;
+    const needsOrderVerification = !verificationPaused && (verificationRequired || (
       verificationRequested && !/refund request/i.test(latestPublicMessage?.content || "")
     ) || (
       containsOrderIntent(latestMessages) && (!verifiedOrder || verificationRequested) && !cancellationWasSubmitted(latestMessages)
-    );
+    ));
     if (waitingForAssistant && conversationMode === "ai" && config?.ai_enabled && !needsOrderVerification) {
       const latestCustomer = [...latestMessages].reverse().find((item) => item.sender_type === "customer")?.content || "";
       if (/\b(recommend|suggest|phone|smartphone|mobile|laptop|camera|budget|compare|better|only)\b/i.test(latestCustomer) && window.SupportPilotRecommendationUI) {
@@ -894,7 +952,7 @@
       waitingForAssistant = false;
       addOrderVerificationCard();
       setStatus("Enter your order number and checkout email to continue securely.");
-    } else if (verifiedOrder && containsCancellationIntent(latestMessages) && !cancellationWasSubmitted(latestMessages)) {
+    } else if (!verificationPaused && verifiedOrder && containsCancellationIntent(latestMessages) && !cancellationWasSubmitted(latestMessages)) {
       addCancellationCard("your verified order");
     }
     if (assistantAfter > 0) setStatus("");

@@ -175,7 +175,6 @@ def build_retrieval_terms(text: str, *, limit: int = 64) -> list[str]:
         if len(token) > 1 and token not in _STOPWORDS
     ]
     expanded = list(tokens)
-    set(tokens)
     intent_token_set = set(intent_tokens)
     for triggers, synonyms in _INTENT_TERMS:
         if any(_matches_trigger(intent_token_set, intent_tokens, trigger) for trigger in triggers):
@@ -199,7 +198,7 @@ def should_skip_semantic_retrieval(text: str) -> bool:
     )
     if greeting:
         return True
-    return bool(len(normalized) <= 48 and is_contextual_follow_up(text) and not build_retrieval_terms(text))
+    return len(normalized) <= 48 and is_contextual_follow_up(text) and not build_retrieval_terms(text)
 
 
 def _matches_trigger(token_set: set[str], tokens: tuple[str, ...], trigger: str) -> bool:

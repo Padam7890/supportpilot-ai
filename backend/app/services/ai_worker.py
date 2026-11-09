@@ -27,6 +27,7 @@ from app.features.ai.application.follow_up import (
     VERIFY_REFUND,
     assess_widget_follow_up,
     infer_assistant_question,
+    order_verification_question,
 )
 from app.features.ai.application.intent_extraction import extract_intent
 from app.features.ai.application.intent_routing import (
@@ -50,6 +51,7 @@ from app.features.ai.application.widget_replies import (
     process_widget_shopping_execution,
     widget_reply_is_stale,
 )
+from app.features.ai.application.widget_stream_context import last_grounded_exchange
 from app.features.ai.domain.failure_codes import (
     is_retryable_ai_failure,
 )
@@ -71,6 +73,7 @@ from app.models import (
 from app.services.ai_execution import create_grounded_draft
 from app.services.widget_ai import (
     AI_TEMPORARY_FAILURE_REPLY,
+    ORDER_VERIFICATION_MESSAGE,
     VERIFIED_CANCELLATION_REPLY,
     WIDGET_PROVIDER_UNAVAILABLE_REPLY,
     widget_is_cancellation_request,
@@ -384,26 +387,28 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             return
         routed_question = execution.question if execution.kind == "widget_reply" else question
         follow_up_query = None
+        generic_clarification = None
         if execution.kind == "widget_reply":
             if await widget_reply_is_stale(organization_id, execution_id):
                 return
             delivery_status = "draft_ready" if execution.delivery_mode == "draft_only" else "sent"
-            follow_up = None
-            if execution.delivery_mode == "auto_reply":
-                follow_up, follow_up_reason = assess_widget_follow_up(
-                    execution.question, transcript, agent_id=execution.ai_agent_id,
-                    source_message_id=getattr(execution, "source_message_id", None), now=now,
-                )
-                _log_ai_execution_event(
-                    "widget_follow_up_routing", execution_id=str(execution_id),
-                    correlation_id=correlation_id, reason=follow_up_reason,
-                    decision=follow_up.decision if follow_up else None,
-                    confidence="deterministic" if follow_up else "deferred",
-                )
+            follow_up, follow_up_reason = assess_widget_follow_up(
+                execution.question, transcript, agent_id=execution.ai_agent_id,
+                source_message_id=getattr(execution, "source_message_id", None), now=now,
+                allow_refund_workflow=execution.delivery_mode == "auto_reply",
+            )
+            _log_ai_execution_event(
+                "widget_follow_up_routing", execution_id=str(execution_id),
+                correlation_id=correlation_id, reason=follow_up_reason,
+                decision=follow_up.decision if follow_up else None,
+            )
             if follow_up is not None and (follow_up.draft or follow_up.review):
                 draft, next_question, reply_status = follow_up.draft, follow_up.pending, delivery_status
                 review_citations = []
                 safe_summary = "The shopper continued a support workflow."
+                if follow_up.handoff:
+                    reply_status = "escalated"
+                    safe_summary = "The shopper requested support because their order reference was unavailable."
                 if review := follow_up.review:
                     failure_stage = "refund_verification"
                     if (
@@ -460,7 +465,9 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 )
                 turn = apply_routing_to_widget_plan(routed_question, transcript, routing)
             router_outcomes = [intent_router_outcome] if intent_router_outcome else []
-            if turn.route in {"direct", "purchase", "clarification"}:
+            if turn.route == "clarification" and turn.tool_name == "intent_router_clarification":
+                generic_clarification = turn.draft
+            elif turn.route in {"direct", "purchase", "clarification"}:
                 await finish_widget_reply(
                     organization_id,
                     execution_id,
@@ -477,6 +484,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 draft = turn.draft or ""
                 reply_status = turn.reply_status
                 safe_summary = turn.safe_summary or ""
+                pending_order = None
                 if widget_is_cancellation_request(routed_question):
                     order_verified, _order_reply = await verified_widget_order_reply(
                         organization_id, execution.conversation_id, routed_question
@@ -484,6 +492,8 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                     if order_verified:
                         draft = VERIFIED_CANCELLATION_REPLY
                         safe_summary = "A previously verified order cancellation still requires human approval."
+                    else:
+                        pending_order = order_verification_question(action="cancel")
                 elif widget_request_needs_order_verification(routed_question):
                     order_verified, order_reply = await verified_widget_order_reply(
                         organization_id, execution.conversation_id, routed_question
@@ -499,6 +509,8 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                             else delivery_status
                         )
                         safe_summary = "A current Shopify order lookup used the shopper’s active email verification."
+                    elif draft == ORDER_VERIFICATION_MESSAGE:
+                        pending_order = order_verification_question()
                 await finish_widget_reply(
                     organization_id,
                     execution_id,
@@ -509,6 +521,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                     outcomes=router_outcomes,
                     usage={},
                     model_name=None,
+                    pending_question=pending_order,
                 )
                 return
             shopping_outcome = not follow_up_query and await process_widget_shopping_execution(
@@ -592,6 +605,17 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 await db.commit()
             return
         if execution.kind == "playground":
+            playground_plan = plan_playground_turn(question, transcript)
+            if playground_plan is not None:
+                await finish_deterministic_ai_execution(
+                    organization_id,
+                    execution_id,
+                    draft=playground_plan.draft or "",
+                    safe_summary=playground_plan.safe_summary or "",
+                    tool_name=playground_plan.tool_name,
+                    result_count=0,
+                )
+                return
             routing = await resolve_customer_routing(
                 question, transcript or [], channel="playground"
             )
@@ -603,25 +627,18 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 channel="playground",
                 **{k: intent_router_outcome.get(k) for k in ("mode", "primary_intent", "metrics")},
             )
-            playground_plan = plan_playground_turn(question)
-            if playground_plan is not None:
-                await finish_deterministic_ai_execution(
-                    organization_id,
-                    execution_id,
-                    draft=playground_plan.draft or "",
-                    safe_summary=playground_plan.safe_summary or "",
-                    tool_name=playground_plan.tool_name,
-                    result_count=0,
-                )
-                return
         if not context and not integration_context:
             if execution.kind == "widget_reply":
                 await finish_widget_reply(
                     organization_id,
                     execution_id,
-                    draft=widget_missing_knowledge_reply(execution.question),
-                    reply_status="escalated",
-                    safe_summary="No matching knowledge was found in the active bot’s assigned sources. The shopper received a safe next step.",
+                    draft=generic_clarification or widget_missing_knowledge_reply(execution.question),
+                    reply_status=delivery_status if generic_clarification else "escalated",
+                    safe_summary=(
+                        "The shopper was asked for clarification after no matching sources were found."
+                        if generic_clarification else
+                        "No matching knowledge was found in the active bot’s assigned sources. The shopper received a safe next step."
+                    ),
                     citations=[],
                     outcomes=[
                         *([intent_router_outcome] if intent_router_outcome else []),
@@ -655,6 +672,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             ),
         }
         stream_context = None
+        stream_source_ids = None
         if (
             settings.widget_ai_streaming_enabled
             and execution.kind == "widget_reply"
@@ -665,6 +683,20 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             and not follow_up_query
         ):
             stream_context = _stream_conversation_context(execution.question, transcript)
+            source_ids = {str(citation["document_id"]) for citation in citations}
+            if stream_context is None and (grounded := last_grounded_exchange(transcript)):
+                prior_context, prior_sources = grounded
+                async with SessionLocal() as db:
+                    await set_tenant_context(db, organization_id)
+                    authorized = await citations_remain_authorized(
+                        db, organization_id=organization_id, ai_agent_id=execution.ai_agent_id,
+                        citations=[{"document_id": source_id} for source_id in sorted(prior_sources)],
+                    )
+                if authorized:
+                    stream_context = prior_context
+                    source_ids.update(prior_sources)
+            if stream_context is not None:
+                stream_source_ids = sorted(source_ids)
             _log_ai_execution_event(
                 "ai_widget_stream_decision",
                 execution_id=str(execution_id),
@@ -672,11 +704,10 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 decision="streaming" if stream_context is not None else "context_required",
                 historical_context_omitted=stream_context is not None and stream_context != transcript,
             )
-        if stream_context is not None:
-            documents = sorted({str(citation["document_id"]) for citation in citations})
+        if stream_context is not None and stream_source_ids:
             draft_inputs["conversation_context"] = [{"sender": turn["sender"], "content": turn["content"]} for turn in stream_context]
             async with publish_widget_deltas(
-                organization_id, execution.conversation_id, execution_id, attempt_count, documents
+                organization_id, execution.conversation_id, execution_id, attempt_count, stream_source_ids
             ) as publish:
                 result = await create_grounded_draft(**draft_inputs, on_delta=publish)
         else:
@@ -695,6 +726,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 usage=result.get("usage", {}) if isinstance(result.get("usage"), dict) else {},
                 model_name=str(result.get("model_name", ""))[:120] or None,
                 pending_question=infer_assistant_question(draft),
+                stream_source_ids=stream_source_ids,
             )
             return
         async with SessionLocal() as db:

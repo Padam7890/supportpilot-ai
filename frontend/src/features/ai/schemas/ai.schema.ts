@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const playgroundSchema = z.object({
-  question: z.string().trim().min(4, "Enter a question with at least 4 characters.").max(2000),
+  question: z.string().trim().min(1, "Enter a message.").max(2000),
   ai_agent_id: z.union([z.string().uuid(), z.literal("")]).optional(),
 });
 

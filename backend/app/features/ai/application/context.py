@@ -12,6 +12,7 @@ from app.features.ai.application.conversational_intents import (
 from app.features.ai.application.follow_up import PENDING_KEY
 from app.features.ai.application.retrieval import is_contextual_follow_up
 from app.features.ai.application.retrieval_search import search_agent_knowledge
+from app.features.ai.application.widget_stream_context import STREAM_SOURCE_IDS_KEY
 from app.models import (
     AIAgent,
     AIExecution,
@@ -118,6 +119,11 @@ async def load_execution_context(
                         if message.sender_type == "assistant"
                         and PENDING_KEY in (message.provider_metadata or {}) else {}
                     ),
+                    **(
+                        {STREAM_SOURCE_IDS_KEY: json.dumps(message.provider_metadata[STREAM_SOURCE_IDS_KEY])}
+                        if message.sender_type == "assistant"
+                        and STREAM_SOURCE_IDS_KEY in (message.provider_metadata or {}) else {}
+                    ),
                 }
                 for message in messages
             ]
@@ -187,6 +193,11 @@ async def load_execution_context(
             execution.instructions = "\n\n".join(
                 item for item in (agent_instructions, request_instructions) if item
             )[:9000]
+        if execution.kind == "playground":
+            from app.features.ai.application.conversation_orchestration import plan_playground_turn
+
+            if plan_playground_turn(question, conversation_context) is not None:
+                return execution, question, conversation_context, [], [], [], integration_context
         channel = "playground" if execution.kind == "playground" else "widget"
         if include_knowledge is False or (
             include_knowledge is None and execution.kind == "widget_reply"

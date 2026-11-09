@@ -9,6 +9,10 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 from app.features.ai.application.conversational_intents import classify_conversational_intent
+from app.features.ai.application.order_reference import (
+    order_reference_recovered,
+    order_reference_unavailable,
+)
 
 PENDING_KEY = "support_pending_question"
 PENDING_TTL = timedelta(minutes=30)
@@ -19,6 +23,7 @@ Stage = Literal[
     "refund_verification",
     "refund_review",
     "order_confirmation",
+    "order_verification",
     "product_selection",
     "policy_timing",
 ]
@@ -26,6 +31,24 @@ Intent = Literal["refund", "order", "shopping", "knowledge"]
 
 REASON_PROMPT = "Was the item damaged, defective, incorrect, or did you change your mind?"
 VERIFY_REFUND = "Thanks. Use the secure verification card to verify your order before the store team can review your refund request."
+ORDER_REFERENCE_HELP = (
+    "You can usually find the order number in your order confirmation email or order history. "
+    "I can’t securely look up an order without that reference in this chat."
+)
+ORDER_HANDOFF_OFFER = " Would you like me to pass this conversation to the store’s support team?"
+ORDER_HANDOFF_DECLINED = (
+    "Okay. If you find the order number later, tell me and we can pick up here."
+)
+ORDER_HANDOFF_PENDING = "The store team has your request and can follow up here."
+ORDER_HANDOFF_REQUESTED = (
+    "I’ve passed this conversation to the store team. They can follow up here."
+)
+VERIFY_CODE_HELP = "Enter your code in the secure verification card. If it expired or didn’t arrive, use the card to request a fresh code."
+_CODE_INTERRUPTED = re.compile(
+    r"\b(?:code|otp)\b.{0,30}\b(?:expired|didn.t arrive|not working|invalid|missing)\b|"
+    r"\b(?:lost|forgot|didn.t get|never got|no)\b.{0,25}\b(?:code|otp)\b",
+    re.IGNORECASE,
+)
 YES = re.compile(
     r"(?:yes|yeah|yep|sure|ok(?:ay)?|please do|continue|yes please)[.! ]*", re.IGNORECASE
 )
@@ -60,12 +83,17 @@ class PendingQuestion(BaseModel):
     model_config = ConfigDict(extra="forbid")
     active_intent: Intent
     stage: Stage
-    expected_answer_type: Literal["reason", "item", "otp", "confirmation", "ordinal", "time"]
+    expected_answer_type: Literal[
+        "reason", "item", "otp", "confirmation", "ordinal", "time", "order_reference"
+    ]
     refund_reason: RefundReason | None = None
     item_message_id: UUID | None = None
     verification_id: UUID | None = None
     verification_status: Literal["not_checked", "required", "verified"] = "not_checked"
     order_action: Literal["track", "cancel"] | None = None
+    order_number_unavailable: bool = False
+    order_reference_message_id: UUID | None = None
+    handoff_status: Literal["offered", "declined", "requested"] | None = None
     ai_agent_id: UUID | None = None
     expires_at: datetime | None = None
 
@@ -85,6 +113,7 @@ class FollowUp:
     pending: PendingQuestion | None = None
     routed_question: str | None = None
     review: PendingQuestion | None = None
+    handoff: bool = False
 
 
 def refund_start() -> PendingQuestion:
@@ -95,7 +124,27 @@ def refund_start() -> PendingQuestion:
 
 def infer_assistant_question(text: str) -> PendingQuestion | None:
     """Recognize narrow legacy prompts. Inferred state can only ask or route."""
+    from app.services import widget_ai
+
     folded = text[-800:].casefold()
+    preview_handoff_states = {
+        ORDER_REFERENCE_HELP + ORDER_HANDOFF_OFFER: "offered",
+        ORDER_HANDOFF_DECLINED: "declined",
+    }
+    if text in preview_handoff_states:
+        return order_verification_question().model_copy(
+            update={
+                "order_number_unavailable": True,
+                "handoff_status": preview_handoff_states[text],
+                "expected_answer_type": "confirmation"
+                if text.endswith(ORDER_HANDOFF_OFFER)
+                else "order_reference",
+            }
+        )
+    if re.search(r"enter (?:the|your) order number and (?:your )?checkout email", folded):
+        return order_verification_question()
+    if text == widget_ai.ORDER_ACTION_REPLY:
+        return order_verification_question(action="cancel")
     if (
         re.search(
             r"\b(?:reason for (?:your|the) (?:refund|return)|was (?:the|your) item damaged)\b",
@@ -167,6 +216,154 @@ def _refund_reason(answer: str) -> RefundReason | None:
     return None
 
 
+def order_verification_question(*, action: Literal["track", "cancel"] = "track") -> PendingQuestion:
+    return PendingQuestion(
+        active_intent="order",
+        stage="order_verification",
+        expected_answer_type="order_reference",
+        order_action=action,
+        verification_status="required",
+    )
+
+
+def resolve_order_support(
+    message: str,
+    state: PendingQuestion | None = None,
+    *,
+    source_message_id: UUID | None = None,
+) -> FollowUp | None:
+    from app.services import widget_ai
+
+    waiting_for_order = state is not None and state.stage in {
+        "order_verification",
+        "refund_verification",
+    }
+    in_order_context = waiting_for_order or (
+        state is not None and state.stage == "order_confirmation"
+    )
+    if order_reference_unavailable(message, in_order_context=in_order_context):
+        pending = (
+            state
+            if waiting_for_order and state
+            else order_verification_question(
+                action=(state.order_action if state else None) or "track"
+            )
+        )
+        if pending.handoff_status == "requested":
+            return FollowUp(
+                "order_handoff_pending",
+                draft=ORDER_HANDOFF_PENDING,
+                pending=pending,
+            )
+        pending = pending.model_copy(
+            update={
+                "order_number_unavailable": True,
+                "handoff_status": "offered",
+                "expected_answer_type": "confirmation",
+            }
+        )
+        return FollowUp(
+            "order_reference_missing",
+            draft=ORDER_REFERENCE_HELP + ORDER_HANDOFF_OFFER,
+            pending=pending,
+        )
+    if not waiting_for_order or state is None:
+        return None
+    if order_reference_recovered(message):
+        pending = state.model_copy(
+            update={
+                "order_number_unavailable": False,
+                "handoff_status": None,
+                "order_reference_message_id": source_message_id,
+                "expected_answer_type": "otp"
+                if state.stage == "refund_verification"
+                else "order_reference",
+            }
+        )
+        prompt = (
+            VERIFY_REFUND
+            if state.stage == "refund_verification"
+            else widget_ai.ORDER_VERIFICATION_MESSAGE
+        )
+        if state.order_action == "cancel":
+            prompt = widget_ai.ORDER_ACTION_REPLY
+        return FollowUp("order_verification_resumed", draft=prompt, pending=pending)
+    if state.active_intent == "order" and (social := classify_conversational_intent(message)):
+        return FollowUp("order_context_retained", draft=social.widget_reply, pending=state)
+    if not state.order_number_unavailable:
+        if _CODE_INTERRUPTED.search(message) or (
+            state.active_intent == "order" and re.fullmatch(r"\d{6}", message)
+        ):
+            return FollowUp("order_verification_interrupted", draft=VERIFY_CODE_HELP, pending=state)
+        return None
+    if widget_ai.HUMAN_REQUEST.search(message) or (
+        state.handoff_status == "offered" and YES.fullmatch(message)
+    ):
+        if state.handoff_status == "requested":
+            return FollowUp(
+                "order_handoff_pending",
+                draft=ORDER_HANDOFF_PENDING,
+                pending=state,
+            )
+        pending = state.model_copy(
+            update={"handoff_status": "requested", "expected_answer_type": "order_reference"}
+        )
+        return FollowUp(
+            "order_handoff_requested",
+            draft=ORDER_HANDOFF_REQUESTED,
+            pending=pending,
+            handoff=True,
+        )
+    if NO.fullmatch(message):
+        if state.handoff_status == "requested":
+            return FollowUp("order_handoff_pending", draft=ORDER_HANDOFF_PENDING, pending=state)
+        pending = state.model_copy(
+            update={"handoff_status": "declined", "expected_answer_type": "order_reference"}
+        )
+        return FollowUp(
+            "order_handoff_declined",
+            draft=ORDER_HANDOFF_DECLINED,
+            pending=pending,
+        )
+    if (
+        widget_ai.PURCHASE_INTENT.search(message)
+        or (
+            state.active_intent != "refund"
+            and (widget_ai.REFUND_ACTION.search(message) or widget_ai.RETURN_ACTION.search(message))
+        )
+        or (
+            TOPIC_SWITCH.search(message)
+            and (
+                not widget_ai.widget_request_needs_order_verification(message)
+                or widget_ai.POLICY_QUESTION.search(message)
+            )
+        )
+    ):
+        return None
+    if state.active_intent == "order" and widget_ai.CANCELLATION_REQUEST.search(message):
+        state = state.model_copy(update={"order_action": "cancel"})
+    if classify_conversational_intent(message) is None and (
+        widget_ai.widget_request_needs_order_verification(message)
+        or widget_ai.CLARIFICATION_REQUEST.fullmatch(message)
+        or len(message.split()) <= 5
+        and not TOPIC_SWITCH.search(message)
+    ):
+        if state.handoff_status == "requested":
+            return FollowUp(
+                "order_handoff_pending",
+                draft=ORDER_HANDOFF_PENDING,
+                pending=state,
+            )
+        return FollowUp(
+            "order_reference_needed",
+            draft=ORDER_REFERENCE_HELP + ORDER_HANDOFF_OFFER,
+            pending=state.model_copy(
+                update={"handoff_status": "offered", "expected_answer_type": "confirmation"}
+            ),
+        )
+    return None
+
+
 def resolve_follow_up(
     message: str,
     state: PendingQuestion,
@@ -174,6 +371,8 @@ def resolve_follow_up(
     source_message_id: UUID | None,
 ) -> FollowUp | None:
     answer = " ".join(message.strip().split())
+    if order_follow_up := resolve_order_support(answer, state, source_message_id=source_message_id):
+        return order_follow_up
     if NO.fullmatch(answer) or (
         state.active_intent == "refund"
         and re.fullmatch(
@@ -183,7 +382,7 @@ def resolve_follow_up(
         return FollowUp(
             "declined", draft="Okay, I’ll leave that request there. What else can I help with?"
         )
-    if state.active_intent == "order" and (
+    if state.stage == "order_confirmation" and (
         YES.fullmatch(answer)
         or re.fullmatch(r"cancel (?:it|that|this)[.!]?", answer, re.IGNORECASE)
     ):
@@ -256,6 +455,7 @@ def assess_widget_follow_up(
     agent_id: UUID,
     source_message_id: UUID | None,
     now: datetime,
+    allow_refund_workflow: bool = True,
 ) -> tuple[FollowUp | None, str]:
     from app.services import widget_ai
 
@@ -268,7 +468,7 @@ def assess_widget_follow_up(
         previous = previous[:-1]
     if previous:
         state = pending_from_assistant(previous[-1], agent_id, now)
-        if state is not None:
+        if state is not None and (allow_refund_workflow or state.active_intent == "order"):
             if resolved := resolve_follow_up(question, state, source_message_id=source_message_id):
                 return resolved, "resolved"
             if (
@@ -293,10 +493,18 @@ def assess_widget_follow_up(
                     return FollowUp(
                         "targeted_clarification", draft=prompts[state.stage], pending=state
                     ), "ambiguous"
-    if widget_ai.REFUND_ACTION.search(question) and not (
-        widget_ai.CANCELLATION_REQUEST.search(question)
-        or widget_ai.HUMAN_REQUEST.search(question)
-        or re.search(r"\b(?:refund policy|refund window|refund rules)\b", question, re.IGNORECASE)
+    if order_follow_up := resolve_order_support(" ".join(question.strip().split())):
+        return order_follow_up, "started"
+    if (
+        allow_refund_workflow
+        and widget_ai.REFUND_ACTION.search(question)
+        and not (
+            widget_ai.CANCELLATION_REQUEST.search(question)
+            or widget_ai.HUMAN_REQUEST.search(question)
+            or re.search(
+                r"\b(?:refund policy|refund window|refund rules)\b", question, re.IGNORECASE
+            )
+        )
     ):
         return FollowUp("refund_start", draft=REASON_PROMPT, pending=refund_start()), "started"
     return None, "no_matching_pending_question"

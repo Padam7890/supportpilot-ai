@@ -171,6 +171,7 @@ class WidgetMessageOut(BaseModel):
     created_at: datetime
     recommendation: RecommendationResult | ProductComparisonResult | None = None
     verification_required: bool = False
+    verification_paused: bool = False
 
 
 class WidgetConversationOut(BaseModel):

@@ -269,12 +269,13 @@ class CompletionEnd:
 
 
 async def stream_completion(
-    messages: list[dict[str, str]], *, max_tokens: int = 400
+    messages: list[dict[str, str]], *, max_tokens: int = 400, execution_id: str | None = None,
 ) -> AsyncIterator[CompletionDelta | CompletionEnd]:
     """Read actual provider deltas with bounded framing, output, and wall time."""
     import httpx
 
     url, headers = _prepare_request(messages, max_tokens)
+    headers.update({"accept": "text/event-stream", "accept-encoding": "identity"})
     usage: dict[str, int] = {}
     characters = 0
     finished = False
@@ -340,7 +341,11 @@ async def stream_completion(
                     if delta:
                         delta.encode("utf-8")
                         if not characters:
-                            logger.info("ai_stream_first_delta elapsed_ms=%d", round((time.monotonic() - started) * 1000))
+                            logger.info(
+                                "ai_stream_first_delta execution_id=%s elapsed_ms=%d at_ms=%d",
+                                execution_id, round((time.monotonic() - started) * 1000),
+                                time.time_ns() // 1_000_000,
+                            )
                         characters += len(delta)
                         if characters > 12_000 or finished:
                             raise ValueError("invalid stream output length")

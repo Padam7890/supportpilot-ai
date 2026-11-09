@@ -975,7 +975,7 @@
           },
           "question": {
             "maxLength": 2000,
-            "minLength": 4,
+            "minLength": 1,
             "title": "Question",
             "type": "string"
           }
@@ -11889,6 +11889,11 @@
           "sender_type": {
             "title": "Sender Type",
             "type": "string"
+          },
+          "verification_paused": {
+            "default": false,
+            "title": "Verification Paused",
+            "type": "boolean"
           },
           "verification_required": {
             "default": false,

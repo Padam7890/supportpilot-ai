@@ -82,7 +82,11 @@ def widget_message_out(message: Message, *, ai_agent_id: UUID | None = None) -> 
         content=message.content,
         created_at=message.created_at,
         recommendation=recommendation,
-        verification_required=bool(pending and pending.stage == "refund_verification"),
+        verification_required=bool(
+            pending and not pending.order_number_unavailable
+            and pending.stage in {"order_verification", "refund_verification"}
+        ),
+        verification_paused=bool(pending and pending.order_number_unavailable),
     )
 
 

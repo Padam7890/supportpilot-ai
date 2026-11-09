@@ -541,3 +541,46 @@ async def test_ai_active_execution_limit_is_enforced_under_concurrent_requests(c
         )
         assert active_count == 10
         await db.rollback()
+
+
+@pytest.mark.anyio
+async def test_playground_missing_order_follow_up_skips_retrieval_and_previews_handoff(client, monkeypatch):
+    from app.services.widget_ai import ORDER_VERIFICATION_MESSAGE
+
+    platform = await platform_owner(client)
+    owner = await approved_workspace(client, platform, "ai-playground-order-follow-up")
+    organization_id = UUID(owner["user"]["organization_id"])
+    headers = bearer(owner["access_token"])
+
+    async def unexpected(*_args, **_kwargs):
+        pytest.fail("Previewing order reference recovery must not use retrieval or the intent model")
+
+    monkeypatch.setattr("app.features.ai.application.context.search_agent_knowledge", unexpected)
+    monkeypatch.setattr("app.services.ai_worker.resolve_customer_routing", unexpected)
+
+    async def ask(question, history):
+        queued = await client.post(
+            "/api/v1/ai/playground", headers=headers,
+            json={"question": question, "conversation_history": history},
+        )
+        assert queued.status_code == 202, queued.text
+        execution_id = UUID(queued.json()["id"])
+        assert await claim_ai_execution(organization_id) == execution_id
+        await process_ai_execution(organization_id, execution_id)
+        result = await client.get(f"/api/v1/ai/executions/{execution_id}", headers=headers)
+        assert result.status_code == 200, result.text
+        assert result.json()["status"] == "succeeded" and result.json()["citations"] == []
+        return result.json()["draft"]
+
+    history = [
+        {"role": "user", "content": "I forget the order number"},
+        {"role": "assistant", "content": ORDER_VERIFICATION_MESSAGE},
+    ]
+    reply = await ask("sorry i forget number", history)
+    assert "confirmation email" in reply and "support team" in reply
+    handoff_preview = await ask("yes", [
+        *history,
+        {"role": "user", "content": "sorry i forget number"},
+        {"role": "assistant", "content": reply},
+    ])
+    assert "preview does not contact them" in handoff_preview

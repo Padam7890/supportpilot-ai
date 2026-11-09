@@ -24,7 +24,10 @@ from app.models import AIExecution, Message
 router = APIRouter(prefix="/widget", tags=["Public storefront chat"])
 logger = logging.getLogger(__name__)
 STREAM_WINDOW_SECONDS = 40
-RUNNING_POLL_SECONDS = 0.2
+REDIS_BLOCK_MS = 250
+QUEUED_POLL_SECONDS = 0.1
+KEEPALIVE_SECONDS = 10
+READ_COUNT = 16
 REDIS_START = "0-0"
 STATUS_OFFSET = "0-1"
 TERMINAL_OFFSET = "18446744073709551615-18446744073709551615"
@@ -109,10 +112,13 @@ async def reply_events(
     redis = getattr(request.app.state, "redis", None)
     cursor = REDIS_START
     previous_state = None
-    delivered_batches = 0
+    delivered_deltas = 0
+    entries = []
+    next_keepalive = started_at + KEEPALIVE_SECONDS
     while time.monotonic() < deadline and not await request.is_disconnected():
         frames = []
         terminal = False
+        stream_key = None
         async with SessionLocal() as db:
             try:
                 widget, conversation, _ = await require_visitor_conversation(
@@ -158,48 +164,61 @@ async def reply_events(
                     cursor = after.removeprefix(prefix) if after.startswith(prefix) else REDIS_START
                     if cursor in {REDIS_START, STATUS_OFFSET}:
                         frames.append(encode_event(row, conversation_id, "execution.started", status="running"))
-                if redis is not None:
-                    try:
-                        async with asyncio.timeout(0.75):
-                            entries = await redis.xrange(
-                                reply_stream_key(widget.organization_id, conversation_id, row.id, row.attempt_count),
-                                min=f"({cursor}", count=32,
-                            )
-                    except (RedisError, TimeoutError):
-                        return  # The widget retains its history polling fallback.
-                    if entries:
-                        offset, _ = entries[-1]
-                        documents = {item for _, entry in entries for item in entry["documents"].split(",") if item}
-                        citations = [{"document_id": item} for item in sorted(documents)]
-                        if not citations or not await citations_remain_authorized(
-                            db, organization_id=widget.organization_id, ai_agent_id=row.ai_agent_id, citations=citations,
-                        ):
-                            frames = [encode_event(row, conversation_id, "execution.cancelled")]
-                            terminal = True
-                        else:
-                            cursor = offset
-                            delivered_batches += 1
-                            if delivered_batches == 1:
+                stream_key = reply_stream_key(
+                    widget.organization_id, conversation_id, row.id, row.attempt_count
+                )
+                if entries and entries[0][0] == stream_key:
+                    batch = entries[0][1]
+                    documents = {
+                        item for _, entry in batch for item in entry["documents"].split(",") if item
+                    }
+                    citations = [{"document_id": item} for item in sorted(documents)]
+                    if not citations or not await citations_remain_authorized(
+                        db, organization_id=widget.organization_id, ai_agent_id=row.ai_agent_id,
+                        citations=citations,
+                    ):
+                        frames = [encode_event(row, conversation_id, "execution.cancelled")]
+                        terminal = True
+                    else:
+                        for cursor, entry in batch:
+                            delivered_deltas += 1
+                            if delivered_deltas == 1:
                                 logger.info(
-                                    "widget_stream_first_batch execution_id=%s elapsed_ms=%d",
-                                    execution_id, round((time.monotonic() - started_at) * 1000),
+                                    "widget_stream_first_delta execution_id=%s attempt=%d elapsed_ms=%d "
+                                    "at_ms=%d redis_id=%s",
+                                    execution_id, row.attempt_count,
+                                    round((time.monotonic() - started_at) * 1000),
+                                    time.time_ns() // 1_000_000, cursor,
                                 )
                             frames.append(encode_event(
-                                row, conversation_id, "message.delta", cursor,
-                                text="".join(item["text"] for _, item in entries),
+                                row, conversation_id, "message.delta", cursor, text=entry["text"],
                             ))
             previous_state = state
         for frame in frames:
             yield frame
         if terminal:
             logger.info(
-                "widget_stream_closed execution_id=%s delta_batches=%d",
-                execution_id, delivered_batches,
+                "widget_stream_closed execution_id=%s deltas=%d",
+                execution_id, delivered_deltas,
             )
             return
-        if not frames:
+        if time.monotonic() >= next_keepalive:
             yield ": keepalive\n\n"
-        await asyncio.sleep(RUNNING_POLL_SECONDS if row.status == "running" else 0.5)
+            next_keepalive = time.monotonic() + KEEPALIVE_SECONDS
+        # Wait outside the transaction, then recheck authorization before yielding
+        # any text, including entries replayed after a reconnect.
+        entries = []
+        if stream_key is not None and redis is not None:
+            try:
+                async with asyncio.timeout(0.75):
+                    entries = await redis.xread(
+                        {stream_key: cursor}, count=READ_COUNT, block=REDIS_BLOCK_MS,
+                    )
+            except (RedisError, TimeoutError):
+                return
+        else:
+            await asyncio.sleep(QUEUED_POLL_SECONDS)
+
 
 
 @router.get(

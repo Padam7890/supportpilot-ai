@@ -512,6 +512,8 @@ class WidgetMockProviderClient:
 
 @pytest.mark.anyio
 async def test_widget_draft_only_saves_grounded_result_without_sending(client, monkeypatch):
+    monkeypatch.setattr(settings, "ai_intent_router_enabled", False)
+    monkeypatch.setattr(settings, "ai_embedding_model", None)
     auth, organization_id, public_id = await setup_widget(
         client, "widget-draft-ai", "https://store-draft-ai.example", ai_enabled=True
     )
@@ -744,6 +746,8 @@ async def test_widget_uses_server_configured_bot_for_conversation_and_execution(
 
 @pytest.mark.anyio
 async def test_widget_human_takeover_during_generation_prevents_late_ai_reply(client, monkeypatch):
+    monkeypatch.setattr(settings, "ai_intent_router_enabled", False)
+    monkeypatch.setattr(settings, "ai_embedding_model", None)
     auth, organization_id, public_id = await setup_widget(
         client,
         "widget-concurrent-takeover",
@@ -793,7 +797,7 @@ async def test_widget_human_takeover_during_generation_prevents_late_ai_reply(cl
         }
 
     monkeypatch.setattr(ai_worker, "create_grounded_draft", delayed_generation)
-    monkeypatch.setattr(ai_worker, "is_provider_configured", lambda: True)
+    monkeypatch.setattr(ai_worker, "provider_configuration_error", lambda: None)
     origin = "https://store-concurrent-takeover.example"
     started = await client.post(
         f"/api/v1/widget/{public_id}/messages",
@@ -1302,9 +1306,18 @@ async def test_reply_stream_rechecks_handoff_before_releasing_more_deltas(client
     assert execution_id is not None
 
     class DeltaStore:
-        async def xrange(self, key, *, min, count):
+        async def xread(self, streams, *, count, block):
+            key, cursor = next(iter(streams.items()))
             assert str(organization_id) in key and str(conversation_id) in key
-            return [("123-0", {"text": "Shipping ", "documents": str(uuid4())})]
+            assert count > 0 and block > 0
+            if cursor == "123-1":
+                return []
+            assert cursor == "0-0"
+            documents = str(uuid4())
+            return [(key, [
+                ("123-0", {"text": "Shipping ", "documents": documents}),
+                ("123-1", {"text": "takes ", "documents": documents}),
+            ])]
 
     async def authorized_sources(*_args, **_kwargs):
         return True
@@ -1323,7 +1336,11 @@ async def test_reply_stream_rechecks_handoff_before_releasing_more_deltas(client
     authorization = f"Bearer {started.json()['visitor_token']}"
     async with aclosing(reply_events(request, conversation_id, authorization, execution_id, "")) as events:
         assert "event: execution.started" in await anext(events)
-        assert "event: message.delta" in await anext(events)
+        first = await anext(events)
+        second = await anext(events)
+        assert "event: message.delta" in first and '"text":"Shipping "' in first
+        assert "event: message.delta" in second and '"text":"takes "' in second
+        assert ":123-0" in first and ":123-1" in second
         async with SessionLocal() as db:
             await set_tenant_context(db, organization_id)
             conversation = await db.get(Conversation, conversation_id)
@@ -1425,3 +1442,63 @@ async def test_widget_refund_follow_up_persists_through_otp_and_hands_off(client
         await set_tenant_context(db, organization_id)
         execution = await db.get(AIExecution, execution_id)
         assert execution is not None and execution.reply_status == "escalated"
+
+
+@pytest.mark.anyio
+async def test_widget_forgotten_order_number_pauses_verification_and_offers_handoff(client, monkeypatch):
+    origin = "https://store-missing-reference.example"
+    _, organization_id, public_id = await setup_widget(
+        client, "widget-missing-reference", origin, ai_enabled=True, ai_reply_mode="auto_reply",
+    )
+
+    async def unexpected_lookup(*_args, **_kwargs):
+        pytest.fail("A shopper's missing order reference must not start a Shopify lookup")
+
+    monkeypatch.setattr(ai_worker, "verified_widget_order_reply", unexpected_lookup)
+
+    async def work():
+        execution_id = await claim_ai_execution(organization_id)
+        assert execution_id is not None
+        await process_ai_execution(organization_id, execution_id)
+        return execution_id
+
+    started = await client.post(
+        f"/api/v1/widget/{public_id}/messages",
+        headers={"Origin": origin, "Idempotency-Key": f"missing-ref-{uuid4().hex}"},
+        json={"content": "I forget the order number"},
+    )
+    assert started.status_code == 201, started.text
+    conversation_url = f"/api/v1/widget/conversations/{started.json()['conversation_id']}"
+    headers = {"Origin": origin, "Authorization": f"Bearer {started.json()['visitor_token']}"}
+
+    async def last_reply():
+        history = await client.get(conversation_url, headers=headers)
+        assert history.status_code == 200, history.text
+        assert history.json()["order_verified"] is False
+        return history.json()["messages"][-1]
+
+    async def send(content):
+        response = await client.post(
+            f"{conversation_url}/messages",
+            headers={**headers, "Idempotency-Key": f"missing-ref-{uuid4().hex}"},
+            json={"content": content},
+        )
+        assert response.status_code == 200, response.text
+        return await work()
+
+    await work()
+    assert (await last_reply())["verification_paused"] is True
+    await send("sorry i forget number")
+    repeated = await last_reply()
+    assert repeated["verification_paused"] is True and repeated["verification_required"] is False
+    assert "support team" in repeated["content"]
+    assert "Enter the order number" not in repeated["content"]
+    escalation_id = await send("yes")
+    assert "passed this conversation" in (await last_reply())["content"]
+    async with SessionLocal() as db:
+        await set_tenant_context(db, organization_id)
+        execution = await db.get(AIExecution, escalation_id)
+        assert execution is not None and execution.reply_status == "escalated"
+    await send("Actually, I found it")
+    resumed = await last_reply()
+    assert resumed["verification_paused"] is False and resumed["verification_required"] is True

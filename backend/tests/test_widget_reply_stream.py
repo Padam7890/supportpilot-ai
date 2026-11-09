@@ -123,11 +123,14 @@ async def test_redis_replay_uses_exclusive_cursor_and_attempt_scope(monkeypatch)
     async with Redis.from_url(redis_url, decode_responses=True) as reader:
         async with publish_widget_deltas(org, conversation, execution, 1, [str(doc)]) as publish:
             await publish("First ")
-            entries = await reader.xrange(key)
+            entries = (await reader.xread({key: "0-0"}, count=4, block=250))[0][1]
             assert entries[0][1]["text"] == "First "
+            waiting = asyncio.create_task(reader.xread({key: entries[0][0]}, count=4, block=1000))
+            await asyncio.sleep(0)
+            assert not waiting.done()
             await publish("second")
-        resumed = await reader.xrange(key, min=f"({entries[0][0]}")
-        assert [item["text"] for _, item in resumed] == ["second"]
+            resumed = await asyncio.wait_for(waiting, timeout=0.75)
+            assert [item["text"] for _, item in resumed[0][1]] == ["second"]
         assert await reader.xrange(reply_stream_key(org, conversation, execution, 2)) == []
         assert 0 < await reader.ttl(key) <= 120
         await reader.delete(key)

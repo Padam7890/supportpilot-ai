@@ -31,7 +31,8 @@ class ExecutionState(TypedDict, total=False):
 
 
 def build_grounded_draft_graph(
-    checkpointer: Any, on_delta: Callable[[str], Awaitable[None]] | None = None
+    checkpointer: Any, on_delta: Callable[[str], Awaitable[None]] | None = None,
+    *, execution_id: UUID | None = None,
 ) -> Any:
     from langgraph.graph import END, START, StateGraph
 
@@ -74,7 +75,10 @@ def build_grounded_draft_graph(
     async def generate(state: ExecutionState) -> dict[str, Any]:
         if on_delta is not None:
             parts = []
-            async with aclosing(stream_completion(state.get("prompt", []), max_tokens=400)) as stream:
+            async with aclosing(stream_completion(
+                state.get("prompt", []), max_tokens=400,
+                execution_id=str(execution_id) if execution_id else None,
+            )) as stream:
                 async for event in stream:
                     if isinstance(event, CompletionDelta):
                         parts.append(event.text)
@@ -115,7 +119,7 @@ async def create_grounded_draft(
     try:
         async with asyncio.timeout(settings.ai_provider_timeout_seconds + 10):
             async with tenant_checkpointer(organization_id) as checkpointer:
-                graph = build_grounded_draft_graph(checkpointer, on_delta)
+                graph = build_grounded_draft_graph(checkpointer, on_delta, execution_id=execution_id)
                 return await graph.ainvoke(
                     {
                         "question": question,

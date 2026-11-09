@@ -16,6 +16,7 @@ from app.features.ai.application.follow_up import (
     infer_assistant_question,
 )
 from app.features.ai.application.retrieval_search import citations_remain_authorized
+from app.features.ai.application.widget_stream_context import STREAM_SOURCE_IDS_KEY
 from app.features.ai.domain.policies import widget_reply_is_superseded
 from app.features.ai.tools.recommendations import ToolReference
 from app.features.notifications.application.events import (
@@ -275,6 +276,7 @@ async def finish_widget_reply(
     switch_to_human: bool = False,
     failure_code: str | None = None,
     pending_question: PendingQuestion | None = None,
+    stream_source_ids: list[str] | None = None,
 ) -> None:
     """Persist a draft or send only while holding the conversation row lock."""
     now = datetime.now(UTC)
@@ -340,7 +342,7 @@ async def finish_widget_reply(
             db,
             organization_id=organization_id,
             ai_agent_id=row.ai_agent_id,
-            citations=citations,
+            citations=[*citations, *({"document_id": source_id} for source_id in stream_source_ids or [])],
         ):
             row.status = "succeeded"
             row.reply_status = "escalated"
@@ -468,6 +470,7 @@ async def finish_widget_reply(
                     provider_metadata={
                         **({"recommendation": recommendation_payload} if recommendation_payload is not None else {}),
                         **({PENDING_KEY: pending_question.attached_to(row.ai_agent_id, now)} if pending_question is not None else {}),
+                        **({STREAM_SOURCE_IDS_KEY: stream_source_ids} if stream_source_ids and reply_status == "sent" else {}),
                     },
                 )
                 .on_conflict_do_nothing(constraint="uq_messages_org_ai_execution")

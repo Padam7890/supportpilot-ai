@@ -7671,6 +7671,11 @@ export interface components {
             /** Sender Type */
             sender_type: string;
             /**
+             * Verification Paused
+             * @default false
+             */
+            verification_paused: boolean;
+            /**
              * Verification Required
              * @default false
              */
