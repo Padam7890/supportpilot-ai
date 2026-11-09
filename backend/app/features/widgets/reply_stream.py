@@ -22,7 +22,7 @@ from app.models import AIExecution, Message
 
 router = APIRouter(prefix="/widget", tags=["Public storefront chat"])
 logger = logging.getLogger(__name__)
-STREAM_WINDOW_SECONDS = 40
+STREAM_WINDOW_SECONDS = 55
 REDIS_BLOCK_MS = 250
 QUEUED_POLL_SECONDS = 0.1
 KEEPALIVE_SECONDS = 10
@@ -33,6 +33,7 @@ TERMINAL_OFFSET = "18446744073709551615-18446744073709551615"
 COMMITTED_CHUNK_SIZE = 96
 COMMITTED_OFFSET_PREFIX = "18446744073709551614-"
 COMMITTED_CHUNK_DELAY_SECONDS = 0.035
+MAX_COMMITTED_REPLY_CHARS = 12_000
 
 
 class StreamPayload(BaseModel):
@@ -88,6 +89,7 @@ def encode_event(row: AIExecution, conversation_id: UUID, event_type, offset=Non
 
 def committed_reply_chunks(text: str, after_offset: str) -> list[tuple[str, str]]:
     """Deterministic, resumable chunks of already persisted assistant text."""
+    text = text[:MAX_COMMITTED_REPLY_CHARS]
     chunks = [
         text[i:i + COMMITTED_CHUNK_SIZE]
         for i in range(0, len(text), COMMITTED_CHUNK_SIZE)
@@ -208,6 +210,8 @@ async def reply_events(
                 # committed-message branch above may emit message.delta.
             previous_state = state
         for frame in frames:
+            if await request.is_disconnected():
+                return
             yield frame
             if terminal and "event: message.delta" in frame:
                 await asyncio.sleep(COMMITTED_CHUNK_DELAY_SECONDS)
