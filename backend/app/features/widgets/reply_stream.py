@@ -95,7 +95,7 @@ def committed_reply_chunks(text: str, after_offset: str) -> list[tuple[str, str]
         for i in range(0, len(text), COMMITTED_CHUNK_SIZE)
     ]
     start = 0
-    if re.fullmatch(r"18446744073709551614-\\d+", after_offset):
+    if re.fullmatch(r"18446744073709551614-\\d{1,20}", after_offset):
         start = min(len(chunks), int(after_offset.split("-")[1]))
     return [(f"{COMMITTED_OFFSET_PREFIX}{index + 1}", chunks[index]) for index in range(start, len(chunks))]
 
