@@ -23,4 +23,5 @@ export type Message = {
   delivery_status?: "received" | "accepted" | "sent" | "delivered" | "failed" | "unknown" | null;
   delivery_job_status?: "queued" | "running" | "succeeded" | "failed" | "cancelled" | null;
   delivery_error_code?: string | null;
+  delivery_correlation_id?: string | null;
 };

@@ -56,7 +56,7 @@ export function WidgetPreview({ draftSettings }: { draftSettings?: WidgetPreview
         {isOpen && <section role="dialog" aria-label="SupportPilot chat preview" className="flex h-[430px] w-[min(370px,calc(100vw-3rem))] flex-col overflow-hidden rounded-3xl border border-slate-200 bg-[#f8faff] shadow-[0_24px_70px_rgba(30,48,90,0.24)]">
           <header className="flex items-center gap-3 bg-gradient-to-r from-blue-700 to-indigo-700 px-4 py-4 text-white">
             <span className="grid size-10 place-items-center rounded-2xl border border-white/30 bg-white/15 font-bold">S</span>
-            <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{config.data?.store_name ?? "Your store"}</p><p className="text-xs text-blue-100">{assistantName}</p><p className="mt-1 flex items-center gap-1.5 text-[11px] text-blue-100"><span className="size-1.5 rounded-full bg-emerald-300"/>Chat available</p></div>
+            <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">Your store</p><p className="text-xs text-blue-100">{assistantName}</p><p className="mt-1 flex items-center gap-1.5 text-[11px] text-blue-100"><span className="size-1.5 rounded-full bg-emerald-300"/>Chat available</p></div>
             <Button variant="unstyled" type="button" onClick={() => setIsOpen(false)} aria-label="Close widget preview" className="grid size-9 place-items-center rounded-xl bg-white/15 hover:bg-white/25 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"><X size={18}/></Button>
           </header>
           <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">

@@ -19,6 +19,20 @@ type TokenResponse = {
   platform_owner?: unknown;
 };
 
+function isTokenResponse(body: Record<string, unknown>): body is TokenResponse {
+  return typeof body.access_token === "string" && typeof body.refresh_token === "string";
+}
+
+function sessionResponseFromTokens(tokens: TokenResponse, status: number, platform: boolean) {
+  const response = NextResponse.json(
+    platform ? { platform_owner: tokens.platform_owner } : { user: tokens.user },
+    { status },
+  );
+  setSessionCookies(response, tokens, platform);
+  clearAuthChallengeCookie(response);
+  return response;
+}
+
 /**
  * When many tabs or parallel queries hit 401 together, each would call `/auth/refresh` with the same
  * refresh cookie. The backend rotates refresh tokens and treats a second concurrent refresh as
@@ -194,6 +208,16 @@ function attachmentResponseFromUpstream(response: Response, correlationId: strin
   return new NextResponse(response.body, { status: response.status, headers });
 }
 
+function eventStreamResponseFromUpstream(response: Response, correlationId: string) {
+  const headers = new Headers({
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-cache, no-transform",
+    "x-accel-buffering": "no",
+    "x-correlation-id": response.headers.get("x-correlation-id") ?? correlationId,
+  });
+  return new NextResponse(response.body, { status: response.status, headers });
+}
+
 function localProblem(
   request: NextRequest,
   status: number,
@@ -236,7 +260,7 @@ async function requestBackend(
   const contentType = request.headers.get("content-type");
   if (contentType) headers.set("content-type", contentType);
   else if (body && !["GET", "HEAD"].includes(method)) headers.set("content-type", "application/json");
-  headers.set("accept", "application/json");
+  headers.set("accept", path === "notifications/stream" ? "text/event-stream" : "application/json");
   headers.set("x-correlation-id", correlationId);
   const idempotencyKey = request.headers.get("idempotency-key");
   if (idempotencyKey) headers.set("idempotency-key", idempotencyKey);
@@ -352,6 +376,9 @@ async function forward(
         return response;
       }
       const body = JSON.parse(raw) as Record<string, unknown>;
+      if (isTenantLogin && isTokenResponse(body)) {
+        return sessionResponseFromTokens(body, upstream.status, false);
+      }
       const challengeToken = typeof body.challenge_token === "string" ? body.challenge_token : null;
       delete body.challenge_token;
       const response = NextResponse.json(body, { status: upstream.status });
@@ -364,10 +391,16 @@ async function forward(
       const raw = await upstream.text();
       if (!upstream.ok) return responseFromUpstream(upstream, raw, correlationId);
       const tokens = JSON.parse(raw) as TokenResponse;
-      const response = NextResponse.json({ user: tokens.user }, { status: upstream.status });
-      setSessionCookies(response, tokens, false);
-      clearAuthChallengeCookie(response);
-      return response;
+      return sessionResponseFromTokens(tokens, upstream.status, false);
+    }
+    if (isLoginWorkspace) {
+      const raw = await upstream.text();
+      if (!upstream.ok) return responseFromUpstream(upstream, raw, correlationId);
+      const body = JSON.parse(raw) as Record<string, unknown>;
+      if (isTokenResponse(body)) {
+        return sessionResponseFromTokens(body, upstream.status, false);
+      }
+      return NextResponse.json(body, { status: upstream.status });
     }
     if (isRegistrationVerify || isPasswordResetComplete) {
       const raw = await upstream.text();
@@ -396,6 +429,11 @@ async function forward(
           setSessionCookies(response, tokenBody, platform);
           return response;
         }
+        if (request.method === "GET" && path === "notifications/stream" && upstream.ok) {
+          const response = eventStreamResponseFromUpstream(upstream, correlationId);
+          setSessionCookies(response, tokenBody, platform);
+          return response;
+        }
         const raw = await upstream.text();
         const response = responseFromUpstream(upstream, raw, correlationId);
         setSessionCookies(response, tokenBody, platform);
@@ -413,6 +451,9 @@ async function forward(
 
     if (request.method === "GET" && path.endsWith("/download") && upstream.ok) {
       return attachmentResponseFromUpstream(upstream, correlationId);
+    }
+    if (request.method === "GET" && path === "notifications/stream" && upstream.ok) {
+      return eventStreamResponseFromUpstream(upstream, correlationId);
     }
     const raw = await upstream.text();
     const response = responseFromUpstream(upstream, raw, correlationId);

@@ -87,6 +87,11 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
 
   const submitLogin = login.handleSubmit((values) => run(async () => {
     const result = await loginRequest(values);
+    if ("user" in result) {
+      router.replace("/dashboard");
+      router.refresh();
+      return;
+    }
     setEmail(values.email);
     setEmailHint(result.email_hint ?? values.email);
     if (result.status === "workspace_selection_required") {
@@ -111,6 +116,11 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
     try {
       await run(async () => {
         const result = await selectLoginWorkspace(workspace.membership_id);
+        if ("user" in result) {
+          router.replace("/dashboard");
+          router.refresh();
+          return;
+        }
         setEmailHint(result.email_hint ?? email);
         setStep("login-code");
       });

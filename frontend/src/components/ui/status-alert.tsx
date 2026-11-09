@@ -4,10 +4,10 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 
 const toneClass: Record<"error" | "warning" | "success" | "info", string> = {
-  error: "border-red-200 bg-red-50 text-red-900 [&_[data-slot=alert-description]]:text-red-800",
-  warning: "border-amber-200 bg-amber-50 text-amber-950 [&_[data-slot=alert-description]]:text-amber-900",
-  success: "border-emerald-200 bg-emerald-50 text-emerald-950 [&_[data-slot=alert-description]]:text-emerald-900",
-  info: "border-blue-200 bg-blue-50 text-blue-950 [&_[data-slot=alert-description]]:text-blue-900",
+  error: "border-error/30 bg-error/10 text-error-foreground [&_[data-slot=alert-description]]:text-error-foreground",
+  warning: "border-warning/30 bg-warning/10 text-warning-foreground [&_[data-slot=alert-description]]:text-warning-foreground",
+  success: "border-success/30 bg-success/10 text-success-foreground [&_[data-slot=alert-description]]:text-success-foreground",
+  info: "border-info/30 bg-info/10 text-info-foreground [&_[data-slot=alert-description]]:text-info-foreground",
 };
 
 export function StatusAlert({

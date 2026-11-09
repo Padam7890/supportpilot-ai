@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.features.automations.service import enqueue_customer_message_workflows
+from app.features.notifications.application.events import TicketNotificationPayload, enqueue_notification_event
 from app.models import (
     Conversation,
     Customer,
@@ -300,6 +301,15 @@ async def start_widget_conversation(
     )
     db.add(message)
     await db.flush()
+    await enqueue_notification_event(
+        db,
+        organization_id=widget.organization_id,
+        event_type="conversation.customer_replied",
+        aggregate_type="ticket",
+        aggregate_id=ticket.id,
+        event_id=message.id,
+        payload=TicketNotificationPayload(ticket_id=ticket.id, conversation_id=conversation.id),
+    )
     await enqueue_widget_reply(db=db, widget=widget, conversation=conversation, message=message)
     await enqueue_customer_message_workflows(
         db,
@@ -491,6 +501,15 @@ async def continue_widget_conversation(
     if message is None:
         raise HTTPException(status_code=503, detail="Message could not be accepted")
     db.add(message)
+    await enqueue_notification_event(
+        db,
+        organization_id=conversation.organization_id,
+        event_type="conversation.customer_replied",
+        aggregate_type="ticket",
+        aggregate_id=ticket.id,
+        event_id=message.id,
+        payload=TicketNotificationPayload(ticket_id=ticket.id, conversation_id=conversation.id),
+    )
     conversation.updated_at = datetime.now(UTC)
     ticket.updated_at = conversation.updated_at
     await enqueue_widget_reply(db=db, widget=widget, conversation=conversation, message=message)

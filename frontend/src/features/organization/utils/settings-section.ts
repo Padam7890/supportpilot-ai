@@ -5,6 +5,7 @@ export const SETTINGS_SECTIONS = [
   "sla",
   "saved-replies",
   "security",
+  "notifications",
   "recommendations",
   "widget",
   "shopify",

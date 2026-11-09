@@ -52,9 +52,9 @@ export function AutomationHub() {
   });
 
   return (
-    <div className="h-full overflow-y-auto bg-slate-50">
-      <header className="border-b border-slate-200 bg-white px-4 py-5 sm:px-8">
-        <div className="mx-auto flex max-w-5xl flex-wrap items-end justify-between gap-4">
+    <div className="h-full overflow-y-auto bg-background text-foreground">
+      <header className="border-b border-border bg-background px-4 py-3">
+        <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <p className="sidebar-group text-[var(--text-muted)]">Automations</p>
             <h1 className="page-title mt-0.5">Workflows</h1>
@@ -76,7 +76,7 @@ export function AutomationHub() {
           </div>
         </div>
       </header>
-      <div className="mx-auto max-w-5xl space-y-5 px-4 py-5 sm:px-8">
+      <div className="space-y-5 px-4 py-4">
         <section aria-label="Automation performance, last 30 days" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           {[
             { label: "Executions", value: metrics.data?.total },

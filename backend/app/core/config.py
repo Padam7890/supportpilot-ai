@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     cors_origins: list[str] = [
         "http://localhost:3000",
     ]
+    # Development-only: skip workspace login OTP for these normalized emails after password check.
+    auth_dev_otp_bypass_emails: list[str] = Field(default_factory=list)
     log_level: str = "INFO"
 
     model_config = SettingsConfigDict(

@@ -1,346 +1,236 @@
 "use client";
 
-import { Textarea } from "@/components/ui";
 import { useEffect, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { Archive, BookOpen, ChevronLeft, ChevronRight, FileText, History, LoaderCircle, Plus, RotateCcw, RotateCw, Search, Star, Trash2, Upload } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Archive, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, FileText, FolderOpen, History, LoaderCircle, MoreHorizontal, Plus, RotateCw, Search, Star, Trash2, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
-import { Badge } from "@/components/ui/badge";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input, Select } from "@/components/ui/input";
 import { StatusAlert } from "@/components/ui/status-alert";
-import { formatDateTime } from "@/lib/utils";
+import { ApiError } from "@/lib/api/errors";
 import { currentUserQueryKey, getCurrentUser } from "@/features/auth/api/auth-api";
 import { aiAgentsKey, listAIAgents } from "@/features/ai/api/ai-agent-api";
+import { formatDateTime } from "@/lib/utils";
+import { archiveKnowledgeBase, createKnowledgeBase, knowledgeBaseKey, listKnowledgeBaseAudit, listKnowledgeBases, makeDefaultKnowledgeBase, restoreKnowledgeBase, updateKnowledgeBase } from "../api/knowledge-base-api";
 import { deleteKnowledgeDocument, isKnowledgeDocumentProcessing, KNOWLEDGE_PROCESSING_POLL_INTERVAL_MS, knowledgeKeys, listKnowledgeDocuments, moveKnowledgeDocument, KNOWLEDGE_DOCUMENT_PAGE_SIZE, reprocessKnowledgeDocument, searchKnowledge, uploadKnowledgeDocument } from "../api/knowledge-api";
 import type { KnowledgeDocument } from "../types/knowledge.types";
-import { archiveKnowledgeBase, createKnowledgeBase, knowledgeBaseKey, listKnowledgeBaseAudit, listKnowledgeBases, makeDefaultKnowledgeBase, restoreKnowledgeBase, updateKnowledgeBase } from "../api/knowledge-base-api";
+
+type UploadEntry = { file: File; status: "queued" | "uploading" | "processing" | "ready" | "failed"; error?: string };
 
 export function KnowledgeLibrary() {
   const client = useQueryClient();
   const fileInput = useRef<HTMLInputElement>(null);
-  const [queryText, setQueryText] = useState("");
-  const [searchTerm, setSearchTerm] = useState("");
-  const [searchScope, setSearchScope] = useState("current");
   const [selectedBaseId, setSelectedBaseId] = useState<string>();
   const [historyBaseId, setHistoryBaseId] = useState<string>();
   const [historyOffset, setHistoryOffset] = useState(0);
-  const [documentPage, setDocumentPage] = useState({ baseId: "", offset: 0 });
+  const [documentOffset, setDocumentOffset] = useState(0);
   const [archiveBaseId, setArchiveBaseId] = useState<string>();
   const [newBaseName, setNewBaseName] = useState("");
-  const [articleEditorOpen, setArticleEditorOpen] = useState(false);
-  const [articleTitle, setArticleTitle] = useState("");
-  const [articleContent, setArticleContent] = useState("");
-  const [articleSuccess, setArticleSuccess] = useState("");
+  const [newBaseOpen, setNewBaseOpen] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploadBaseId, setUploadBaseId] = useState("");
+  const [uploadEntries, setUploadEntries] = useState<UploadEntry[]>([]);
+  const [uploadSelectionError, setUploadSelectionError] = useState("");
+  const [searchText, setSearchText] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
+
   const user = useQuery({ queryKey: currentUserQueryKey, queryFn: getCurrentUser });
   const canManage = ["owner", "admin"].includes(user.data?.role ?? "");
   const bases = useQuery({ queryKey: knowledgeBaseKey, queryFn: listKnowledgeBases });
   const agents = useQuery({ queryKey: aiAgentsKey, queryFn: listAIAgents });
   const activeBases = bases.data?.items.filter((base) => base.status === "active") ?? [];
   const archivedBases = bases.data?.items.filter((base) => base.status === "archived") ?? [];
-  const selectedBaseIsActive = activeBases.some((base) => base.id === selectedBaseId);
-  const effectiveBaseId = (selectedBaseIsActive ? selectedBaseId : undefined)
-    ?? activeBases.find((base) => base.is_default)?.id
-    ?? activeBases[0]?.id;
+  const effectiveBaseId = (activeBases.some((base) => base.id === selectedBaseId) ? selectedBaseId : undefined)
+    ?? activeBases.find((base) => base.is_default)?.id ?? activeBases[0]?.id;
   const selectedBase = activeBases.find((base) => base.id === effectiveBaseId);
-  const historyBase = bases.data?.items.find((base) => base.id === historyBaseId)
-    ?? selectedBase;
-  const baseAudit = useQuery({
-    queryKey: ["knowledge-base-audit", historyBase?.id, historyOffset],
-    queryFn: () => listKnowledgeBaseAudit(historyBase?.id ?? "", historyOffset),
-    enabled: canManage && Boolean(historyBase?.id),
-  });
-  const historyPageLimit = baseAudit.data?.limit ?? 10;
-  const baseToArchive = activeBases.find((base) => base.id === archiveBaseId);
-  const botsUsingArchiveBase = baseToArchive
-    ? agents.data?.items.filter((agent) => (agent.knowledge_base_ids ?? []).includes(baseToArchive.id)) ?? []
-    : [];
-  const activeBotsUsingArchiveBase = botsUsingArchiveBase.filter((agent) => agent.status === "active");
-  const assignedAgents = effectiveBaseId
-    ? agents.data?.items.filter((agent) => (agent.knowledge_base_ids ?? []).includes(effectiveBaseId)) ?? []
-    : [];
-  const activeAssignedAgents = assignedAgents.filter((agent) => agent.status === "active");
-  const inactiveAssignedAgentCount = assignedAgents.length - activeAssignedAgents.length;
-  const documentOffset = documentPage.baseId === effectiveBaseId ? documentPage.offset : 0;
+  const historyBase = bases.data?.items.find((base) => base.id === historyBaseId) ?? selectedBase;
   const documents = useQuery({
     queryKey: [...knowledgeKeys.documents, effectiveBaseId, documentOffset],
     queryFn: () => listKnowledgeDocuments(effectiveBaseId, documentOffset),
     enabled: bases.isSuccess && Boolean(effectiveBaseId),
-    refetchInterval: (query) => query.state.data?.items.some(isKnowledgeDocumentProcessing)
-      ? KNOWLEDGE_PROCESSING_POLL_INTERVAL_MS
-      : false,
+    refetchInterval: (query) => query.state.data?.items.some(isKnowledgeDocumentProcessing) ? KNOWLEDGE_PROCESSING_POLL_INTERVAL_MS : false,
     refetchIntervalInBackground: false,
   });
-  const activeSearchScope = searchScope === "current" || searchScope === "all" || activeBases.some((base) => base.id === searchScope)
-    ? searchScope
-    : "current";
-  const searchAllBases = activeSearchScope === "all";
-  const searchBaseId = searchAllBases
-    ? undefined
-    : activeSearchScope === "current"
-      ? effectiveBaseId
-      : activeBases.find((base) => base.id === activeSearchScope)?.id ?? effectiveBaseId;
-  const results = useQuery({
-    queryKey: [...knowledgeKeys.search(searchTerm), searchBaseId ?? "all-active-bases"],
-    queryFn: () => searchKnowledge(searchTerm, searchBaseId),
-    enabled: bases.isSuccess && searchTerm.length >= 2 && (searchAllBases || Boolean(effectiveBaseId)),
+  const history = useQuery({
+    queryKey: ["knowledge-base-audit", historyBase?.id, historyOffset],
+    queryFn: () => listKnowledgeBaseAudit(historyBase?.id ?? "", historyOffset),
+    enabled: canManage && Boolean(historyBase?.id),
   });
-  const upload = useMutation({
+  const search = useQuery({
+    queryKey: [...knowledgeKeys.search(searchTerm), effectiveBaseId],
+    queryFn: () => searchKnowledge(searchTerm, effectiveBaseId),
+    enabled: searchTerm.length >= 2 && Boolean(effectiveBaseId),
+  });
+
+  const uploadOne = useMutation({
     mutationFn: uploadKnowledgeDocument,
-    onSuccess: async (_document, variables) => {
-      if (fileInput.current) fileInput.current.value = "";
-      const uploadedBaseId = variables.knowledgeBaseId ?? effectiveBaseId ?? "";
-      setSelectedBaseId(uploadedBaseId);
-      setDocumentPage({ baseId: uploadedBaseId, offset: 0 });
-      await Promise.all([
-        client.invalidateQueries({ queryKey: knowledgeKeys.documents }),
-        client.invalidateQueries({ queryKey: knowledgeBaseKey }),
-        client.invalidateQueries({ queryKey: ["knowledge-base-audit"] }),
-      ]);
-    },
-  });
-  const createArticle = useMutation({
-    mutationFn: async ({ title: rawTitle, content: rawContent, knowledgeBaseId }: { title: string; content: string; knowledgeBaseId: string }) => {
-      const title = rawTitle.trim();
-      const content = rawContent.trim();
-      if (!title || !content) throw new Error("Add a title and article content first.");
-      const safeStem = title.replace(/[\\/:*?\"<>|]/g, "-").replace(/\s+/g, " ").slice(0, 180).trim();
-      const file = new File([content], `${safeStem || "Knowledge article"}.md`, { type: "text/markdown" });
-      await uploadKnowledgeDocument({ file, knowledgeBaseId });
-      return { title, knowledgeBaseId };
-    },
-    onSuccess: async ({ title, knowledgeBaseId }) => {
-      setArticleTitle("");
-      setArticleContent("");
-      setArticleEditorOpen(false);
-      setArticleSuccess(`“${title}” was added and is being processed for AI search.`);
-      setSelectedBaseId(knowledgeBaseId);
-      setHistoryBaseId(knowledgeBaseId);
-      setDocumentPage({ baseId: knowledgeBaseId, offset: 0 });
-      await Promise.all([
-        client.invalidateQueries({ queryKey: knowledgeKeys.documents }),
-        client.invalidateQueries({ queryKey: knowledgeBaseKey }),
-        client.invalidateQueries({ queryKey: ["knowledge-base-audit"] }),
-      ]);
-    },
-  });
-  const refreshBaseAudit = () => client.invalidateQueries({ queryKey: ["knowledge-base-audit"] });
-  const createBase = useMutation({ mutationFn: () => createKnowledgeBase({ name: newBaseName.trim(), description: null }), onSuccess: async (base) => { setNewBaseName(""); setHistoryOffset(0); await client.invalidateQueries({ queryKey: knowledgeBaseKey }); setSelectedBaseId(base.id); setHistoryBaseId(base.id); await refreshBaseAudit(); } });
-  const archiveBase = useMutation({ mutationFn: archiveKnowledgeBase, onSuccess: async (_, baseId) => { setSelectedBaseId(undefined); setHistoryBaseId(baseId); setHistoryOffset(0); setArchiveBaseId(undefined); await client.invalidateQueries({ queryKey: knowledgeBaseKey }); await refreshBaseAudit(); } });
-  const restoreBase = useMutation({ mutationFn: restoreKnowledgeBase, onSuccess: async (base) => { setSelectedBaseId(base.id); setHistoryBaseId(base.id); setHistoryOffset(0); await client.invalidateQueries({ queryKey: knowledgeBaseKey }); await refreshBaseAudit(); } });
-  const makeDefaultBase = useMutation({ mutationFn: makeDefaultKnowledgeBase, onSuccess: async () => { await client.invalidateQueries({ queryKey: knowledgeBaseKey }); await refreshBaseAudit(); } });
-  const updateBase = useMutation({
-    mutationFn: ({ id, name, description }: { id: string; name: string; description: string | null }) =>
-      updateKnowledgeBase(id, { name, description }),
-    onSuccess: async () => { await client.invalidateQueries({ queryKey: knowledgeBaseKey }); await refreshBaseAudit(); },
-  });
-  const reprocess = useMutation({
-    mutationFn: reprocessKnowledgeDocument,
-    onSuccess: async (_document, documentId) => {
-      await Promise.all([
-        client.invalidateQueries({ queryKey: knowledgeKeys.documents }),
-        client.invalidateQueries({ queryKey: ["knowledge-document", documentId] }),
-      ]);
-    },
-  });
-  const remove = useMutation({ mutationFn: deleteKnowledgeDocument, onSuccess: () => client.invalidateQueries({ queryKey: knowledgeKeys.documents }) });
-  const move = useMutation({
-    mutationFn: ({ documentId, knowledgeBaseId }: { documentId: string; knowledgeBaseId: string }) =>
-      moveKnowledgeDocument(documentId, knowledgeBaseId),
     onSuccess: async () => {
-      await Promise.all([
-        client.invalidateQueries({ queryKey: knowledgeKeys.documents }),
-        client.invalidateQueries({ queryKey: ["knowledge-search"] }),
-        refreshBaseAudit(),
-      ]);
+      await Promise.all([client.invalidateQueries({ queryKey: knowledgeKeys.documents }), client.invalidateQueries({ queryKey: knowledgeBaseKey })]);
     },
   });
-  const writeError = upload.error ?? createArticle.error ?? reprocess.error ?? remove.error ?? move.error ?? createBase.error ?? archiveBase.error ?? restoreBase.error ?? makeDefaultBase.error ?? updateBase.error;
+  const createBase = useMutation({ mutationFn: () => createKnowledgeBase({ name: newBaseName.trim(), description: null }), onSuccess: async (base) => {
+    setNewBaseName(""); setNewBaseOpen(false); setSelectedBaseId(base.id); setHistoryBaseId(base.id); setHistoryOffset(0);
+    await client.invalidateQueries({ queryKey: knowledgeBaseKey });
+  } });
+  const updateBase = useMutation({ mutationFn: ({ id, name, description }: { id: string; name: string; description: string | null }) => updateKnowledgeBase(id, { name, description }), onSuccess: () => client.invalidateQueries({ queryKey: knowledgeBaseKey }) });
+  const setDefault = useMutation({ mutationFn: makeDefaultKnowledgeBase, onSuccess: () => client.invalidateQueries({ queryKey: knowledgeBaseKey }) });
+  const archive = useMutation({ mutationFn: archiveKnowledgeBase, onSuccess: async (_, baseId) => { setArchiveBaseId(undefined); setSelectedBaseId(undefined); setHistoryBaseId(baseId); await client.invalidateQueries({ queryKey: knowledgeBaseKey }); } });
+  const restore = useMutation({ mutationFn: restoreKnowledgeBase, onSuccess: async (base) => { setSelectedBaseId(base.id); setHistoryBaseId(base.id); await client.invalidateQueries({ queryKey: knowledgeBaseKey }); } });
+  const reprocess = useMutation({ mutationFn: reprocessKnowledgeDocument, onSuccess: () => client.invalidateQueries({ queryKey: knowledgeKeys.documents }) });
+  const remove = useMutation({ mutationFn: deleteKnowledgeDocument, onSuccess: () => client.invalidateQueries({ queryKey: knowledgeKeys.documents }) });
+  const move = useMutation({ mutationFn: ({ id, baseId }: { id: string; baseId: string }) => moveKnowledgeDocument(id, baseId), onSuccess: () => Promise.all([client.invalidateQueries({ queryKey: knowledgeKeys.documents }), client.invalidateQueries({ queryKey: knowledgeBaseKey })]) });
 
   useEffect(() => {
-    const visibilityChanged = () => {
-      if (document.visibilityState === "visible") void client.invalidateQueries({ queryKey: knowledgeKeys.documents });
-    };
-    document.addEventListener("visibilitychange", visibilityChanged);
-    return () => document.removeEventListener("visibilitychange", visibilityChanged);
-  }, [client]);
+    if (documents.isSuccess && documentOffset > 0 && documents.data.items.length === 0 && documents.data.total <= documentOffset) setDocumentOffset(Math.max(0, documentOffset - KNOWLEDGE_DOCUMENT_PAGE_SIZE));
+  }, [documents.data, documents.isSuccess, documentOffset]);
 
-  useEffect(() => {
-    if (documents.isSuccess && documentOffset > 0 && documents.data.items.length === 0 && documents.data.total <= documentOffset) {
-      setDocumentPage({ baseId: effectiveBaseId ?? "", offset: Math.max(0, documentOffset - KNOWLEDGE_DOCUMENT_PAGE_SIZE) });
+  const enqueueFiles = (files: FileList | null) => {
+    if (!files?.length) return;
+    const candidates = Array.from(files);
+    const allowed = candidates.filter((file) => /\.(pdf|txt|md)$/i.test(file.name) && file.size <= 20 * 1024 * 1024);
+    if (allowed.length !== candidates.length) setUploadSelectionError("Only PDF, TXT, and Markdown files up to 20 MB are supported.");
+    else setUploadSelectionError("");
+    setUploadEntries((current) => [...current, ...allowed.map((file) => ({ file, status: "queued" as const }))]);
+  };
+  const uploadQueued = async () => {
+    if (!uploadBaseId) return;
+    for (const [index, entry] of uploadEntries.entries()) {
+      if (entry.status !== "queued" && entry.status !== "failed") continue;
+      setUploadEntries((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, status: "uploading", error: undefined } : item));
+      try {
+        const uploaded = await uploadOne.mutateAsync({ file: entry.file, knowledgeBaseId: uploadBaseId });
+        const status = uploaded.status === "ready" ? "ready" : uploaded.status === "failed" ? "failed" : "processing";
+        setUploadEntries((current) => current.map((item) => item.file === entry.file ? { ...item, status, error: status === "failed" ? uploaded.jobs[0]?.last_error ?? "Processing failed" : undefined } : item));
+      } catch (error) {
+        setUploadEntries((current) => current.map((item) => item.file === entry.file ? { ...item, status: "failed", error: error instanceof Error ? error.message : "Upload failed" } : item));
+      }
     }
-  }, [documents.data, documents.isSuccess, documentOffset, effectiveBaseId]);
+    setSelectedBaseId(uploadBaseId);
+    setDocumentOffset(0);
+    await client.invalidateQueries({ queryKey: knowledgeKeys.documents });
+  };
+  const writeError = createBase.error ?? updateBase.error ?? setDefault.error ?? archive.error ?? restore.error ?? move.error ?? reprocess.error ?? remove.error;
+  const documentRange = documents.data ? documents.data.items.length ? `${documentOffset + 1}–${documentOffset + documents.data.items.length} of ${documents.data.total}` : `0 of ${documents.data.total}` : "Loading documents";
+  const historyPageLimit = history.data?.limit ?? 10;
+  const baseToArchive = activeBases.find((base) => base.id === archiveBaseId);
 
-  const documentRange = documents.data
-    ? documents.data.items.length > 0
-      ? `${documentOffset + 1}–${documentOffset + documents.data.items.length} of ${documents.data.total}`
-      : `0 of ${documents.data.total}`
-    : "Document count is loading";
+  return <div className="space-y-6 text-foreground">
+      <header className="flex flex-wrap items-start justify-between gap-4">
+        <div><h1 className="text-2xl font-semibold tracking-tight">Knowledge bases</h1><p className="mt-1.5 text-sm text-muted-foreground">Organize support documents and assign them to your AI bots.</p></div>
+        <div className="flex items-center gap-2">
+          {canManage && <Link href="/dashboard/knowledge/articles/new" className="inline-flex h-10 items-center gap-2 rounded-lg border border-border px-4 text-sm font-medium text-foreground transition-colors hover:bg-accent">Write article</Link>}
+          {canManage && <Button onClick={() => { setUploadBaseId(effectiveBaseId ?? ""); setUploadEntries([]); setUploadSelectionError(""); setUploadOpen(true); }} disabled={!activeBases.length} className="h-10 rounded-lg bg-primary px-4 text-primary-foreground hover:bg-primary-hover"><Upload size={15}/>Upload</Button>}
+        </div>
+      </header>
+      {writeError && <StatusAlert tone="error">{writeError.message}</StatusAlert>}
+      {!user.isPending && user.data && !canManage && <div className="rounded-lg border border-border bg-muted px-4 py-3 text-sm text-muted-foreground">Your role has read-only access to knowledge settings.</div>}
 
-  return <div className="space-y-6">
-    <header className="flex flex-wrap items-end justify-between gap-4">
-      <div><p className="text-sm font-semibold text-blue-700">Knowledge library</p><h1 className="mt-1 text-3xl font-bold tracking-tight">Knowledge bases</h1><p className="mt-2 max-w-2xl text-sm text-slate-500">Organize support documents into libraries and assign them to AI bots.</p></div>
-      {canManage && <div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={() => setArticleEditorOpen((open) => !open)} disabled={!bases.isSuccess || !selectedBase || !effectiveBaseId}><Plus size={16}/>{articleEditorOpen ? "Close article editor" : "Write article"}</Button><Button onClick={() => fileInput.current?.click()} disabled={upload.isPending || !bases.isSuccess || !selectedBase || !effectiveBaseId}><Upload size={16}/>{upload.isPending ? "Uploading…" : "Upload document"}</Button></div>}
-      {canManage && <input ref={fileInput} type="file" accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown" className="sr-only" aria-label="Choose a PDF, text, or Markdown document" onChange={(event) => { const file = event.target.files?.[0]; if (file && bases.isSuccess && selectedBase && effectiveBaseId) upload.mutate({ file, knowledgeBaseId: effectiveBaseId }); }}/>}
-    </header>
-    {articleSuccess && <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">{articleSuccess}</p>}
-    {canManage && articleEditorOpen && <Panel>
-      <PanelHeader title="Write a knowledge article" description={`This Markdown article will be added to ${selectedBase?.name ?? "the selected knowledge base"} and processed for bot retrieval.`}/>
-      <PanelBody>
-        <form className="space-y-4" onSubmit={(event) => {
-          event.preventDefault();
-          if (articleTitle.trim() && articleContent.trim() && effectiveBaseId) {
-            createArticle.mutate({ title: articleTitle, content: articleContent, knowledgeBaseId: effectiveBaseId });
-          }
-        }}>
-          <label className="block space-y-1.5 text-sm font-medium text-slate-700">
-            <span>Article title</span>
-            <Input aria-label="Article title" maxLength={180} value={articleTitle} onChange={(event) => { setArticleSuccess(""); setArticleTitle(event.target.value); }} placeholder="e.g. Shipping and delivery policy"/>
-          </label>
-          <label className="block space-y-1.5 text-sm font-medium text-slate-700">
-            <span>Article content</span>
-            <Textarea aria-label="Article content" maxLength={50000} rows={10} value={articleContent} onChange={(event) => { setArticleSuccess(""); setArticleContent(event.target.value); }} placeholder="Write the verified support information your AI bot should use…" className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm leading-6 text-slate-900 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30"/>
-            <span className="text-xs font-normal text-slate-500">{articleContent.length}/50,000 characters · Markdown headings and lists are supported.</span>
-          </label>
-          <div className="flex flex-wrap items-center gap-3">
-            <Button type="submit" disabled={!articleTitle.trim() || !articleContent.trim() || !effectiveBaseId || createArticle.isPending}>
-              {createArticle.isPending ? <><LoaderCircle size={16} className="animate-spin"/>Adding article…</> : "Add to knowledge base"}
-            </Button>
-            <p className="text-xs text-slate-500">The article becomes searchable after ingestion completes.</p>
+      <section className="space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-3">
+          <div className="flex flex-wrap items-center gap-1" role="tablist" aria-label="Knowledge bases">
+            {activeBases.map((base) => <button key={base.id} role="tab" aria-selected={effectiveBaseId === base.id} onClick={() => { setSelectedBaseId(base.id); setHistoryBaseId(base.id); setDocumentOffset(0); setHistoryOffset(0); setSearchTerm(""); }} className={`rounded-full px-3.5 py-2 text-sm transition-colors ${effectiveBaseId === base.id ? "bg-accent text-foreground ring-1 ring-primary/30" : "text-muted-foreground hover:bg-accent hover:text-foreground"}`}>{base.name}{base.is_default && <span className="ml-1.5 text-xs text-muted-foreground">Default</span>}</button>)}
+            {canManage && <button onClick={() => setNewBaseOpen((open) => !open)} className="inline-flex items-center gap-1 rounded-full px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"><Plus size={14}/>New</button>}
           </div>
-        </form>
-      </PanelBody>
-    </Panel>}
-    {!user.isPending && user.data && !canManage && <p role="status" className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600">Your role has read-only access to knowledge settings.</p>}
-    {writeError && <StatusAlert tone="error">{writeError.message}</StatusAlert>}
-    <Panel><PanelHeader title="Knowledge bases" description="Each bot can use one or more active bases." action={<BookOpen size={17} className="text-slate-400"/>}/><PanelBody className="space-y-4">
-      {canManage && <form className="flex flex-wrap gap-2" onSubmit={(event) => { event.preventDefault(); if (newBaseName.trim()) createBase.mutate(); }}><Input aria-label="New knowledge base name" placeholder="New knowledge base name" value={newBaseName} onChange={(event) => setNewBaseName(event.target.value)}/><Button type="submit" disabled={!newBaseName.trim() || createBase.isPending}><Plus size={15}/>Create base</Button></form>}
-      {bases.isPending && <p role="status" className="text-sm text-slate-500">Loading knowledge bases…</p>}{bases.isError && <p role="alert" className="text-sm text-red-700">Knowledge bases could not be loaded.</p>}
-      {activeBases.length > 0 && <div className="flex flex-wrap gap-2" role="group" aria-label="Knowledge bases">{activeBases.map((base) => <div key={base.id} className={`flex items-center gap-1 rounded-xl border px-2 py-1 ${effectiveBaseId === base.id ? "border-blue-300 bg-blue-50" : "border-slate-200"}`}><Button variant="unstyled" type="button" aria-label={`${base.name}${base.is_default ? ", default" : ""}: ${base.ready_document_count} ready of ${base.document_count} documents`} aria-pressed={effectiveBaseId === base.id} onClick={() => { setSelectedBaseId(base.id); setHistoryBaseId(base.id); setHistoryOffset(0); setSearchTerm(""); }} className="rounded-lg px-2 py-1.5 text-left text-sm font-medium text-slate-800"><span className="block">{base.name}{base.is_default ? " · default" : ""}</span><span className={`mt-0.5 block text-[11px] font-normal ${base.ready_document_count > 0 ? "text-emerald-700" : base.processing_document_count > 0 ? "text-blue-700" : "text-amber-700"}`}>{base.ready_document_count} ready{base.processing_document_count > 0 ? ` · ${base.processing_document_count} processing` : base.document_count === 0 ? " · empty" : ""}</span></Button>{canManage && !base.is_default && <Button variant="unstyled" type="button" aria-label={`Make ${base.name} the default knowledge base`} title="Make default for requests without a selected base" onClick={() => makeDefaultBase.mutate(base.id)} disabled={makeDefaultBase.isPending} className="rounded-lg p-1.5 text-slate-500 hover:bg-white hover:text-blue-700"><Star size={14}/></Button>}{canManage && !base.is_default && <Button variant="unstyled" type="button" aria-label={`Archive ${base.name}`} title="Archive base" onClick={() => setArchiveBaseId(base.id)} disabled={archiveBase.isPending} className="rounded-lg p-1.5 text-slate-500 hover:bg-white hover:text-slate-900"><Archive size={14}/></Button>}</div>)}</div>}
-      {canManage && activeBases.length > 0 && <p className="text-xs text-slate-500">The default base is selected for uploads and knowledge searches without a base selection. AI bots continue to use their assigned bases.</p>}
-      {effectiveBaseId && <section aria-labelledby="knowledge-base-usage-title" className="rounded-xl border border-blue-100 bg-blue-50/60 p-3"><h3 id="knowledge-base-usage-title" className="text-xs font-semibold text-blue-950">AI bot access</h3>{agents.isPending && <p role="status" className="mt-1 text-xs text-slate-600">Loading bot assignments…</p>}{agents.isError && <p role="alert" className="mt-1 text-xs text-red-700">Bot assignments could not be loaded.</p>}{agents.isSuccess && (activeAssignedAgents.length > 0 ? <p className="mt-1 text-xs leading-5 text-slate-700">Used by {activeAssignedAgents.length === 1 ? "active bot" : "active bots"}: {activeAssignedAgents.map((agent) => agent.name).join(", ")}.</p> : <p className="mt-1 text-xs leading-5 text-slate-700">No active AI bot uses this base yet. Assign it from <Link href="/dashboard/ai/agents" className="font-semibold text-blue-800 underline">AI Bots</Link> to include these sources in answers.</p>)}{inactiveAssignedAgentCount > 0 && <p className="mt-1 text-xs text-slate-600">{inactiveAssignedAgentCount} inactive {inactiveAssignedAgentCount === 1 ? "bot is" : "bots are"} also assigned; inactive bots cannot use this base.</p>}</section>}
-      {baseToArchive && (
-        <ConfirmDialog
-          open
-          onOpenChange={(open) => {
-            if (!open && !archiveBase.isPending) setArchiveBaseId(undefined);
-          }}
-          title={`Archive “${baseToArchive.name}”?`}
-          description="Its documents and history will be preserved, but retrieval stops using this base until it is restored."
-          confirmLabel="Archive base"
-          pendingLabel="Archiving…"
-          cancelLabel="Keep active"
-          confirmVariant="destructive"
-          pending={archiveBase.isPending}
-          disabled={agents.isPending || agents.isError}
-          onConfirm={() => archiveBase.mutate(baseToArchive.id)}
-        >
-          {agents.isPending && <p className="text-sm text-muted-foreground">Checking bot assignments…</p>}
-          {agents.isError && (
-            <StatusAlert tone="error" onRetry={() => agents.refetch()}>
-              Bot assignments could not be checked, so archiving is paused.
-            </StatusAlert>
-          )}
-          {agents.isSuccess && (
-            activeBotsUsingArchiveBase.length > 0 ? (
-              <StatusAlert tone="warning" title="Active bots will lose these sources:">
-                <ul className="mt-1 list-inside list-disc">
-                  {activeBotsUsingArchiveBase.map((agent) => (
-                    <li key={agent.id}>{agent.name}</li>
-                  ))}
-                </ul>
-              </StatusAlert>
-            ) : (
-              <p className="text-sm text-muted-foreground">No active bot is currently assigned to this base.</p>
-            )
-          )}
-          {archiveBase.isError && (
-            <StatusAlert tone="error">{archiveBase.error.message || "The knowledge base could not be archived."}</StatusAlert>
-          )}
-        </ConfirmDialog>
-      )}
-      {activeBases.length === 0 && !bases.isPending && !bases.isError && <p className="text-sm text-slate-500">No active knowledge bases are available.</p>}
-      {bases.isError && <Button variant="unstyled" type="button" className="text-sm font-semibold text-blue-700 underline" onClick={() => bases.refetch()}>Retry loading knowledge bases</Button>}
-      {canManage && selectedBase && <KnowledgeBaseDetailsForm key={selectedBase.id} base={selectedBase} busy={updateBase.isPending} saved={updateBase.isSuccess} onSave={(values) => updateBase.mutate(values)}/>}
-      {canManage && historyBase && <section aria-labelledby="knowledge-base-history-title" className="space-y-3 border-t border-slate-100 pt-4"><div className="flex items-center gap-2"><History size={16} className="text-slate-500"/><div><h3 id="knowledge-base-history-title" className="text-sm font-semibold text-slate-800">Recent changes · {historyBase.name}</h3><p className="text-xs text-slate-500">Configuration and source moves that affect this base.</p></div></div>{baseAudit.isPending ? <p role="status" className="text-sm text-slate-500">Loading history…</p> : baseAudit.isError ? <div role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900"><p>History could not be loaded.</p><Button variant="unstyled" type="button" className="mt-1 font-semibold underline" onClick={() => baseAudit.refetch()}>Retry</Button></div> : baseAudit.data?.items.length ? <ol className="space-y-2">{baseAudit.data.items.map((event) => <li key={event.id} className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1 rounded-lg border border-slate-200 px-3 py-2"><div className="min-w-0"><p className="text-sm font-medium text-slate-700">{knowledgeBaseAuditLabel(event.event_type, event.details, event.knowledge_base_id)}</p><p className="mt-0.5 text-xs text-slate-500">{event.actor_name}</p></div><time className="shrink-0 text-xs text-slate-500">{formatDateTime(event.created_at)}</time></li>)}</ol> : <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-500">No changes recorded yet.</p>}{baseAudit.data && baseAudit.data.total > baseAudit.data.limit && <nav aria-label="Knowledge base history pagination" className="flex items-center justify-between gap-3"><p className="text-xs text-slate-500">Showing {historyOffset + 1}–{Math.min(historyOffset + baseAudit.data.items.length, baseAudit.data.total)} of {baseAudit.data.total}</p><div className="flex gap-2"><Button type="button" size="sm" variant="secondary" disabled={historyOffset === 0} onClick={() => setHistoryOffset((offset) => Math.max(0, offset - historyPageLimit))}><ChevronLeft size={14}/>Newer</Button><Button type="button" size="sm" variant="secondary" disabled={historyOffset + baseAudit.data.limit >= baseAudit.data.total} onClick={() => setHistoryOffset((offset) => offset + historyPageLimit)}>Older<ChevronRight size={14}/></Button></div></nav>}</section>}
-      {archivedBases.length > 0 && <section aria-labelledby="archived-bases-title" className="space-y-2 border-t border-slate-100 pt-4"><div><h3 id="archived-bases-title" className="text-sm font-semibold text-slate-800">Archived knowledge bases</h3><p className="mt-1 text-xs text-slate-500">Archived sources are preserved but excluded from AI retrieval. Restoring a base makes it available to bots that still have it assigned.</p></div><ul className="space-y-2">{archivedBases.map((base) => <li key={base.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5"><div className="min-w-0"><p className="truncate text-sm font-medium text-slate-700">{base.name}</p>{base.description && <p className="mt-0.5 truncate text-xs text-slate-500">{base.description}</p>}</div>{canManage && <Button type="button" size="sm" variant="ghost" onClick={() => { setHistoryBaseId(base.id); setHistoryOffset(0); }}>View history</Button>}{canManage && <Button type="button" size="sm" variant="secondary" disabled={restoreBase.isPending} onClick={() => restoreBase.mutate(base.id)}><RotateCcw size={14}/>{restoreBase.isPending ? "Restoring…" : "Restore"}</Button>}</li>)}</ul></section>}
-    </PanelBody></Panel>
-    <Panel><PanelHeader title="Search your sources" description={searchAllBases ? "Search ready documents across all active knowledge bases." : searchBaseId ? `Search within ${activeBases.find((base) => base.id === searchBaseId)?.name ?? "the selected base"}.` : "Select a knowledge base to search."}/><PanelBody><form className="flex flex-wrap gap-2" onSubmit={(event) => { event.preventDefault(); setSearchTerm(queryText.trim()); }}><Input aria-label="Search documents" placeholder="Search policies, procedures, product details…" value={queryText} onChange={(event) => setQueryText(event.target.value)} className="min-w-48 flex-1"/><Select aria-label="Search scope" value={activeSearchScope} onChange={(event) => setSearchScope(event.target.value)} className="w-auto min-w-40"><option value="current">Current base</option><option value="all">All active bases</option>{activeBases.map((base) => <option key={base.id} value={base.id}>{base.name}</option>)}</Select><Button type="submit" disabled={queryText.trim().length < 2 || (!searchAllBases && !searchBaseId)}><Search size={16}/>Search</Button></form>
-      {searchTerm && <div className="mt-5 space-y-3">{results.isPending ? <p className="text-sm text-slate-500">Searching…</p> : results.isError ? <p role="alert" className="text-sm text-red-700">Search could not be completed.</p> : results.data?.items.length ? results.data.items.map((result) => <article key={`${result.document_id}-${result.chunk_index}`} className="rounded-xl border border-slate-200 p-4"><p className="text-xs font-semibold text-blue-700">{result.knowledge_base_name} · {result.document_name} · section {result.chunk_index + 1}</p><p className="mt-2 text-sm leading-6 text-slate-700">{result.excerpt}</p></article>) : <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-500">No matching passages in ready documents from active knowledge bases.</p>}</div>}
-    </PanelBody></Panel>
-    <Panel><PanelHeader title={activeBases.find((base) => base.id === effectiveBaseId)?.name ?? "Your documents"} description={documents.isError ? "Documents unavailable" : documents.isPending ? "Loading documents" : `${documentRange} documents`} action={<BookOpen size={17} className="text-slate-400"/>}/><PanelBody className="p-0">
-      {canManage && activeBases.length > 1 && <p className="px-5 pt-4 text-xs text-slate-500">Move ready or failed documents between active bases. Source files, chunks, and ingestion history are retained.</p>}
-      {documents.isPending && <div className="space-y-3 p-5">{[1,2,3].map((n) => <div key={n} className="h-16 animate-pulse rounded-lg bg-slate-100"/>)}</div>}
-      {documents.isError && <div role="alert" className="p-5 text-sm text-red-700">Documents could not be loaded. <Button variant="unstyled" className="font-semibold underline" onClick={() => documents.refetch()}>Retry</Button></div>}
-      {documents.data?.items.length === 0 && <div className="p-10 text-center"><FileText className="mx-auto text-slate-300"/><p className="mt-3 font-semibold">No documents yet</p><p className="mt-1 text-sm text-slate-500">Upload a PDF, text file, or Markdown guide to get started.</p></div>}
-      <ul className="divide-y divide-slate-100">{documents.data?.items.map((item) => <DocumentRow key={item.id} item={item} bases={activeBases} canManage={canManage} busy={reprocess.isPending || remove.isPending || move.isPending} onReprocess={() => reprocess.mutate(item.id)} onDelete={() => remove.mutate(item.id)} onMove={(knowledgeBaseId) => move.mutate({ documentId: item.id, knowledgeBaseId })}/>)}</ul>
-      {documents.data && documents.data.total > 0 && <nav aria-label="Document pages" className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-5 py-3"><p className="text-xs text-slate-500">Showing {documentRange} documents</p><div className="flex gap-2"><Button type="button" size="sm" variant="secondary" disabled={documents.isPending || documentOffset === 0} onClick={() => setDocumentPage({ baseId: effectiveBaseId ?? "", offset: Math.max(0, documentOffset - KNOWLEDGE_DOCUMENT_PAGE_SIZE) })}><ChevronLeft size={15}/>Previous</Button><Button type="button" size="sm" variant="secondary" disabled={documents.isPending || documentOffset + documents.data.items.length >= documents.data.total} onClick={() => setDocumentPage({ baseId: effectiveBaseId ?? "", offset: documentOffset + KNOWLEDGE_DOCUMENT_PAGE_SIZE })}>Next<ChevronRight size={15}/></Button></div></nav>}
-    </PanelBody></Panel>
+          {selectedBase && <div className="flex items-center gap-2 text-xs text-muted-foreground"><span>{selectedBase.ready_document_count} ready</span><span className="text-border">·</span><span>{selectedBase.document_count} documents</span><button aria-label="Knowledge base history" title="View recent changes" onClick={() => document.getElementById("knowledge-history")?.scrollIntoView({ behavior: "smooth" })} className="ml-1 rounded-md p-1.5 hover:bg-accent hover:text-foreground"><History size={15}/></button><button aria-label="Knowledge base options" title="Knowledge base options" onClick={() => setNewBaseOpen((open) => !open)} className="rounded-md p-1.5 hover:bg-accent hover:text-foreground"><MoreHorizontal size={16}/></button></div>}
+        </div>
+        {newBaseOpen && canManage && <form className="flex max-w-xl gap-2" onSubmit={(event) => { event.preventDefault(); if (newBaseName.trim()) createBase.mutate(); }}><Input autoFocus aria-label="Knowledge base name" placeholder="Name this knowledge base" value={newBaseName} onChange={(event) => setNewBaseName(event.target.value)} className="border-border bg-background text-foreground placeholder:text-muted-foreground"/><Button type="submit" disabled={!newBaseName.trim() || createBase.isPending} className="bg-primary text-primary-foreground hover:bg-primary-hover">Create base</Button><Button type="button" variant="ghost" onClick={() => setNewBaseOpen(false)} className="text-muted-foreground hover:bg-accent">Cancel</Button></form>}
+
+        {bases.isPending && <p role="status" className="py-10 text-sm text-muted-foreground">Loading knowledge bases…</p>}
+        {bases.isError && <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">Knowledge bases could not be loaded: {errorMessage(bases.error)} {bases.error instanceof ApiError && bases.error.status === 401 && <Link href="/login" className="underline">Sign in again</Link>} <button onClick={() => bases.refetch()} className="ml-1 underline">Retry</button></div>}
+        {!bases.isPending && !bases.isError && !activeBases.length && <div className="rounded-xl border border-dashed border-border px-6 py-14 text-center"><FolderOpen className="mx-auto size-7 text-muted-foreground"/><p className="mt-3 font-medium">No active knowledge base</p><p className="mt-1 text-sm text-muted-foreground">Create a base to start adding sources for your AI bots.</p></div>}
+        {selectedBase && <>
+          <section className="flex flex-wrap items-start justify-between gap-3">
+            <div><h2 className="text-lg font-semibold">{selectedBase.name}</h2><p className="mt-1 text-sm text-muted-foreground">{selectedBase.description || "Add a description"}</p><p className="mt-2 text-xs text-muted-foreground">{selectedBase.is_default ? "Default library" : "Knowledge library"} · Used by {agents.data?.items.filter((agent) => agent.status === "active" && (agent.knowledge_base_ids ?? []).includes(selectedBase.id)).map((agent) => agent.name).join(", ") || "no active bots"}</p></div>
+            {canManage && <div className="flex gap-1">
+              {!selectedBase.is_default && <button title="Make default" aria-label="Make this base the default" onClick={() => setDefault.mutate(selectedBase.id)} disabled={setDefault.isPending} className="rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-foreground"><Star size={16}/></button>}
+              {!selectedBase.is_default && <button title="Archive base" aria-label="Archive knowledge base" onClick={() => setArchiveBaseId(selectedBase.id)} className="rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-foreground"><Archive size={16}/></button>}
+            </div>}
+          </section>
+          {canManage && <BaseDetailsInline key={selectedBase.id} base={selectedBase} busy={updateBase.isPending} onSave={(values) => updateBase.mutate(values)}/>}
+
+          <section className="overflow-hidden rounded-xl border border-border bg-card">
+            <div className="border-b border-border p-4">
+              <form className="relative" onSubmit={(event) => { event.preventDefault(); setSearchTerm(searchText.trim()); }}>
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"/><Input aria-label="Search documents" placeholder="Search policies, procedures, product details…" value={searchText} onChange={(event) => setSearchText(event.target.value)} className="h-10 border-border bg-muted pl-10 text-foreground placeholder:text-muted-foreground"/>
+                {searchText && <button type="button" aria-label="Clear search" onClick={() => { setSearchText(""); setSearchTerm(""); }} className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:bg-accent"><X size={14}/></button>}
+              </form>
+            </div>
+            <div className="grid grid-cols-[minmax(0,1fr)_90px_165px_90px_100px] gap-3 border-b border-border px-5 py-3 text-xs font-medium text-muted-foreground max-md:grid-cols-[minmax(0,1fr)_74px_90px]">
+              <span>Name</span><span className="max-md:hidden">Size</span><span className="max-md:hidden">Added</span><span>Status</span><span className="text-right">Actions</span>
+            </div>
+            {searchTerm ? <div className="divide-y divide-border">{search.isPending ? <p className="p-5 text-sm text-muted-foreground">Searching…</p> : search.isError ? <p role="alert" className="p-5 text-sm text-destructive">Search failed: {errorMessage(search.error)}</p> : search.data?.items.length ? search.data.items.map((result) => <article key={`${result.document_id}-${result.chunk_index}`} className="px-5 py-4"><p className="text-xs text-primary">{result.document_name} · section {result.chunk_index + 1}</p><p className="mt-2 text-sm leading-6 text-foreground">{result.excerpt}</p></article>) : <p className="p-6 text-sm text-muted-foreground">No matching passages in ready documents.</p>}</div>
+              : documents.isPending ? <div className="space-y-3 p-5"><div className="h-12 animate-pulse rounded bg-muted"/><div className="h-12 animate-pulse rounded bg-muted"/></div>
+              : documents.isError ? <p role="alert" className="p-5 text-sm text-destructive">Documents could not be loaded: {errorMessage(documents.error)} {documents.error instanceof ApiError && documents.error.status === 401 && <Link href="/login" className="underline">Sign in again</Link>} <button className="underline" onClick={() => documents.refetch()}>Retry</button></p>
+              : documents.data?.items.length ? <ul className="divide-y divide-border">{documents.data.items.map((item) => <DocumentRow key={item.id} item={item} bases={activeBases} canManage={canManage} busy={reprocess.isPending || remove.isPending || move.isPending} onReprocess={() => reprocess.mutate(item.id)} onDelete={() => remove.mutate(item.id)} onMove={(baseId) => move.mutate({ id: item.id, baseId })}/>)}</ul>
+              : <div className="px-5 py-14 text-center"><FileText className="mx-auto size-6 text-muted-foreground"/><p className="mt-3 text-sm font-medium">This base is empty</p><p className="mt-1 text-sm text-muted-foreground">Upload a document or write an article to give your AI bots trusted answers.</p>{canManage && <div className="mt-4 flex justify-center gap-2"><Link href="/dashboard/knowledge/articles/new" className="inline-flex h-9 items-center rounded-lg border border-border px-3 text-sm hover:bg-accent">Write article</Link><Button onClick={() => { setUploadBaseId(selectedBase.id); setUploadEntries([]); setUploadOpen(true); }} className="h-9 bg-primary text-primary-foreground hover:bg-primary-hover"><Upload size={14}/>Upload document</Button></div>}</div>}
+            {!searchTerm && documents.data && documents.data.total > 0 && <div className="flex items-center justify-between border-t border-border px-5 py-3 text-xs text-muted-foreground"><span>{documentRange} documents</span><div className="flex gap-1"><button aria-label="Previous page" disabled={documentOffset === 0 || documents.isPending} onClick={() => setDocumentOffset(Math.max(0, documentOffset - KNOWLEDGE_DOCUMENT_PAGE_SIZE))} className="rounded-md p-1.5 hover:bg-accent disabled:opacity-40"><ChevronLeft size={16}/></button><button aria-label="Next page" disabled={documents.isPending || documentOffset + (documents.data?.items.length ?? 0) >= (documents.data?.total ?? 0)} onClick={() => setDocumentOffset(documentOffset + KNOWLEDGE_DOCUMENT_PAGE_SIZE)} className="rounded-md p-1.5 hover:bg-accent disabled:opacity-40"><ChevronRight size={16}/></button></div></div>}
+          </section>
+        </>}
+
+        {archivedBases.length > 0 && <section className="space-y-2 border-t border-border pt-4"><h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Archived libraries</h3>{archivedBases.map((base) => <div key={base.id} className="flex items-center justify-between rounded-lg border border-border px-4 py-3"><div><p className="text-sm font-medium">{base.name}</p><p className="mt-0.5 text-xs text-muted-foreground">{base.document_count} preserved documents</p></div><div className="flex gap-2"><Button variant="ghost" size="sm" onClick={() => { setHistoryBaseId(base.id); setHistoryOffset(0); document.getElementById("knowledge-history")?.scrollIntoView({ behavior: "smooth" }); }} className="text-muted-foreground hover:bg-accent">View history</Button><Button variant="outline" size="sm" onClick={() => restore.mutate(base.id)} disabled={restore.isPending} className="border-border bg-transparent text-foreground hover:bg-accent">Restore</Button></div></div>)}</section>}
+        {canManage && historyBase && <section id="knowledge-history" className="border-t border-border pt-4"><details><summary className="flex cursor-pointer list-none items-center justify-between text-sm font-medium text-muted-foreground"><span className="inline-flex items-center gap-2"><Clock3 size={15}/>Recent changes · {historyBase.name}</span><ChevronDown size={15}/></summary><div className="mt-3 space-y-2">{history.isPending ? <p className="text-xs text-muted-foreground">Loading history…</p> : history.isError ? <p role="alert" className="text-xs text-destructive">History could not be loaded: {errorMessage(history.error)} <button onClick={() => history.refetch()} className="underline">Retry</button></p> : history.data?.items.length ? history.data.items.map((event) => <div key={event.id} className="flex justify-between gap-3 rounded-lg border border-border px-3 py-2.5 text-xs"><span className="text-foreground">{auditLabel(event.event_type, event.details)}<span className="ml-2 text-muted-foreground">{event.actor_name}</span></span><time className="shrink-0 text-muted-foreground">{formatDateTime(event.created_at)}</time></div>) : <p className="text-xs text-muted-foreground">No changes recorded yet.</p>}{history.data && history.data.total > history.data.limit && <div className="flex items-center justify-between pt-1 text-xs text-muted-foreground"><span>{historyOffset + 1}–{Math.min(historyOffset + history.data.items.length, history.data.total)} of {history.data.total}</span><div className="flex gap-1"><button disabled={historyOffset === 0} onClick={() => setHistoryOffset(Math.max(0, historyOffset - historyPageLimit))} className="rounded p-1 hover:bg-accent disabled:opacity-40" aria-label="Newer changes"><ChevronLeft size={15}/></button><button disabled={historyOffset + history.data.items.length >= history.data.total} onClick={() => setHistoryOffset(historyOffset + historyPageLimit)} className="rounded p-1 hover:bg-accent disabled:opacity-40" aria-label="Older changes"><ChevronRight size={15}/></button></div></div>}</div></details></section>}
+      </section>
+
+    <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
+      <DialogContent className="!fixed !inset-y-0 !right-0 !left-auto !top-0 !h-dvh !w-[min(720px,100vw)] !max-w-none !translate-x-0 !translate-y-0 !gap-0 !overflow-hidden !rounded-none !border-l !border-border !bg-background !p-0 !text-foreground data-open:!animate-in data-open:!slide-in-from-right data-closed:!slide-out-to-right">
+        <div className="flex h-full min-h-0 flex-col">
+          <DialogHeader className="border-b border-border px-7 py-6 text-left"><DialogTitle className="text-2xl font-semibold">Upload documents</DialogTitle><DialogDescription className="text-muted-foreground">Files are processed so your AI bots can search them.</DialogDescription></DialogHeader>
+          <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-7 py-6">
+            <label className="block space-y-2 text-sm font-medium"><span className="text-muted-foreground">Add to library</span><Select aria-label="Choose knowledge base" value={uploadBaseId} onChange={(event) => setUploadBaseId(event.target.value)} className="h-12 border-border bg-background text-base text-foreground">{activeBases.map((base) => <option key={base.id} value={base.id}>{base.name}{base.is_default ? " (default)" : ""}</option>)}</Select></label>
+            <button type="button" onClick={() => fileInput.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); enqueueFiles(event.dataTransfer.files); }} className="flex min-h-48 w-full flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-muted px-5 text-center transition-colors hover:border-primary hover:bg-accent"><Upload className="size-8 text-primary"/><span className="mt-4 text-lg font-medium">Drag files here or <span className="text-primary">browse</span></span><span className="mt-1 text-sm text-muted-foreground">PDF, TXT, MD · up to 20 MB each</span></button>
+            <input ref={fileInput} type="file" multiple accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown" className="sr-only" aria-label="Choose documents to upload" onChange={(event) => { enqueueFiles(event.target.files); event.currentTarget.value = ""; }}/>
+            {uploadSelectionError && <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{uploadSelectionError}</p>}
+            {uploadEntries.length > 0 && <div className="divide-y divide-border">{uploadEntries.map((entry, index) => <div key={`${entry.file.name}-${entry.file.lastModified}-${index}`} className="flex items-center gap-3 py-4"><FileText className="size-5 shrink-0 text-muted-foreground"/><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{entry.file.name}</p><p className={`mt-1 text-sm ${entry.status === "failed" ? "text-destructive" : "text-muted-foreground"}`}>{entry.status === "queued" ? formatBytes(entry.file.size) : entry.status === "uploading" ? "Uploading…" : entry.status === "processing" ? "Queued for processing" : entry.status === "ready" ? "Ready for AI search" : entry.error || "Could not upload file"}</p>{entry.status === "uploading" && <div className="mt-2 h-1 rounded-full bg-muted"><div className="h-full w-2/3 animate-pulse rounded-full bg-primary"/></div>}</div>{(entry.status === "processing" || entry.status === "ready") ? <span className={`inline-flex items-center gap-1.5 text-sm ${entry.status === "ready" ? "text-success" : "text-muted-foreground"}`}>{entry.status === "ready" ? <Check size={16}/> : <LoaderCircle size={15} className="animate-spin"/>}{entry.status === "ready" ? "Ready" : "Added"}</span> : entry.status === "failed" ? <button onClick={() => setUploadEntries((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, status: "queued", error: undefined } : item))} className="rounded-lg border border-border px-3 py-2 text-sm hover:bg-accent">Retry</button> : <button aria-label={`Remove ${entry.file.name}`} disabled={entry.status === "uploading"} onClick={() => setUploadEntries((current) => current.filter((_, itemIndex) => itemIndex !== index))} className="rounded p-2 text-muted-foreground hover:bg-accent"><X size={16}/></button>}</div>)}</div>}
+            {documents.data?.items.filter((item) => isKnowledgeDocumentProcessing(item)).map((item) => <div key={item.id} className="flex items-center gap-3 border-t border-border py-4"><LoaderCircle size={17} className="animate-spin text-primary"/><div><p className="text-sm font-medium">{item.name}</p><p className="text-sm text-muted-foreground">Processing…</p></div></div>)}
+          </div>
+          <div className="flex justify-end gap-2 border-t border-border px-7 py-4"><Button variant="outline" onClick={() => setUploadOpen(false)} className="border-border bg-transparent text-foreground hover:bg-accent">Done</Button><Button onClick={uploadQueued} disabled={!uploadEntries.some((entry) => entry.status === "queued" || entry.status === "failed") || uploadOne.isPending} className="bg-primary text-primary-foreground hover:bg-primary-hover">{uploadOne.isPending ? <LoaderCircle size={15} className="animate-spin"/> : <Upload size={15}/>}Upload files</Button></div>
+        </div>
+      </DialogContent>
+    </Dialog>
+    {baseToArchive && <ConfirmDialog open onOpenChange={(open) => { if (!open && !archive.isPending) setArchiveBaseId(undefined); }} title={`Archive “${baseToArchive.name}”?`} description="Its documents and history are preserved, but retrieval stops using this library until it is restored." confirmLabel="Archive library" pendingLabel="Archiving…" confirmVariant="destructive" pending={archive.isPending} onConfirm={() => archive.mutate(baseToArchive.id)}/>}
   </div>;
 }
 
-function DocumentRow({ item, bases, canManage, busy, onReprocess, onDelete, onMove }: { item: KnowledgeDocument; bases: { id: string; name: string }[]; canManage: boolean; busy: boolean; onReprocess: () => void; onDelete: () => void; onMove: (knowledgeBaseId: string) => void }) {
-  const [targetBaseId, setTargetBaseId] = useState("");
-  const latestJob = item.jobs[0];
-  const needsReplacement = item.status === "failed" && latestJob?.requires_replacement;
-  const statusVariant = item.status === "ready" ? "secondary" : item.status === "failed" ? "destructive" : "outline";
-  const destinations = bases.filter((base) => base.id !== item.knowledge_base_id);
-  return <li className="flex flex-wrap items-center gap-3 px-5 py-4"><span className="grid size-10 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-500"><FileText size={18}/></span><div className="min-w-0 flex-1"><Link href={`/dashboard/knowledge/${item.id}`} className="truncate text-sm font-semibold text-blue-800 hover:underline">{item.name}</Link><p className="mt-1 text-xs text-slate-500">{formatBytes(item.size_bytes)} · added {formatDateTime(item.created_at)}</p>{latestJob?.status === "failed" && <p className="mt-1 text-xs text-red-700">{needsReplacement ? "Processing failed. Upload a corrected file." : "Processing failed. You can retry this file."}</p>}</div><Badge variant={statusVariant} className="capitalize">{item.status}</Badge>{canManage && <>{destinations.length > 0 && <div className="flex items-center gap-2"><Select aria-label={`Move ${item.name} to knowledge base`} value={targetBaseId} onChange={(event) => setTargetBaseId(event.target.value)} disabled={busy || item.status === "queued" || item.status === "processing"} className="min-h-9 max-w-40 px-2 text-xs"><option value="">Move to…</option>{destinations.map((base) => <option key={base.id} value={base.id}>{base.name}</option>)}</Select><Button type="button" variant="secondary" size="sm" disabled={busy || !targetBaseId || item.status === "queued" || item.status === "processing"} onClick={() => onMove(targetBaseId)}>Move</Button></div>}<Button variant="ghost" size="sm" aria-label={`Reprocess ${item.name}`} disabled={busy || needsReplacement || item.status === "processing" || item.status === "queued"} onClick={onReprocess}><RotateCw size={15}/></Button><Button variant="ghost" size="sm" aria-label={`Delete ${item.name}`} disabled={busy} onClick={onDelete}><Trash2 size={15}/></Button></>}{item.status === "processing" && <LoaderCircle aria-label="Processing" size={15} className="animate-spin text-blue-700"/>}</li>;
-}
-
-function knowledgeBaseAuditLabel(
-  eventType: string,
-  details: Record<string, unknown>,
-  knowledgeBaseId: string,
-): string {
-  if (eventType === "created") return "Knowledge base created";
-  if (eventType === "archived") return "Knowledge base archived";
-  if (eventType === "restored") return "Knowledge base restored";
-  if (eventType === "default_changed") {
-    return details.is_default === true ? "Set as workspace default" : "No longer the workspace default";
-  }
-  if (eventType === "document_moved") {
-    return details.to_knowledge_base_id === knowledgeBaseId
-      ? "A document was moved into this base"
-      : "A document was moved out of this base";
-  }
-  if (eventType === "document_uploaded") return "A document was added to this base";
-  if (eventType === "document_reprocessed") return "Document processing was restarted";
-  if (eventType === "document_deleted") return "A document was removed from AI retrieval";
-  if (eventType === "updated") {
-    const fields = Array.isArray(details.changed_fields)
-      ? details.changed_fields.filter((field): field is string => typeof field === "string")
-      : [];
-    return fields.length > 0 ? `Updated ${fields.join(" and ")}` : "Knowledge base updated";
-  }
-  return "Knowledge base changed";
-}
-
-function KnowledgeBaseDetailsForm({
-  base,
-  busy,
-  saved,
-  onSave,
-}: {
-  base: { id: string; name: string; description: string | null };
-  busy: boolean;
-  saved: boolean;
-  onSave: (values: { id: string; name: string; description: string | null }) => void;
-}) {
+function BaseDetailsInline({ base, busy, onSave }: { base: { id: string; name: string; description: string | null }; busy: boolean; onSave: (values: { id: string; name: string; description: string | null }) => void }) {
   const [name, setName] = useState(base.name);
   const [description, setDescription] = useState(base.description ?? "");
-  const isUnchanged = name.trim() === base.name && (description.trim() || null) === base.description;
-
-  return <form className="grid gap-3 border-t border-slate-100 pt-4 md:grid-cols-2" onSubmit={(event) => {
-    event.preventDefault();
-    onSave({ id: base.id, name: name.trim(), description: description.trim() || null });
-  }}>
-    <label className="block space-y-1.5 text-sm font-medium text-slate-700"><span>Knowledge base name</span><Input aria-label="Knowledge base name" value={name} maxLength={120} required onChange={(event) => setName(event.target.value)}/></label>
-    <label className="block space-y-1.5 text-sm font-medium text-slate-700"><span>Description</span><Input aria-label="Knowledge base description" value={description} maxLength={500} onChange={(event) => setDescription(event.target.value)} placeholder="What this library contains"/></label>
-    <div className="md:col-span-2"><Button type="submit" variant="secondary" disabled={busy || !name.trim() || isUnchanged}>{busy ? <LoaderCircle size={15} className="animate-spin"/> : null}Save base details</Button>{saved && <span role="status" className="ml-3 text-sm text-emerald-700">Knowledge base updated.</span>}</div>
+  const [editing, setEditing] = useState(false);
+  if (!editing) return <button type="button" onClick={() => setEditing(true)} className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">Edit library details</button>;
+  return <form className="grid gap-3 rounded-xl border border-border bg-card p-4 md:grid-cols-[1fr_1.3fr_auto]" onSubmit={(event) => { event.preventDefault(); onSave({ id: base.id, name: name.trim(), description: description.trim() || null }); setEditing(false); }}>
+    <Input aria-label="Knowledge base name" value={name} onChange={(event) => setName(event.target.value)} className="border-border bg-muted text-foreground"/>
+    <Input aria-label="Knowledge base description" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Description" className="border-border bg-muted text-foreground placeholder:text-muted-foreground"/>
+    <div className="flex gap-2"><Button type="submit" disabled={busy || !name.trim()} className="bg-primary text-primary-foreground hover:bg-primary-hover">Save</Button><Button type="button" variant="ghost" onClick={() => setEditing(false)} className="text-muted-foreground hover:bg-accent">Cancel</Button></div>
   </form>;
 }
 
+function DocumentRow({ item, bases, canManage, busy, onReprocess, onDelete, onMove }: { item: KnowledgeDocument; bases: { id: string; name: string }[]; canManage: boolean; busy: boolean; onReprocess: () => void; onDelete: () => void; onMove: (baseId: string) => void }) {
+  const [targetBaseId, setTargetBaseId] = useState("");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const job = item.jobs[0];
+  const needsReplacement = item.status === "failed" && job?.requires_replacement;
+  const statusTone = item.status === "ready" ? "text-success" : item.status === "failed" ? "text-destructive" : "text-warning";
+  const destinations = bases.filter((base) => base.id !== item.knowledge_base_id);
+  return <li className="grid grid-cols-[minmax(0,1fr)_90px_165px_90px_100px] items-center gap-3 px-5 py-4 transition-colors hover:bg-accent max-md:grid-cols-[minmax(0,1fr)_74px_90px]">
+    <div className="flex min-w-0 items-center gap-3"><FileText className="size-4 shrink-0 text-muted-foreground"/><div className="min-w-0"><Link href={`/dashboard/knowledge/${item.id}`} className="block truncate text-sm font-medium text-foreground hover:text-primary">{item.name}</Link>{item.status === "failed" && <p className="mt-1 truncate text-xs text-destructive">{needsReplacement ? "Upload a corrected file to retry." : job?.last_error || "Processing failed. Retry this file."}</p>}</div></div>
+    <span className="text-sm text-muted-foreground max-md:hidden">{formatBytes(item.size_bytes)}</span><span className="text-sm text-muted-foreground max-md:hidden">{formatDateTime(item.created_at)}</span><span className={`text-sm capitalize ${statusTone}`}>● {item.status === "queued" ? "Processing" : item.status}</span>
+    <div className="flex justify-end gap-1">{canManage && destinations.length > 0 && <select aria-label={`Move ${item.name} to another library`} value={targetBaseId} onChange={(event) => { setTargetBaseId(event.target.value); if (event.target.value) onMove(event.target.value); }} disabled={busy || isKnowledgeDocumentProcessing(item)} className="max-w-[90px] rounded-md bg-transparent px-1 text-[11px] text-muted-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring"><option value="">Move</option>{destinations.map((base) => <option key={base.id} value={base.id}>{base.name}</option>)}</select>}{canManage && <div className="relative"><button aria-label={`More actions for ${item.name}`} aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)} className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"><MoreHorizontal size={16}/></button>{menuOpen && <div className="absolute right-0 top-full z-20 mt-1 min-w-36 rounded-lg border border-border bg-popover text-popover-foreground p-1 shadow-md"><button disabled={busy || needsReplacement || isKnowledgeDocumentProcessing(item)} onClick={() => { setMenuOpen(false); onReprocess(); }} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-xs hover:bg-accent disabled:opacity-40"><RotateCw size={13}/>Reprocess</button><button disabled={busy} onClick={() => { setMenuOpen(false); onDelete(); }} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-xs text-destructive hover:bg-accent disabled:opacity-40"><Trash2 size={13}/>Remove</button></div>}</div>}{isKnowledgeDocumentProcessing(item) && <LoaderCircle size={15} className="animate-spin text-primary"/>}</div>
+  </li>;
+}
+
+function auditLabel(eventType: string, details: Record<string, unknown>) {
+  if (eventType === "created") return "Knowledge base created";
+  if (eventType === "archived") return "Knowledge base archived";
+  if (eventType === "restored") return "Knowledge base restored";
+  if (eventType === "default_changed") return details.is_default === true ? "Set as default library" : "Default library changed";
+  if (eventType === "document_moved") return "A document was moved between libraries";
+  if (eventType.startsWith("document_")) return `Document ${eventType.slice("document_".length).replaceAll("_", " ")}`;
+  return "Knowledge base updated";
+}
+
 function formatBytes(value: number) { return value >= 1024 * 1024 ? `${(value / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(value / 1024))} KB`; }
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Please try again.";
+}

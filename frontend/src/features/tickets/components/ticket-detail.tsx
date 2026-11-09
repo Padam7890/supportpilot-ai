@@ -7,20 +7,23 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { ArrowLeft, Link2, MessageSquare, Send, Sparkles, Unlink2, UserRound } from "lucide-react";
+import { ArrowLeft, Link2, LoaderCircle, MessageSquare, Send, Unlink2, UserRound } from "lucide-react";
 import { ApiError } from "@/lib/api/errors";
 import { formatDateTime } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input, Select, Textarea } from "@/components/ui/input";
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
-import { createTicketLink, getTicket, getTicketActivity, listTicketLinks, removeTicketLink, searchTicketLinkCandidates, updateTicket } from "../api/ticket-api";
+import { createTicketLink, getTicket, listTicketLinks, removeTicketLink, searchTicketLinkCandidates, updateTicket } from "../api/ticket-api";
 import { updateTicketSchema } from "../schemas/ticket.schema";
 import { listConversations, listMessages, sendMessage as sendMessageRequest, startConversation as startConversationRequest } from "@/features/conversations/api/conversation-api";
 import { sendMessageSchema } from "@/features/conversations/schemas/conversation.schema";
 import { getCurrentUser } from "@/features/auth/api/auth-api";
+import { getCustomer } from "@/features/customers/api/customer-api";
+import { CustomerFormDrawer } from "@/features/customers/components/customer-form-drawer";
+import type { Customer } from "@/features/customers/types/customer.types";
 import { listMembers } from "@/features/organization/api/organization-api";
 import { listTeams, teamQueryKey } from "@/features/organization/api/team-api";
-import type { Ticket, TicketActivity } from "../types/ticket.types";
+import type { Ticket } from "../types/ticket.types";
 
 export default function TicketDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -28,6 +31,10 @@ export default function TicketDetailPage() {
   const [feedback, setFeedback] = useState("");
   const [selectedConversationId, setSelectedConversationId] = useState("");
   const [linkSearch, setLinkSearch] = useState("");
+  const [customerDrawerOpen, setCustomerDrawerOpen] = useState(false);
+  const [customerDrawerMode, setCustomerDrawerMode] = useState<"view" | "edit">("view");
+  const [customerDrawerLoading, setCustomerDrawerLoading] = useState(false);
+  const [customerForDrawer, setCustomerForDrawer] = useState<Customer | null>(null);
   const me = useQuery({ queryKey: ["me"], queryFn: getCurrentUser });
   const ticketQuery = useQuery({ queryKey: ["ticket", id], queryFn: () => getTicket(id) });
   const conversations = useQuery({ queryKey: ["conversations", id], queryFn: () => listConversations(id) });
@@ -39,7 +46,6 @@ export default function TicketDetailPage() {
     queryFn: () => listMessages(activeConversation!.id),
     enabled: Boolean(activeConversation),
   });
-  const activity = useQuery({ queryKey: ["ticket-activity", id], queryFn: () => getTicketActivity(id) });
   const ticketLinks = useQuery({ queryKey: ["ticket-links", id], queryFn: () => listTicketLinks(id) });
   const members = useQuery({ queryKey: ["users"], queryFn: listMembers });
   const teams = useQuery({ queryKey: teamQueryKey, queryFn: listTeams });
@@ -106,6 +112,24 @@ export default function TicketDetailPage() {
   if (ticketQuery.isError || !ticketQuery.data) return <div role="alert" className="rounded-xl bg-red-50 p-4 text-sm text-red-700">Ticket not found or unavailable. <Link href="/dashboard/tickets" className="font-semibold underline">Back to tickets</Link></div>;
   const ticket = ticketQuery.data;
 
+  async function openCustomerDetails() {
+    setCustomerDrawerLoading(true);
+    setFeedback("");
+    try {
+      const customer = await queryClient.fetchQuery({
+        queryKey: ["customer", ticket.customer_id],
+        queryFn: () => getCustomer(ticket.customer_id),
+      });
+      setCustomerForDrawer(customer);
+      setCustomerDrawerMode("view");
+      setCustomerDrawerOpen(true);
+    } catch (error) {
+      setFeedback(error instanceof ApiError ? error.message : "Customer details could not be loaded.");
+    } finally {
+      setCustomerDrawerLoading(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <Link href="/dashboard/tickets" className="inline-flex items-center gap-2 text-sm font-semibold text-slate-500 hover:text-slate-900"><ArrowLeft size={16}/> Ticket queue</Link>
@@ -137,27 +161,14 @@ export default function TicketDetailPage() {
             {ticketLinks.isPending ? <div role="status" className="h-14 animate-pulse rounded-xl bg-slate-100"/> : ticketLinks.isError ? <p role="alert" className="text-sm text-red-700">Related tickets could not be loaded.</p> : ticketLinks.data?.items.length ? <div className="space-y-2">{ticketLinks.data.items.map((related) => <div key={related.id} className="flex items-center gap-3 rounded-xl border border-slate-200 p-3"><Link href={`/dashboard/tickets/${related.related_ticket_id}`} className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold text-blue-700 hover:underline">{related.related_ticket_subject}</span><span className="mt-1 block text-xs capitalize text-slate-500">{related.related_ticket_status} · {related.related_ticket_priority}</span></Link>{canWrite && <Button variant="unstyled" type="button" aria-label={`Unlink ${related.related_ticket_subject}`} title="Remove link" disabled={removeLink.isPending} onClick={() => removeLink.mutate(related.id)} className="grid size-8 shrink-0 place-items-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-red-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600"><Unlink2 size={15}/></Button>}</div>)}</div> : <p className="text-sm text-slate-500">No related tickets yet.</p>}
             {canWrite && <div className="space-y-2 border-t border-slate-100 pt-4"><label htmlFor="related-ticket-search" className="block text-xs font-semibold text-slate-600">Find a ticket to link</label><Input id="related-ticket-search" value={linkSearch} onChange={(event) => setLinkSearch(event.target.value)} placeholder="Search ticket subject or customer"/><p className="text-xs text-slate-500">Search at least two characters. Ticket conversations remain separate.</p>{linkSearchTerm.length >= 2 && linkCandidates.isPending && <p role="status" className="text-xs text-slate-500">Searching tickets…</p>}{linkSearchTerm.length >= 2 && linkCandidates.isError && <p role="alert" className="text-xs text-red-700">Ticket search failed.</p>}{linkSearchTerm.length >= 2 && linkCandidates.data && (linkCandidateItems.length ? <div className="space-y-1">{linkCandidateItems.map((candidate) => <Button variant="unstyled" type="button" key={candidate.id} onClick={() => createLink.mutate(candidate.id)} disabled={createLink.isPending} className="flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left hover:bg-blue-50 disabled:opacity-60"><span className="min-w-0 flex-1"><span className="block truncate text-xs font-semibold text-slate-800">{candidate.subject}</span><span className="mt-0.5 block truncate text-[11px] text-slate-500">{candidate.customer_name ?? "Customer"} · {candidate.status}</span></span><Link2 size={14} className="shrink-0 text-blue-700"/></Button>)}</div> : <p className="text-xs text-slate-500">No other matching tickets found.</p>)}{createLink.isPending && <p role="status" className="text-xs text-blue-700">Linking tickets…</p>}</div>}
           </PanelBody></Panel>
-          <Panel><PanelHeader title="Activity" description="Ticket changes and ownership"/><PanelBody className="space-y-4">{activity.isPending ? <div className="h-28 animate-pulse rounded-xl bg-slate-100"/> : activity.isError ? <p className="text-sm text-red-700">Unable to load activity.</p> : activity.data?.length ? activity.data.map((entry) => <div key={entry.id} className="flex gap-3"><span className="mt-1 grid size-8 shrink-0 place-items-center rounded-full bg-blue-50 text-blue-700"><Sparkles size={14}/></span><div><p className="text-sm font-medium text-slate-800">{activityLabel(entry.activity_type, entry.details)}</p><p className="mt-1 text-xs text-slate-500">{entry.actor_name ?? "System"} · {formatDateTime(entry.created_at)}</p></div></div>) : <p className="text-sm text-slate-500">No activity recorded.</p>}</PanelBody></Panel>
-          <Panel><PanelHeader title="Customer"/><PanelBody><Link href={`/dashboard/customers/${ticket.customer_id}`} className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-full bg-slate-100 text-slate-500"><UserRound size={18}/></span><span className="font-semibold text-blue-700 hover:underline">{ticket.customer_name ?? "View customer"}</span></Link></PanelBody></Panel>
+          <Panel><PanelHeader title="Customer"/><PanelBody><Button type="button" variant="unstyled" disabled={customerDrawerLoading} onClick={openCustomerDetails} className="flex w-full items-center gap-3 rounded-lg text-left hover:bg-muted/40"><span className="grid size-10 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground">{customerDrawerLoading ? <LoaderCircle size={17} className="animate-spin"/> : <UserRound size={18}/>}</span><span className="min-w-0 truncate font-medium text-foreground">{ticket.customer_name ?? "View customer"}</span><span className="ml-auto text-xs text-primary">{customerDrawerLoading ? "Loading…" : "View profile"}</span></Button></PanelBody></Panel>
         </div>
       </div>
+      {customerForDrawer && <CustomerFormDrawer open={customerDrawerOpen} onOpenChange={setCustomerDrawerOpen} customer={customerForDrawer} mode={customerDrawerMode} onModeChange={setCustomerDrawerMode}/>}
     </div>
   );
 }
 
 function Info({ label, value }: { label: string; value: string }) {
   return <div><p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{label}</p><p className="mt-1.5 text-sm font-medium text-slate-800">{value}</p></div>;
-}
-
-function activityLabel(type: string, details: TicketActivity["details"]) {
-  if (type === "created") return "Ticket created";
-  if (type === "automation_retry_requested") return `Automation retry queued · attempt ${String(details.attempt_count ?? "")}`;
-  if (details.ticket_link === "linked" && typeof details.related_ticket_id === "string") {
-    return `Linked related ticket #${details.related_ticket_id.slice(0, 8)}`;
-  }
-  if (details.ticket_link === "unlinked" && typeof details.related_ticket_id === "string") {
-    return `Removed link to ticket #${details.related_ticket_id.slice(0, 8)}`;
-  }
-  const changes = Object.keys(details).map((key) => key.replaceAll("_", " ")).join(", ");
-  return changes ? `Updated ${changes}` : "Ticket updated";
 }

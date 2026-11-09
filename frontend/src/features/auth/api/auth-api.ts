@@ -16,8 +16,9 @@ export type WorkspaceChoice = {
 };
 export type LoginStart =
   | { status: "workspace_selection_required"; workspaces: WorkspaceChoice[]; email_hint?: string }
-  | { status: "otp_required"; workspaces: []; email_hint?: string };
-export type AuthFlowStatus = { status: string; message: string; email_hint?: string };
+  | { status: "otp_required"; workspaces: []; email_hint?: string }
+  | { user: User };
+export type AuthFlowStatus = { status: string; message: string; email_hint?: string } | { user: User };
 export type AuthSessionPage = components["schemas"]["SessionPage"];
 
 export const currentUserQueryKey = ["me"] as const;

@@ -13,6 +13,7 @@ from app.models import (
     CommerceAction,
     DocumentIngestionJob,
     IntegrationDeliveryJob,
+    NotificationOutbox,
     Organization,
 )
 
@@ -81,6 +82,12 @@ class DurableJobRepository:
                 .where(
                     IntegrationDeliveryJob.organization_id == organization_id,
                     IntegrationDeliveryJob.status == "failed",
+                ),
+                "notification": select(func.count())
+                .select_from(NotificationOutbox)
+                .where(
+                    NotificationOutbox.organization_id == organization_id,
+                    NotificationOutbox.status == "failed",
                 ),
             }
             for kind, statement in count_queries.items():

@@ -20,6 +20,7 @@ from app.workers.handlers.commerce import CommerceActionHandler
 from app.workers.handlers.ingestion_jobs import IngestionHandler
 from app.workers.handlers.maintenance import MaintenanceHandler
 from app.workers.handlers.outbound import OutboundDeliveryHandler
+from app.workers.handlers.notifications import NotificationHandler
 from app.workers.infrastructure.job_repository import DurableJobRepository
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,7 @@ def default_handlers() -> tuple[JobHandler, ...]:
         CatalogWebhookHandler(),
         CatalogSyncHandler(),
         OutboundDeliveryHandler(),
+        NotificationHandler(),
         CommerceActionHandler(),
         AutomationExecutionHandler(),
         IngestionHandler(),

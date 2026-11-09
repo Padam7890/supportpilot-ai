@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.features.ai.application.defaults import get_default_agent
 from app.core.observability import current_correlation_id
 from app.features.automations.service import enqueue_customer_message_workflows
+from app.features.notifications.application.events import TicketNotificationPayload, enqueue_notification_event
 from app.integrations.core.contracts.messaging import IncomingMessage
 from app.models import (
     AIAgent,
@@ -246,6 +247,15 @@ async def persist_incoming_message(
         conversation.id,
         message_id,
         incoming.provider_id,
+    )
+    await enqueue_notification_event(
+        db,
+        organization_id=incoming.organization_id,
+        event_type="conversation.customer_replied",
+        aggregate_type="ticket",
+        aggregate_id=conversation.ticket_id,
+        event_id=message.id,
+        payload=TicketNotificationPayload(ticket_id=conversation.ticket_id, conversation_id=conversation.id),
     )
     await enqueue_customer_message_workflows(
         db,

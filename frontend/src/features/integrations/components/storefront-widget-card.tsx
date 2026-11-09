@@ -10,7 +10,7 @@ import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
 import { ApiError } from "@/lib/api/errors";
 import { aiAgentsKey, listAIAgents } from "@/features/ai/api/ai-agent-api";
 import { knowledgeBaseKey, listKnowledgeBases } from "@/features/knowledge/api/knowledge-base-api";
-import { createWidgetConfig, getWidgetConfig, previewWidgetRouting, updateWidgetConfig, widgetConfigKey } from "../api/widget-api";
+import { createWidgetConfig, getWidgetConfig, previewWidgetRouting, updateWidgetConfig, widgetConfigKey, type WidgetRoutingPreview } from "../api/widget-api";
 import type { WidgetPreviewDraft } from "@/features/widget/types/widget-preview";
 
 function isSafeStorefrontOrigin(value: string): boolean {
@@ -22,7 +22,7 @@ function isSafeStorefrontOrigin(value: string): boolean {
   }
 }
 
-export function StorefrontWidgetCard({ onPreviewChange }: { onPreviewChange: (draft: WidgetPreviewDraft) => void }) {
+export function StorefrontWidgetCard({ onPreviewChange }: { onPreviewChange?: (draft: WidgetPreviewDraft) => void } = {}) {
   const client = useQueryClient();
   const config = useQuery({
     queryKey: widgetConfigKey,
@@ -70,7 +70,7 @@ export function StorefrontWidgetCard({ onPreviewChange }: { onPreviewChange: (dr
   const origins = useMemo(() => originsText.split(/[\n,]/).map((value) => value.trim()).filter(Boolean), [originsText]);
 
   useEffect(() => {
-    if (agents.isPending || agents.isError) return;
+    if (!onPreviewChange || agents.isPending || agents.isError) return;
     onPreviewChange({
       enabled,
       aiEnabled,

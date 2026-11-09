@@ -25,6 +25,7 @@ from app.db.session import (
     set_tenant_context,
 )
 from app.features.ai.application.defaults import create_workspace_ai_defaults
+from app.features.auth.dev_bypass import auth_dev_otp_bypass_allowed
 from app.features.auth.challenges import (
     CHALLENGE_TTL,
     OTP_MAX_ATTEMPTS,
@@ -215,10 +216,10 @@ async def verify_registration_email(
     )
 
 
-@router.post("/login", response_model=LoginStartOut)
+@router.post("/login", response_model=LoginStartOut | TokenOut)
 async def login(
     data: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)
-) -> LoginStartOut:
+) -> LoginStartOut | TokenOut:
     normalized_email = normalize_email(str(data.email))
     await limit_auth_attempts(request, normalized_email, limit=20, window_seconds=900)
     await set_auth_email_context(db, normalized_email)
@@ -256,6 +257,13 @@ async def login(
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     selected_user, selected_organization = rows[0] if len(rows) == 1 else (None, None)
+    if (
+        selected_user is not None
+        and selected_organization is not None
+        and auth_dev_otp_bypass_allowed(normalized_email)
+    ):
+        await set_tenant_context(db, selected_organization.id)
+        return await issue_tokens(db, selected_user)
     if selected_user is not None:
         await limit_auth_attempts(
             request,
@@ -295,12 +303,12 @@ async def login(
     )
 
 
-@router.post("/login/select-workspace", response_model=AuthFlowStatus)
+@router.post("/login/select-workspace", response_model=AuthFlowStatus | TokenOut)
 async def select_login_workspace(
     data: LoginWorkspaceRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-) -> AuthFlowStatus:
+) -> AuthFlowStatus | TokenOut:
     await limit_auth_attempts(request, data.challenge_token, limit=10, window_seconds=900)
     challenge = await get_challenge(db, data.challenge_token, purpose="login")
     if challenge.identity_id is None or challenge.organization_id is not None:
@@ -330,6 +338,10 @@ async def select_login_workspace(
         raise HTTPException(status_code=400, detail="Sign-in challenge is invalid or expired")
     challenge.organization_id = organization.id
     challenge.user_id = user.id
+    if auth_dev_otp_bypass_allowed(identity.email_normalized):
+        challenge.consumed_at = datetime.now(UTC)
+        await set_tenant_context(db, organization.id)
+        return await issue_tokens(db, user)
     await limit_auth_attempts(
         request,
         identity.email_normalized,

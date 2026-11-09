@@ -54,64 +54,64 @@ export function CustomerContextPanel({ item, role }: { item: InboxItem; role: st
     },
   });
 
-  return <div className="h-full overflow-y-auto bg-slate-50 text-slate-900">
-    <div className="border-b border-slate-200 bg-white p-5">
-      <div className="flex items-center gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-full bg-violet-100 text-base font-bold text-violet-800">{item.customer.name.trim().slice(0, 1).toUpperCase()}</span><div className="min-w-0"><h2 className="truncate font-semibold">{item.customer.name}</h2><p className="truncate text-xs text-slate-500">{item.customer.email ?? "No email address"}</p></div></div>
-      <Link href={`/dashboard/customers/${item.customer.id}`} className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-blue-700 hover:underline">Customer profile <ArrowUpRight size={13}/></Link>
-      {item.customer.email && <Link href={`/dashboard/orders?email=${encodeURIComponent(item.customer.email)}`} className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-blue-700 hover:underline">Verify Shopify order <ArrowUpRight size={13}/></Link>}
+  return <div className="h-full overflow-y-auto bg-muted/30 text-foreground">
+    <div className="border-b border-border bg-background p-5">
+      <div className="flex items-center gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-full bg-violet-100 text-base font-bold text-violet-800">{item.customer.name.trim().slice(0, 1).toUpperCase()}</span><div className="min-w-0"><h2 className="truncate font-semibold">{item.customer.name}</h2><p className="truncate text-xs text-muted-foreground">{item.customer.email ?? "No email address"}</p></div></div>
+      <Link href={`/dashboard/customers/${item.customer.id}`} className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline">Customer profile <ArrowUpRight size={13}/></Link>
+      {item.customer.email && <Link href={`/dashboard/orders?email=${encodeURIComponent(item.customer.email)}`} className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline">Verify Shopify order <ArrowUpRight size={13}/></Link>}
     </div>
 
     <div className="space-y-4 p-4">
-      <Panel className="border-slate-200 shadow-sm">
+      <Panel className="border-border shadow-none">
         <PanelHeader title="Ticket details" description={`Updated ${formatDateTime(item.updatedAt)}`}/>
         <PanelBody className="space-y-4">
-          <div><label htmlFor="inbox-ticket-status" className="mb-1.5 block text-xs font-semibold text-slate-500">Status</label><Select id="inbox-ticket-status" value={item.status} disabled={!canEdit || update.isPending} onChange={(event) => update.mutate({ status: event.target.value as Ticket["status"] })}>{statuses.map((status) => <option key={status} value={status}>{titleCase(status)}</option>)}</Select></div>
-          <div><label htmlFor="inbox-ticket-priority" className="mb-1.5 block text-xs font-semibold text-slate-500">Priority</label><Select id="inbox-ticket-priority" value={item.priority} disabled={!canEdit || update.isPending} onChange={(event) => update.mutate({ priority: event.target.value as Ticket["priority"] })}>{priorities.map((priority) => <option key={priority} value={priority}>{titleCase(priority)}</option>)}</Select></div>
-          <div><label htmlFor="inbox-ticket-team" className="mb-1.5 block text-xs font-semibold text-slate-500">Team</label><Select id="inbox-ticket-team" value={ticket.data?.team_id ?? ""} disabled={!canAssign || update.isPending || ticket.isPending || teams.isPending} onChange={(event) => update.mutate({ team_id: event.target.value || null, assignee_id: null })}><option value="">No team</option>{teams.data?.filter((team) => team.is_active || team.id === ticket.data?.team_id).map((team) => <option key={team.id} value={team.id} disabled={!team.is_active}>{team.name}{team.is_active ? "" : " · inactive"}</option>)}</Select>{canAssign && item.assignee && <p className="mt-1 text-[11px] text-slate-500">Changing the team clears the current assignee.</p>}</div>
-          <div><label htmlFor="inbox-ticket-assignee" className="mb-1.5 block text-xs font-semibold text-slate-500">Assignee</label><Select id="inbox-ticket-assignee" value={item.assignee?.id ?? ""} disabled={!canAssign || update.isPending || members.isPending} onChange={(event) => update.mutate({ assignee_id: event.target.value || null })}><option value="">Unassigned</option>{members.data?.filter((member) => member.is_active && ["owner", "admin", "agent"].includes(member.role) && (!ticket.data?.team_id || teams.data?.find((team) => team.id === ticket.data?.team_id)?.members.some((teamMember) => teamMember.id === member.id))).map((member) => <option key={member.id} value={member.id}>{member.full_name} · {member.role}</option>)}</Select>{!canAssign && <p className="mt-1 text-xs text-slate-400">Only Owners and Admins can choose a team or another assignee.</p>}</div>
+          <div><label htmlFor="inbox-ticket-status" className="mb-1.5 block text-xs font-semibold text-muted-foreground">Status</label><Select id="inbox-ticket-status" value={item.status} disabled={!canEdit || update.isPending} onChange={(event) => update.mutate({ status: event.target.value as Ticket["status"] })}>{statuses.map((status) => <option key={status} value={status}>{titleCase(status)}</option>)}</Select></div>
+          <div><label htmlFor="inbox-ticket-priority" className="mb-1.5 block text-xs font-semibold text-muted-foreground">Priority</label><Select id="inbox-ticket-priority" value={item.priority} disabled={!canEdit || update.isPending} onChange={(event) => update.mutate({ priority: event.target.value as Ticket["priority"] })}>{priorities.map((priority) => <option key={priority} value={priority}>{titleCase(priority)}</option>)}</Select></div>
+          <div><label htmlFor="inbox-ticket-team" className="mb-1.5 block text-xs font-semibold text-muted-foreground">Team</label><Select id="inbox-ticket-team" value={ticket.data?.team_id ?? ""} disabled={!canAssign || update.isPending || ticket.isPending || teams.isPending} onChange={(event) => update.mutate({ team_id: event.target.value || null, assignee_id: null })}><option value="">No team</option>{teams.data?.filter((team) => team.is_active || team.id === ticket.data?.team_id).map((team) => <option key={team.id} value={team.id} disabled={!team.is_active}>{team.name}{team.is_active ? "" : " · inactive"}</option>)}</Select>{canAssign && item.assignee && <p className="mt-1 text-[11px] text-muted-foreground">Changing the team clears the current assignee.</p>}</div>
+          <div><label htmlFor="inbox-ticket-assignee" className="mb-1.5 block text-xs font-semibold text-muted-foreground">Assignee</label><Select id="inbox-ticket-assignee" value={item.assignee?.id ?? ""} disabled={!canAssign || update.isPending || members.isPending} onChange={(event) => update.mutate({ assignee_id: event.target.value || null })}><option value="">Unassigned</option>{members.data?.filter((member) => member.is_active && ["owner", "admin", "agent"].includes(member.role) && (!ticket.data?.team_id || teams.data?.find((team) => team.id === ticket.data?.team_id)?.members.some((teamMember) => teamMember.id === member.id))).map((member) => <option key={member.id} value={member.id}>{member.full_name} · {member.role}</option>)}</Select>{!canAssign && <p className="mt-1 text-xs text-muted-foreground/70">Only Owners and Admins can choose a team or another assignee.</p>}</div>
           {canEdit && !item.assignee && <Button type="button" variant="secondary" className="w-full" disabled={claim.isPending} onClick={() => claim.mutate()}><UserRoundCheck size={15}/>{claim.isPending ? "Claiming…" : "Assign to me"}</Button>}
-          {update.isError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-xs text-red-700">{update.error instanceof Error ? update.error.message : "Ticket could not be updated."}</p>}
-          {claim.isError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-xs text-red-700">{claim.error instanceof Error ? claim.error.message : "Ticket could not be claimed."}</p>}
+          {update.isError && <p role="alert" className="rounded-md bg-destructive/10 p-3 text-xs text-destructive">{update.error instanceof Error ? update.error.message : "Ticket could not be updated."}</p>}
+          {claim.isError && <p role="alert" className="rounded-md bg-destructive/10 p-3 text-xs text-destructive">{claim.error instanceof Error ? claim.error.message : "Ticket could not be claimed."}</p>}
         </PanelBody>
       </Panel>
 
-      <details className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3.5 text-sm font-semibold text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"><span className="flex items-center gap-2"><TicketCheck size={16} className="text-slate-400"/>Recent tickets</span><span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">{relatedTickets.length}</span></summary>
-        <div className="space-y-3 border-t border-slate-100 p-3">
-          {tickets.isPending && <div className="h-14 animate-pulse rounded-lg bg-slate-100"/>}
-          {tickets.isError && <p role="alert" className="text-xs text-red-700">Customer history could not be loaded.</p>}
-          {relatedTickets.slice(0, 4).map((ticket) => <Link key={ticket.id} href={`/dashboard/tickets/${ticket.id}`} className="block rounded-lg p-2 hover:bg-slate-50"><p className="truncate text-sm font-medium text-slate-800">{ticket.subject}</p><p className="mt-1 text-xs capitalize text-slate-500">{ticket.status} · {titleCase(ticket.priority)}</p></Link>)}
-          {tickets.data && relatedTickets.length === 0 && <p className="text-xs text-slate-500">No other customer tickets.</p>}
+      <details className="rounded-none border-0 border-b border-border bg-background shadow-none">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3.5 text-sm font-semibold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><span className="flex items-center gap-2"><TicketCheck size={16} className="text-muted-foreground/70"/>Recent tickets</span><span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">{relatedTickets.length}</span></summary>
+        <div className="space-y-3 border-t border-border/60 p-3">
+          {tickets.isPending && <div className="h-14 animate-pulse rounded-md bg-muted"/>}
+          {tickets.isError && <p role="alert" className="text-xs text-destructive">Customer history could not be loaded.</p>}
+          {relatedTickets.slice(0, 4).map((ticket) => <Link key={ticket.id} href={`/dashboard/tickets/${ticket.id}`} className="block rounded-md p-2 hover:bg-muted/60"><p className="truncate text-sm font-medium text-foreground">{ticket.subject}</p><p className="mt-1 text-xs capitalize text-muted-foreground">{ticket.status} · {titleCase(ticket.priority)}</p></Link>)}
+          {tickets.data && relatedTickets.length === 0 && <p className="text-xs text-muted-foreground">No other customer tickets.</p>}
         </div>
       </details>
 
-      <details className="rounded-2xl border border-slate-200 bg-white shadow-sm" open>
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3.5 text-sm font-semibold text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"><span className="flex items-center gap-2"><MessageSquareText size={16} className="text-slate-400"/>Recent messages</span><span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">{history.data?.items.length ?? 0}</span></summary>
-        <div className="space-y-3 border-t border-slate-100 p-3">
-          {history.isPending && <div className="h-20 animate-pulse rounded-lg bg-slate-100"/>}
-          {history.isError && <p role="alert" className="text-xs text-red-700">Customer message history could not be loaded.</p>}
-          {history.data?.items.slice(0, 4).map((message) => <article key={message.id} className="rounded-xl bg-slate-50 p-3">
-            <div className="flex items-start justify-between gap-2"><Link href={`/dashboard/tickets/${message.ticket_id}`} className="min-w-0 truncate text-xs font-semibold text-blue-700 hover:underline">{message.ticket_subject}</Link><time className="shrink-0 text-[10px] text-slate-400">{formatDateTime(message.created_at)}</time></div>
-            <p className="mt-1 text-[11px] text-slate-500">{message.sender_name ?? (message.sender_type === "customer" ? item.customer.name : "SupportPilot")} · {message.sender_type === "customer" ? "Customer" : "Team reply"}</p>
-            <p className="mt-2 line-clamp-3 whitespace-pre-wrap break-words text-xs leading-5 text-slate-700">{message.content}</p>
+      <details className="rounded-none border-0 border-b border-border bg-background shadow-none" open>
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3.5 text-sm font-semibold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><span className="flex items-center gap-2"><MessageSquareText size={16} className="text-muted-foreground/70"/>Recent messages</span><span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">{history.data?.items.length ?? 0}</span></summary>
+        <div className="space-y-3 border-t border-border/60 p-3">
+          {history.isPending && <div className="h-20 animate-pulse rounded-md bg-muted"/>}
+          {history.isError && <p role="alert" className="text-xs text-destructive">Customer message history could not be loaded.</p>}
+          {history.data?.items.slice(0, 4).map((message) => <article key={message.id} className="rounded-md bg-muted/30 p-3">
+            <div className="flex items-start justify-between gap-2"><Link href={`/dashboard/tickets/${message.ticket_id}`} className="min-w-0 truncate text-xs font-semibold text-primary hover:underline">{message.ticket_subject}</Link><time className="shrink-0 text-[10px] text-muted-foreground/70">{formatDateTime(message.created_at)}</time></div>
+            <p className="mt-1 text-[11px] text-muted-foreground">{message.sender_name ?? (message.sender_type === "customer" ? item.customer.name : "SupportPilot")} · {message.sender_type === "customer" ? "Customer" : "Team reply"}</p>
+            <p className="mt-2 line-clamp-3 whitespace-pre-wrap break-words text-xs leading-5 text-foreground/90">{message.content}</p>
           </article>)}
-          {history.data?.items.length === 0 && <p className="text-xs text-slate-500">No earlier messages from this customer.</p>}
-          {history.data && history.data.total > 4 && <Link href={`/dashboard/customers/${item.customer.id}`} className="inline-flex items-center gap-1 px-1 text-xs font-semibold text-blue-700 hover:underline">View all {history.data.total} messages <ArrowUpRight size={12}/></Link>}
+          {history.data?.items.length === 0 && <p className="text-xs text-muted-foreground">No earlier messages from this customer.</p>}
+          {history.data && history.data.total > 4 && <Link href={`/dashboard/customers/${item.customer.id}`} className="inline-flex items-center gap-1 px-1 text-xs font-semibold text-primary hover:underline">View all {history.data.total} messages <ArrowUpRight size={12}/></Link>}
         </div>
       </details>
 
-      <details className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3.5 text-sm font-semibold text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"><span className="flex items-center gap-2"><Clock3 size={16} className="text-slate-400"/>Activity timeline</span><span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">{activity.data?.length ?? 0}</span></summary>
-        <div className="space-y-3 border-t border-slate-100 p-3">
-          {activity.isPending && <div className="h-14 animate-pulse rounded-lg bg-slate-100"/>}
-          {activity.isError && <p role="alert" className="text-xs text-red-700">Activity could not be loaded.</p>}
-          {visibleActivity.map((entry) => <div key={entry.id} className="flex gap-2"><span className="mt-1 size-2 shrink-0 rounded-full bg-blue-500"/><div><p className="text-xs font-medium text-slate-700">{activityLabel(entry.activity_type, entry.details)}</p><p className="mt-1 text-[11px] text-slate-400">{entry.actor_name ?? "System"} · {formatDateTime(entry.created_at)}</p></div></div>)}
-          {activity.data?.length === 0 && <p className="text-xs text-slate-500">No activity recorded yet.</p>}
-          {(activity.data?.length ?? 0) > 5 && <Button variant="unstyled" type="button" aria-expanded={showAllActivity} onClick={() => setShowAllActivity((current) => !current)} className="rounded px-1 text-xs font-semibold text-blue-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">{showAllActivity ? "Show latest 5" : `View all ${activity.data?.length} events`}</Button>}
+      <details className="rounded-none border-0 border-b border-border bg-background shadow-none">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3.5 text-sm font-semibold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><span className="flex items-center gap-2"><Clock3 size={16} className="text-muted-foreground/70"/>Activity timeline</span><span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">{activity.data?.length ?? 0}</span></summary>
+        <div className="space-y-3 border-t border-border/60 p-3">
+          {activity.isPending && <div className="h-14 animate-pulse rounded-md bg-muted"/>}
+          {activity.isError && <p role="alert" className="text-xs text-destructive">Activity could not be loaded.</p>}
+          {visibleActivity.map((entry) => <div key={entry.id} className="flex gap-2"><span className="mt-1 size-2 shrink-0 rounded-full bg-primary/50"/><div><p className="text-xs font-medium text-foreground/90">{activityLabel(entry.activity_type, entry.details)}</p><p className="mt-1 text-[11px] text-muted-foreground/70">{entry.actor_name ?? "System"} · {formatDateTime(entry.created_at)}</p></div></div>)}
+          {activity.data?.length === 0 && <p className="text-xs text-muted-foreground">No activity recorded yet.</p>}
+          {(activity.data?.length ?? 0) > 5 && <Button variant="unstyled" type="button" aria-expanded={showAllActivity} onClick={() => setShowAllActivity((current) => !current)} className="rounded px-1 text-xs font-semibold text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{showAllActivity ? "Show latest 5" : `View all ${activity.data?.length} events`}</Button>}
         </div>
       </details>
 
-      {item.customer.email && <a href={`mailto:${item.customer.email}`} className="inline-flex items-center gap-2 px-1 text-xs font-semibold text-slate-500 hover:text-blue-700"><Mail size={14}/> Email customer</a>}
+      {item.customer.email && <a href={`mailto:${item.customer.email}`} className="inline-flex items-center gap-2 px-1 text-xs font-semibold text-muted-foreground hover:text-primary"><Mail size={14}/> Email customer</a>}
     </div>
   </div>;
 }

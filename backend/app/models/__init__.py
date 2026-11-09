@@ -32,6 +32,7 @@ from app.models.knowledge_document import (
 )
 from app.models.message import Message
 from app.models.organization import Organization
+from app.models.notification import Notification, NotificationOutbox, NotificationPreference, NotificationRecipient
 from app.models.platform_owner import PlatformOwner
 from app.models.platform_refresh_session import PlatformRefreshSession
 from app.models.recommendation import RecommendationEvent, RecommendationSettings
@@ -88,6 +89,10 @@ __all__ = [
     "KnowledgeDocumentSource",
     "Message",
     "Organization",
+    "Notification",
+    "NotificationOutbox",
+    "NotificationPreference",
+    "NotificationRecipient",
     "PlatformOwner",
     "PlatformRefreshSession",
     "RecommendationEvent",

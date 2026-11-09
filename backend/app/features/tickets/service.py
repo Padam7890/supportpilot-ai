@@ -4,6 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.features.customers.repository import CustomerRepository
+from app.features.notifications.application.events import TicketNotificationPayload, enqueue_notification_event
 from app.features.tickets.repository import TicketRepository
 from app.models import Team, TeamMember, Ticket, TicketActivity, User
 from app.schemas.ticket import TicketBulkUpdate, TicketCreate, TicketUpdate
@@ -103,6 +104,20 @@ class TicketService:
                 )
             )
             await self.repo.session.flush()
+            if "assignee_id" in changed and resulting_assignee_id is not None and resulting_assignee_id != actor_user_id:
+                await enqueue_notification_event(
+                    self.repo.session,
+                    organization_id=organization_id,
+                    event_type="ticket.assigned",
+                    aggregate_type="ticket",
+                    aggregate_id=ticket_id,
+                    payload=TicketNotificationPayload(
+                        ticket_id=ticket_id,
+                        actor_user_id=actor_user_id,
+                        recipient_user_id=resulting_assignee_id,
+                        team_id=resulting_team_id,
+                    ),
+                )
         return await self.repo.get(organization_id, ticket_id)
 
     async def bulk_update(
@@ -190,6 +205,24 @@ class TicketService:
                         details=details,
                     )
                 )
+                if (
+                    "assignee_id" in details
+                    and ticket.assignee_id is not None
+                    and ticket.assignee_id != actor_user_id
+                ):
+                    await enqueue_notification_event(
+                        self.repo.session,
+                        organization_id=organization_id,
+                        event_type="ticket.assigned",
+                        aggregate_type="ticket",
+                        aggregate_id=ticket.id,
+                        payload=TicketNotificationPayload(
+                            ticket_id=ticket.id,
+                            actor_user_id=actor_user_id,
+                            recipient_user_id=ticket.assignee_id,
+                            team_id=ticket.team_id,
+                        ),
+                    )
 
         await self.repo.session.flush()
         return changed_count, [ticket.id for ticket in tickets]

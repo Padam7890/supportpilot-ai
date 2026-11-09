@@ -22,6 +22,7 @@ from app.features.automations.router import router as automations_router
 from app.features.conversations.router import router as conversations_router
 from app.features.customers.router import router as customers_router
 from app.features.inbox.router import router as inbox_router
+from app.features.notifications import router as notifications_router
 from app.features.organizations.router import router as organizations_router
 from app.features.tickets.router import router as tickets_router
 from app.features.teams import router as teams_router
@@ -45,6 +46,7 @@ api_router.include_router(commerce_actions.router)
 api_router.include_router(catalog.router)
 api_router.include_router(catalog.webhook_router)
 api_router.include_router(inbox_router)
+api_router.include_router(notifications_router)
 api_router.include_router(integrations.router)
 api_router.include_router(shopify_orders.orders_router)
 api_router.include_router(integration_management.router)

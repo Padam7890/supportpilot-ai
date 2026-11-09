@@ -126,3 +126,17 @@ async def send_auth_code(email: str, code: str, purpose: str) -> None:
     )
     _log_email_event(logging.INFO, "send_requested", email_kind=f"auth_{purpose}")
     await asyncio.to_thread(_send_sync, message, f"auth_{purpose}")
+
+
+async def send_notification_email(email: str, title: str, body: str, action_path: str | None) -> None:
+    """Deliver a small notification email without logging its recipient or content."""
+    if not smtp_is_configured():
+        raise RuntimeError("Transactional email is not configured")
+    origin = (settings.cors_origins[0] if settings.cors_origins else "http://localhost:3000").rstrip("/")
+    safe_path = action_path if action_path and action_path.startswith("/dashboard/") and not action_path.startswith("//") else "/dashboard"
+    message = EmailMessage()
+    message["Subject"] = f"SupportPilot: {title[:150]}"
+    message["From"] = settings.email_from_address
+    message["To"] = email
+    message.set_content(f"{body or title}\n\nOpen SupportPilot: {origin}{safe_path}")
+    await asyncio.to_thread(_send_sync, message, "workspace_notification")

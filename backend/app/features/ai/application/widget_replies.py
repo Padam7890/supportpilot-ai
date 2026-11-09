@@ -12,6 +12,7 @@ from app.db.session import SessionLocal, set_tenant_context
 from app.features.ai.domain.policies import widget_reply_is_superseded
 from app.features.ai.application.retrieval_search import citations_remain_authorized
 from app.features.ai.tools.recommendations import ToolReference
+from app.features.notifications.application.events import TicketNotificationPayload, enqueue_notification_event
 from app.models import (
     AIExecution,
     AIAgent,
@@ -422,6 +423,19 @@ async def finish_widget_reply(
         row.model_name = model_name
         row.error_code = None
         row.completed_at = now
+        if reply_status == "escalated":
+            await enqueue_notification_event(
+                db,
+                organization_id=organization_id,
+                event_type="ai.escalation_required",
+                aggregate_type="ticket",
+                aggregate_id=conversation.ticket_id,
+                event_id=uuid5(NAMESPACE_URL, f"ai-escalation:{row.id}"),
+                payload=TicketNotificationPayload(
+                    ticket_id=conversation.ticket_id,
+                    conversation_id=conversation.id,
+                ),
+            )
         if reply_status == "sent" or (
             reply_status == "escalated"
             and row.delivery_mode == "auto_reply"

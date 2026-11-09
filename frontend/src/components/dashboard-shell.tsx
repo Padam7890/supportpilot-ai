@@ -6,7 +6,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppSidebar } from "@/components/app-sidebar";
 import { DashboardTopbar } from "@/components/dashboard-topbar";
 import { getCurrentUser, currentUserQueryKey, logout as logoutRequest } from "@/features/auth/api/auth-api";
-import { getOperationalAlerts, analyticsQueryKeys } from "@/features/analytics/api/analytics-api";
 import { getSystemReadiness, getWorkerHealth } from "@/features/dashboard/api/system-status-api";
 import { getInbox } from "@/features/inbox/api/inbox-api";
 import type { InboxFilters } from "@/features/inbox/api/inbox-api";
@@ -70,13 +69,6 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     queryKey: ["worker-health"],
     queryFn: getWorkerHealth,
     refetchInterval: () => typeof document !== "undefined" && document.visibilityState === "visible" ? 15_000 : false,
-    refetchIntervalInBackground: false,
-  });
-  const alerts = useQuery({
-    queryKey: analyticsQueryKeys.operationalAlerts(),
-    queryFn: getOperationalAlerts,
-    enabled: Boolean(me.data),
-    refetchInterval: () => typeof document !== "undefined" && document.visibilityState === "visible" ? 60_000 : false,
     refetchIntervalInBackground: false,
   });
   const unread = useQuery({
@@ -145,8 +137,6 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
       <DashboardTopbar
         pathname={pathname}
         user={me.data}
-        alerts={alerts.data}
-        alertsUnavailable={alerts.isError}
         serviceState={serviceState}
         workerState={workerState}
         workerCount={worker.data?.active_workers}
