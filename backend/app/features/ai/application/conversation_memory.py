@@ -9,11 +9,11 @@ from dataclasses import dataclass
 import re
 
 _TOPIC_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("refund", re.compile(r"\\b(?:refund|return|exchange|receipt)\\b|फिर्ता", re.I)),
-    ("delivery", re.compile(r"\\b(?:shipping|delivery|courier|shipment)\\b|डेलिभरी|ढुवानी", re.I)),
-    ("order", re.compile(r"\\b(?:order|tracking|track)\\b", re.I)),
-    ("product", re.compile(r"\\b(?:product|stock|size|color|colour|warranty)\\b", re.I)),
-    ("payment", re.compile(r"\\b(?:payment|pay|card|billing)\\b|भुक्तानी", re.I)),
+    ("refund", re.compile(r"\b(?:refund|return|exchange|receipt)\b|फिर्ता", re.I)),
+    ("delivery", re.compile(r"\b(?:shipping|delivery|courier|shipment)\b|डेलिभरी|ढुवानी", re.I)),
+    ("order", re.compile(r"\b(?:order|tracking|track)\b", re.I)),
+    ("product", re.compile(r"\b(?:product|stock|size|color|colour|warranty)\b", re.I)),
+    ("payment", re.compile(r"\b(?:payment|pay|card|billing)\b|भुक्तानी", re.I)),
 )
 
 
