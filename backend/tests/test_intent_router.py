@@ -188,3 +188,18 @@ def test_knowledge_question_does_not_gain_sensitive_route_from_llm():
     result = CustomerRoutingResolution(deterministic=assessment, llm=decision)
     plan = apply_routing_to_widget_plan("What is your shipping policy?", [], result)
     assert plan.route != "sensitive"
+
+
+def test_intent_router_cost_requires_exact_model_pricing(monkeypatch):
+    from app.features.ai.application.intent_routing.metrics import estimate_router_cost_usd
+
+    monkeypatch.setattr(settings, "ai_model_prices", {
+        "router-model": {"input": 0.20, "output": 0.80},
+    })
+    monkeypatch.setattr(settings, "ai_model", "generation-model")
+    assert estimate_router_cost_usd(
+        prompt_tokens=1000, completion_tokens=500, model_name="router-model",
+    ) == pytest.approx(0.0006)
+    assert estimate_router_cost_usd(
+        prompt_tokens=1000, completion_tokens=500, model_name="unknown",
+    ) is None
