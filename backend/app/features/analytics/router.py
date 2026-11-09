@@ -613,8 +613,28 @@ async def ai_usage(
         AIExecution.organization_id == user.organization_id,
         date_predicate(AIExecution.created_at, start, end),
     )
-    prompt_tokens = func.coalesce(func.sum(AIExecution.usage["prompt_tokens"].as_integer()), 0)
-    completion_tokens = func.coalesce(func.sum(AIExecution.usage["completion_tokens"].as_integer()), 0)
+    # Providers use either token naming convention. Avoid double counting aliases.
+    input_count = func.coalesce(
+        AIExecution.usage["input_tokens"].as_integer(),
+        AIExecution.usage["prompt_tokens"].as_integer(),
+    )
+    output_count = func.coalesce(
+        AIExecution.usage["output_tokens"].as_integer(),
+        AIExecution.usage["completion_tokens"].as_integer(),
+    )
+    prompt_tokens = func.coalesce(func.sum(input_count), 0)
+    completion_tokens = func.coalesce(func.sum(output_count), 0)
+    missing_usage = (input_count.is_(None) | output_count.is_(None))
+    priced_model = settings.ai_model
+    pricing_configured = (
+        bool(priced_model)
+        and settings.ai_input_cost_per_million is not None
+        and settings.ai_output_cost_per_million is not None
+    )
+    pricing_eligible = (
+        AIExecution.model_name == priced_model
+        if pricing_configured else AIExecution.id.is_(None)
+    )
     aggregate = await db.execute(
         select(
             func.count(AIExecution.id),
@@ -622,9 +642,11 @@ async def ai_usage(
             func.count(AIExecution.id).filter(AIExecution.status == "failed"),
             prompt_tokens,
             completion_tokens,
+            func.count(AIExecution.id).filter(missing_usage),
+            func.count(AIExecution.id).filter(~pricing_eligible),
         ).where(*predicate)
     )
-    count, succeeded, failed, prompt, completion = aggregate.one()
+    count, succeeded, failed, prompt, completion, incomplete_usage, unpriced_executions = aggregate.one()
     document_eligible = (
         AIExecution.status == "succeeded",
         AIExecution.kind.in_(("playground", "reply_draft", "widget_reply")),
@@ -670,7 +692,7 @@ async def ai_usage(
     ]
     prompt, completion = int(prompt), int(completion)
     estimated_cost = None
-    if settings.ai_input_cost_per_million is not None and settings.ai_output_cost_per_million is not None:
+    if pricing_configured and not incomplete_usage and not unpriced_executions:
         estimated_cost = (
             prompt * settings.ai_input_cost_per_million
             + completion * settings.ai_output_cost_per_million
@@ -718,7 +740,7 @@ async def ai_usage(
     ) in bot_rows.all():
         bot_prompt, bot_completion = int(bot_prompt or 0), int(bot_completion or 0)
         bot_cost = None
-        if settings.ai_input_cost_per_million is not None and settings.ai_output_cost_per_million is not None:
+        if estimated_cost is not None:
             bot_cost = (
                 bot_prompt * settings.ai_input_cost_per_million
                 + bot_completion * settings.ai_output_cost_per_million
