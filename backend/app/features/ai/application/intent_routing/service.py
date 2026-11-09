@@ -80,7 +80,7 @@ async def resolve_customer_routing(
     if invoke:
         llm_invoked = True
         metrics.llm_router_invocation_count = 1
-        decision, usage, _model, failure = await invoke_llm_intent_router(message, transcript, assessment)
+        decision, usage, router_model, failure = await invoke_llm_intent_router(message, transcript, assessment)
         if decision is not None and not assessment.requires_tools and any(
             item.requires_tools or item.intent in {Intent.ORDER, Intent.REFUND}
             for item in decision.intents
@@ -103,6 +103,7 @@ async def resolve_customer_routing(
             metrics.estimated_router_cost_usd = estimate_router_cost_usd(
                 prompt_tokens=metrics.router_prompt_tokens,
                 completion_tokens=metrics.router_completion_tokens,
+                model_name=router_model,
             )
         else:
             metrics.llm_router_failure_count = 1
