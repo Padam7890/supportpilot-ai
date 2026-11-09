@@ -105,7 +105,7 @@ def _safe_job_result(value: Any, *, expected_order_id: str) -> dict[str, Any]:
         codes = _error_codes(errors)
         raise ShopifyOrderActionError(codes[0] if codes else "shopify_cancel_failed")
     order = value.get("order")
-    if isinstance(order, dict) and order.get("id") not in (None, expected_order_id):
+    if isinstance(order, dict) and order.get("id") != expected_order_id:
         raise ShopifyOrderActionError("shopify_cancel_order_mismatch")
     return {
         "provider": "shopify",
@@ -167,8 +167,9 @@ async def cancel_shopify_order(
             result = _safe_job_result(job_result, expected_order_id=order_id)
             if status == "FAILED":
                 raise ShopifyOrderActionError("shopify_cancel_failed")
-            if status != "SUCCEEDED" and job_result.get("done") is not True:
-                raise ShopifyOrderActionError("shopify_cancel_failed")
+            # A completed job is not necessarily a successful cancellation.
+            if status != "SUCCEEDED":
+                raise ShopifyOrderActionError("shopify_cancel_outcome_unknown_manual_review")
             return result
         job_id = job_result.get("id")
         if not isinstance(job_id, str) or not job_id:

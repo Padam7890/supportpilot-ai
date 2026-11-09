@@ -7,6 +7,7 @@ from uuid import UUID
 from sqlalchemy import and_, or_, select
 
 from app.workers.domain.lease_policy import COMMERCE_ACTION_LEASE as ACTION_LEASE_TIMEOUT
+from app.features.ai.application.shopify_dispatch_policy import authorize_shopify_dispatch
 from app.db.session import SessionLocal, set_tenant_context
 from app.integrations.providers.shopify.actions import (
     ShopifyOrderActionError,
@@ -226,6 +227,8 @@ async def process_commerce_action(organization_id: UUID, action_id: UUID) -> Non
         correlation_id = action.correlation_id
         operation = {
             "idempotency_key_hash": action.idempotency_key_hash,
+            "approval_status": action.approval_status,
+            "execution_status": action.execution_status,
             "action_type": action.action_type,
             "provider": action.provider,
             "order_number": action.order_number,
@@ -276,6 +279,18 @@ async def process_commerce_action(organization_id: UUID, action_id: UUID) -> Non
 
     try:
         if operation["provider"] == "shopify":
+            decision = authorize_shopify_dispatch(
+                provider=operation["provider"],
+                action_type=operation["action_type"],
+                approval_status=operation["approval_status"],
+                execution_status=operation["execution_status"],
+                shopify_order_id=operation["shopify_order_id"],
+                cancel_refund=operation["cancel_refund"],
+                cancel_restock=operation["cancel_restock"],
+                cancel_notify_customer=operation["cancel_notify_customer"],
+            )
+            if not decision.allowed:
+                raise ShopifyOrderActionError(decision.reason)
             if operation.get("shopify_error"):
                 raise ShopifyOrderActionError(operation["shopify_error"])
             customer_email = operation.get("customer_email")
