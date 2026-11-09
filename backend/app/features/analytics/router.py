@@ -609,6 +609,11 @@ async def ai_usage(
     user: User = Depends(get_current_user),
 ) -> AIUsageOut:
     start, end = date_window(start_date, end_date)
+    # Retain operational metrics for a bounded window without deleting
+    # customer conversations or source AI execution records.
+    earliest = datetime.now(UTC).date() - timedelta(days=settings.ai_metrics_retention_days - 1)
+    if start < earliest:
+        raise HTTPException(status_code=422, detail="AI usage metrics are outside the retention window")
     predicate = (
         AIExecution.organization_id == user.organization_id,
         date_predicate(AIExecution.created_at, start, end),
