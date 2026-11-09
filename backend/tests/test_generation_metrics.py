@@ -7,6 +7,7 @@ from app.features.ai.application.generation_metrics import (
     log_generation_metrics,
     normalized_token_totals,
     estimated_generation_cost_usd,
+    configured_model_prices,
     sanitized_token_usage,
 )
 
@@ -122,3 +123,16 @@ def test_log_prices_only_the_configured_model(caplog) -> None:
         )
     record = next(item for item in caplog.records if "ai_generation_metrics " in item.message)
     assert json.loads(record.message.split("ai_generation_metrics ", 1)[1])["estimated_cost_usd"] == "0.00045000"
+
+
+def test_catalog_resolves_each_model_independently() -> None:
+    with (
+        patch("app.features.ai.application.generation_metrics.settings.ai_model_prices", {
+            "model-a": {"input": 0.10, "output": 0.40},
+            "model-b": {"input": 0.20, "output": 0.80},
+        }),
+        patch("app.features.ai.application.generation_metrics.settings.ai_model", "model-a"),
+    ):
+        assert configured_model_prices("model-a") == (0.10, 0.40)
+        assert configured_model_prices("model-b") == (0.20, 0.80)
+        assert configured_model_prices("unknown-model") == (None, None)
