@@ -197,3 +197,31 @@ def test_delta_event_cannot_contain_terminal_message_id():
             timestamp=datetime.now(UTC),
             payload=StreamPayload(text="partial", message_id=uuid4()),
         )
+
+
+def test_committed_reply_chunks_reassemble_exact_text():
+    from app.features.widgets.reply_stream import committed_reply_chunks
+
+    answer = "A verified response. " * 30
+    chunks = committed_reply_chunks(answer, "0-0")
+    assert "".join(part for _, part in chunks) == answer
+    assert chunks[0][0] == "1-1"
+
+
+def test_committed_reply_chunks_resume_without_duplicate_text():
+    from app.features.widgets.reply_stream import committed_reply_chunks
+
+    answer = "Policy text. " * 40
+    chunks = committed_reply_chunks(answer, "0-0")
+    assert len(chunks) > 2
+    resumed = committed_reply_chunks(answer, chunks[1][0])
+    assert resumed == chunks[2:]
+
+
+def test_committed_reply_chunks_handle_invalid_and_expired_cursors():
+    from app.features.widgets.reply_stream import committed_reply_chunks
+
+    answer = "verified"
+    assert committed_reply_chunks(answer, "bad") == [("1-1", answer)]
+    assert committed_reply_chunks(answer, "1-999999") == []
+    assert committed_reply_chunks("", "0-0") == []
