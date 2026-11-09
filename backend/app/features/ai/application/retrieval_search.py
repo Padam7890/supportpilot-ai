@@ -36,13 +36,16 @@ RRF_K = 60
 
 
 def _fast_relevance_boost(query_terms: set[str], row: object) -> float:
-    """Cheap lexical tie-breaker for hybrid candidates; no extra provider call."""
+    """Bounded lexical tie-breaker; never a substitute for evidence validation."""
     if not query_terms:
         return 0.0
-    content = getattr(row, "content", "")
-    title = f"{getattr(row, 'document_name', '')} {getattr(row, 'knowledge_base_name', '')}"
-    content_terms = set(re.findall(r"[\w\u0900-\u097f]+", content.casefold()))
-    title_terms = set(re.findall(r"[\w\u0900-\u097f]+", title.casefold()))
+    content = str(getattr(row, "content", "") or "")
+    title = (
+        f"{getattr(row, 'document_name', '') or ''} "
+        f"{getattr(row, 'knowledge_base_name', '') or ''}"
+    )
+    content_terms = set(build_retrieval_terms(content, limit=256))
+    title_terms = set(build_retrieval_terms(title, limit=64))
     content_coverage = len(query_terms & content_terms) / len(query_terms)
     title_coverage = len(query_terms & title_terms) / len(query_terms)
     return min(0.03, content_coverage * 0.025 + title_coverage * 0.005)
