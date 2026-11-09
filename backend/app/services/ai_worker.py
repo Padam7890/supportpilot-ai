@@ -18,8 +18,11 @@ from app.features.ai.application.catalog_search import (
 from app.features.ai.application.context import load_execution_context
 from app.features.ai.application.conversation_orchestration import (
     plan_playground_turn,
-    plan_widget_turn,
     playground_missing_knowledge_reply,
+)
+from app.features.ai.application.intent_routing import (
+    apply_routing_to_widget_plan,
+    resolve_customer_routing,
 )
 from app.features.ai.application.intent_extraction import extract_intent
 from app.features.ai.application.knowledge_inventory import (
@@ -225,6 +228,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             retrieval_match_count=retrieval_match_count,
         )
         failure_stage = "deterministic_routing"
+        intent_router_outcome: dict[str, object] | None = None
         if execution.kind == "recommendation":
             allowed_tools = execution.ai_agent_tools_snapshot
             if allowed_tools is None:
@@ -339,7 +343,18 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             if await widget_reply_is_stale(organization_id, execution_id):
                 return
             delivery_status = "draft_ready" if execution.delivery_mode == "draft_only" else "sent"
-            turn = plan_widget_turn(execution.question, transcript)
+            routing = await resolve_customer_routing(
+                execution.question, transcript, channel="widget"
+            )
+            intent_router_outcome = routing.tool_outcome()
+            _log_ai_execution_event(
+                "intent_router_resolved",
+                execution_id=str(execution_id),
+                correlation_id=correlation_id,
+                **{k: intent_router_outcome.get(k) for k in ("mode", "primary_intent", "metrics")},
+            )
+            turn = apply_routing_to_widget_plan(execution.question, transcript, routing)
+            router_outcomes = [intent_router_outcome] if intent_router_outcome else []
             if turn.route in {"direct", "purchase", "clarification"}:
                 await finish_widget_reply(
                     organization_id,
@@ -348,7 +363,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                     reply_status=delivery_status,
                     safe_summary=turn.safe_summary or "",
                     citations=[],
-                    outcomes=[],
+                    outcomes=router_outcomes,
                     usage={},
                     model_name=None,
                 )
@@ -386,7 +401,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                     reply_status=reply_status,
                     safe_summary=safe_summary,
                     citations=[],
-                    outcomes=[],
+                    outcomes=router_outcomes,
                     usage={},
                     model_name=None,
                 )
@@ -407,6 +422,8 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             execution, question, transcript, context, citations, outcomes, integration_context = (
                 loaded
             )
+            if intent_router_outcome:
+                outcomes = [intent_router_outcome, *outcomes]
             retrieval_match_count = len(citations)
             _log_ai_execution_event(
                 "ai_knowledge_retrieval_completed",
@@ -458,6 +475,17 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 await db.commit()
             return
         if execution.kind == "playground":
+            routing = await resolve_customer_routing(
+                question, transcript or [], channel="playground"
+            )
+            intent_router_outcome = routing.tool_outcome()
+            _log_ai_execution_event(
+                "intent_router_resolved",
+                execution_id=str(execution_id),
+                correlation_id=correlation_id,
+                channel="playground",
+                **{k: intent_router_outcome.get(k) for k in ("mode", "primary_intent", "metrics")},
+            )
             playground_plan = plan_playground_turn(question)
             if playground_plan is not None:
                 await finish_deterministic_ai_execution(
@@ -479,11 +507,12 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                     safe_summary="No matching knowledge was found in the active bot’s assigned sources. The shopper received a safe next step.",
                     citations=[],
                     outcomes=[
+                        *([intent_router_outcome] if intent_router_outcome else []),
                         {
                             "tool": "tenant_knowledge_search",
                             "status": "completed",
                             "result_count": 0,
-                        }
+                        },
                     ],
                     usage={},
                     model_name=None,

@@ -1,0 +1,106 @@
+import json
+
+import pytest
+from pydantic import ValidationError
+
+from app.core.config import settings
+from app.features.ai.application.intent_routing.deterministic import assess_deterministic_route
+from app.features.ai.application.intent_routing.llm_router import _parse_router_json
+from app.features.ai.application.intent_routing.metrics import reset_aggregate_for_tests
+from app.features.ai.application.intent_routing.policy import should_invoke_llm_router
+from app.features.ai.application.intent_routing.schemas import Intent, IntentDecision, RoutingDecision
+from app.features.ai.application.intent_routing.service import (
+    apply_routing_to_widget_plan,
+    resolve_customer_routing,
+)
+
+
+def test_high_confidence_greeting_skips_llm_router():
+    assessment = assess_deterministic_route("Hello there!", [])
+    assert assessment.confidence >= 0.9
+    assert not should_invoke_llm_router(assessment, "Hello there!")
+
+
+def test_multi_intent_competing_invokes_llm_when_enabled(monkeypatch):
+    monkeypatch.setattr(settings, "ai_intent_router_enabled", True)
+    assessment = assess_deterministic_route("My order is late and I want a refund.", [])
+    assert assessment.competing
+    assert should_invoke_llm_router(assessment, "My order is late and I want a refund.")
+
+
+def test_invalid_router_json_rejected():
+    with pytest.raises((json.JSONDecodeError, ValueError)):
+        _parse_router_json("not json")
+    with pytest.raises(ValidationError):
+        RoutingDecision.model_validate(
+            {
+                "intents": [{"intent": "not_real", "confidence": 0.5, "requires_knowledge": True, "requires_tools": False}],
+                "reason_code": "test",
+            }
+        )
+
+
+def test_routing_decision_schema_accepts_valid_payload():
+    decision = RoutingDecision(
+        intents=[
+            IntentDecision(
+                intent=Intent.ORDER,
+                confidence=0.8,
+                requires_knowledge=False,
+                requires_tools=True,
+            ),
+            IntentDecision(
+                intent=Intent.REFUND,
+                confidence=0.75,
+                requires_knowledge=True,
+                requires_tools=True,
+            ),
+        ],
+        requires_context=False,
+        should_clarify=False,
+        reason_code="multi_intent",
+    )
+    assert len(decision.intents) == 2
+
+
+@pytest.mark.anyio
+async def test_resolve_customer_routing_uses_deterministic_when_llm_disabled(monkeypatch):
+    reset_aggregate_for_tests()
+    monkeypatch.setattr(settings, "ai_intent_router_enabled", False)
+    resolution = await resolve_customer_routing("hey whats up", [], channel="widget")
+    assert resolution.mode == "deterministic"
+    assert resolution.llm is None
+
+
+@pytest.mark.anyio
+async def test_llm_router_failure_falls_back_without_crashing(monkeypatch):
+    reset_aggregate_for_tests()
+    monkeypatch.setattr(settings, "ai_intent_router_enabled", True)
+
+    async def fail(*_args, **_kwargs):
+        from app.features.ai.infrastructure.llm_gateway import AIProviderError
+
+        raise AIProviderError("provider_timeout", "timeout")
+
+    monkeypatch.setattr(
+        "app.features.ai.application.intent_routing.llm_router.generate_completion",
+        fail,
+    )
+    resolution = await resolve_customer_routing(
+        "My order is late and I want a refund.", [], channel="widget"
+    )
+    assert resolution.mode == "deterministic_fallback"
+    assert resolution.failure_code == "provider_timeout"
+    plan = apply_routing_to_widget_plan(
+        "My order is late and I want a refund.", [], resolution
+    )
+    assert plan.route in {"sensitive", "knowledge", "clarification"}
+
+
+def test_competing_multi_intent_routes_sensitive_when_possible():
+    assessment = assess_deterministic_route("My order is late and I want a refund.", [])
+    from app.features.ai.application.intent_routing.service import CustomerRoutingResolution
+
+    resolution = CustomerRoutingResolution(deterministic=assessment, multi_intent=True)
+    plan = apply_routing_to_widget_plan("My order is late and I want a refund.", [], resolution)
+    assert plan.route == "sensitive"
