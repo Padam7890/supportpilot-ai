@@ -7,6 +7,7 @@ from sqlalchemy import select, tuple_
 
 from app.db.session import SessionLocal, set_tenant_context
 from app.features.ai.application.conversation_understanding import understand_conversation_turn
+from app.features.ai.application.evidence_assessment import assess_knowledge_evidence
 from app.features.ai.application.conversational_intents import (
     should_skip_knowledge_retrieval,
 )
@@ -229,6 +230,10 @@ async def load_execution_context(
             }
             for match in search_result.matches
         ]
+        # Diagnostic only: lexical overlap does not establish factual entailment.
+        evidence = assess_knowledge_evidence(
+            search_text, [match.excerpt[:800] for match in search_result.matches]
+        )
         outcomes: list[dict[str, str | int]] = [
             {
                 "tool": "tenant_knowledge_search",
@@ -241,6 +246,8 @@ async def load_execution_context(
                 "embedding_status": search_result.embedding_status,
                 "embedding_coverage": search_result.embedding_coverage,
                 "retrieval_outcome": search_result.retrieval_outcome,
+                "evidence_signal": evidence.reason,
+                "evidence_overlap_terms": len(evidence.matched_terms),
             }
         ]
         if integration_context:

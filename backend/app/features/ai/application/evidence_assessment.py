@@ -31,7 +31,7 @@ def assess_knowledge_evidence(
     if min_overlap < 1:
         raise ValueError("min_overlap must be positive")
     terms = {
-        term for term in re.findall(r"[\\w\\u0900-\\u097f]+", question.casefold())
+        term for term in re.findall(r"[\w\u0900-\u097f]+", question.casefold())
         if len(term) > 2 and term not in _STOPWORDS
     }
     if not excerpts:
@@ -39,7 +39,7 @@ def assess_knowledge_evidence(
     if not terms:
         return EvidenceAssessment(False, "query_too_ambiguous")
     text = " ".join(excerpts).casefold()
-    source_terms = set(re.findall(r"[\\w\\u0900-\\u097f]+", text))
+    source_terms = set(re.findall(r"[\w\u0900-\u097f]+", text))
     matched = tuple(sorted(terms & source_terms))
     if len(matched) < min_overlap:
         return EvidenceAssessment(False, "insufficient_lexical_overlap", matched)
