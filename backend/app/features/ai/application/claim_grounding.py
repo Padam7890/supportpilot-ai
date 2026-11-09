@@ -66,3 +66,19 @@ def check_generated_answer(
     if not sources:
         return ClaimCheck(True, "no_knowledge_sources")
     return check_grounded_claims(response, sources, require_citations=False)
+
+
+def check_stream_segment(
+    segment: str,
+    sources: Sequence[Mapping[str, object]],
+) -> ClaimCheck:
+    """Conservative segment-level gate for future verified streaming.
+
+    A passing segment is not sufficient for delivery: source authorization and
+    final-answer validation must also complete before any bytes are published.
+    """
+    if not segment.strip():
+        return ClaimCheck(False, "empty_segment")
+    if not sources:
+        return ClaimCheck(False, "no_sources")
+    return check_grounded_claims(segment, sources, require_citations=False)
