@@ -28,6 +28,26 @@ def sanitized_token_usage(usage: Mapping[str, Any] | None) -> dict[str, int]:
     return result
 
 
+
+def normalized_token_totals(usage: Mapping[str, Any] | None) -> dict[str, int | None]:
+    """Canonicalize provider counters without counting aliases twice.
+
+    Providers may report input/output or prompt/completion names. Missing
+    counters remain unknown; never infer billable usage from response length.
+    """
+    safe = sanitized_token_usage(usage)
+    input_tokens = safe.get("input_tokens", safe.get("prompt_tokens"))
+    output_tokens = safe.get("output_tokens", safe.get("completion_tokens"))
+    total_tokens = safe.get("total_tokens")
+    if total_tokens is None and input_tokens is not None and output_tokens is not None:
+        total_tokens = input_tokens + output_tokens
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+    }
+
+
 def log_generation_metrics(
     *, execution_id: str, execution_kind: str, model_name: str | None,
     started_monotonic: float, usage: Mapping[str, Any] | None,
@@ -45,7 +65,7 @@ def log_generation_metrics(
             "model_name": (model_name or "unknown")[:120],
             "duration_ms": elapsed_ms,
             "streamed": streamed,
-            "usage": sanitized_token_usage(usage),
+            "usage": normalized_token_totals(usage),
             "cost_usd": None,  # Unknown until verified per-model pricing is configured.
         }, sort_keys=True),
     )
