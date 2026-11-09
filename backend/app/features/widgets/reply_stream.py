@@ -12,13 +12,11 @@ from uuid import UUID
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from redis.exceptions import RedisError
 from sqlalchemy import select
 
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.features.ai.application.retrieval_search import citations_remain_authorized
-from app.features.ai.infrastructure.widget_stream import reply_stream_key
 from app.features.widgets.shared import require_visitor_conversation
 from app.models import AIExecution, Message
 
@@ -125,17 +123,12 @@ async def reply_events(
 ) -> AsyncIterator[str]:
     started_at = time.monotonic()
     deadline = started_at + STREAM_WINDOW_SECONDS
-    redis = getattr(request.app.state, "redis", None)
-    cursor = REDIS_START
     previous_state = None
-    delivered_deltas = 0
-    entries = []
     next_keepalive = started_at + KEEPALIVE_SECONDS
     while time.monotonic() < deadline and not await request.is_disconnected():
         frames = []
         terminal = False
-        stream_key = None
-        async with SessionLocal() as db:
+            async with SessionLocal() as db:
             try:
                 widget, conversation, _ = await require_visitor_conversation(
                     request, conversation_id, authorization, db, rate_limit=False
@@ -201,35 +194,10 @@ async def reply_events(
                     cursor = after.removeprefix(prefix) if after.startswith(prefix) else REDIS_START
                     if cursor in {REDIS_START, STATUS_OFFSET}:
                         frames.append(encode_event(row, conversation_id, "execution.started", status="running"))
-                stream_key = reply_stream_key(
-                    widget.organization_id, conversation_id, row.id, row.attempt_count
-                )
-                if entries and entries[0][0] == stream_key:
-                    batch = entries[0][1]
-                    documents = {
-                        item for _, entry in batch for item in entry["documents"].split(",") if item
-                    }
-                    citations = [{"document_id": item} for item in sorted(documents)]
-                    if not citations or not await citations_remain_authorized(
-                        db, organization_id=widget.organization_id, ai_agent_id=row.ai_agent_id,
-                        citations=citations,
-                    ):
-                        frames = [encode_event(row, conversation_id, "execution.cancelled")]
-                        terminal = True
-                    else:
-                        for cursor, entry in batch:
-                            delivered_deltas += 1
-                            if delivered_deltas == 1:
-                                logger.info(
-                                    "widget_stream_first_delta execution_id=%s attempt=%d elapsed_ms=%d "
-                                    "at_ms=%d redis_id=%s",
-                                    execution_id, row.attempt_count,
-                                    round((time.monotonic() - started_at) * 1000),
-                                    time.time_ns() // 1_000_000, cursor,
-                                )
-                            frames.append(encode_event(
-                                row, conversation_id, "message.delta", cursor, text=entry["text"],
-                            ))
+                # Raw Redis provider deltas are intentionally never forwarded.
+                # A lexical grounding check on partial text cannot guarantee
+                # that the completed answer is safe or authorized. Only the
+                # committed-message branch above may emit message.delta.
             previous_state = state
         for frame in frames:
             yield frame
@@ -237,32 +205,14 @@ async def reply_events(
                 await asyncio.sleep(COMMITTED_CHUNK_DELAY_SECONDS)
         if terminal:
             logger.info(
-                "widget_stream_closed execution_id=%s deltas=%d",
-                execution_id, delivered_deltas,
+                "widget_stream_closed execution_id=%s",
+                execution_id,
             )
             return
         if time.monotonic() >= next_keepalive:
             yield ": keepalive\n\n"
             next_keepalive = time.monotonic() + KEEPALIVE_SECONDS
-        # Wait outside the transaction, then recheck authorization before yielding
-        # any text, including entries replayed after a reconnect.
-        entries = []
-        if stream_key is not None and redis is not None:
-            try:
-                async with asyncio.timeout(0.75):
-                    entries = await redis.xread(
-                        {stream_key: cursor}, count=READ_COUNT, block=REDIS_BLOCK_MS,
-                    )
-            except (RedisError, TimeoutError):
-                # Redis is a best-effort delta transport. Keep polling the
-                # durable execution record so the browser can still receive
-                # completion or failure and fetch the persisted reply.
-                logger.warning(
-                    "widget_stream_redis_unavailable execution_id=%s", execution_id
-                )
-                await asyncio.sleep(QUEUED_POLL_SECONDS)
-        else:
-            await asyncio.sleep(QUEUED_POLL_SECONDS)
+        await asyncio.sleep(QUEUED_POLL_SECONDS)
 
 
 
