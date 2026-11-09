@@ -18,7 +18,7 @@ from app.features.ai.application.intent_routing.metrics import (
     record_aggregate,
 )
 from app.features.ai.application.intent_routing.policy import should_invoke_llm_router
-from app.features.ai.application.intent_routing.schemas import Intent, RoutingDecision
+from app.features.ai.application.intent_routing.schemas import Intent, RoutingDecision, DeterministicRouteAssessment
 from app.core.config import settings
 from app.services import widget_ai
 
@@ -30,7 +30,7 @@ CLARIFICATION_PROMPT = (
 
 @dataclass
 class CustomerRoutingResolution:
-    deterministic: object
+    deterministic: DeterministicRouteAssessment
     llm: RoutingDecision | None = None
     mode: str = "deterministic"
     failure_code: str | None = None
@@ -70,7 +70,10 @@ async def resolve_customer_routing(
     if assessment.competing or assessment.confidence < 0.75:
         metrics.ambiguous_intent_count = 1
 
-    resolution = CustomerRoutingResolution(deterministic=assessment, mode="deterministic")
+    resolution = CustomerRoutingResolution(
+        deterministic=assessment, mode="deterministic",
+        multi_intent=assessment.competing,
+    )\n    if assessment.competing:\n        metrics.multi_intent_count = 1
     invoke = should_invoke_llm_router(assessment, message)
     llm_invoked = False
 
@@ -89,7 +92,7 @@ async def resolve_customer_routing(
         if decision is not None:
             resolution.mode = "llm"
             resolution.llm = decision
-            resolution.multi_intent = len(decision.intents) > 1
+            resolution.multi_intent = len(decision.intents) > 1 or assessment.competing
             resolution.clarify = decision.should_clarify or any(
                 item.confidence < settings.ai_intent_router_low_confidence for item in decision.intents
             )
@@ -104,7 +107,7 @@ async def resolve_customer_routing(
         else:
             metrics.llm_router_failure_count = 1
             resolution.failure_code = failure
-            resolution.clarify = assessment.confidence < settings.ai_intent_router_low_confidence
+            resolution.clarify = (\n                assessment.confidence < settings.ai_intent_router_low_confidence\n                or assessment.competing and assessment.risk_level != "high"\n            )
             resolution.mode = "deterministic_fallback"
 
     metrics.routing_latency_ms = round((time.monotonic() - started) * 1000)
@@ -128,7 +131,7 @@ def apply_routing_to_widget_plan(
     if resolution.llm is None:
         intent_set = set(resolution.deterministic.candidate_intents)
 
-    if {Intent.ORDER, Intent.REFUND} <= intent_set or Intent.ORDER in intent_set:
+    if Intent.ORDER in intent_set and resolution.deterministic.requires_tools:
         sensitive = widget_ai.widget_sensitive_reply(message)
         if sensitive is not None:
             draft, safe_summary = sensitive
