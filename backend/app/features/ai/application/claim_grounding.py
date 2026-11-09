@@ -11,7 +11,11 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 _CITATION = re.compile(r"\[(?:source|doc)\s*:?\s*(\d+)\]", re.IGNORECASE)
-_NUMBER = re.compile(r"(?<![\w])(?:\d+(?:[.,]\d+)?)(?:\s*%|\s*(?:days?|hours?|weeks?|months?|years?))?", re.IGNORECASE)
+_NUMBER = re.compile(
+    r"(?<![\w])\d+(?:,\d{3})*(?:\.\d+)?(?:\s*%|\s*(?:days?|hours?|weeks?|months?|years?))?",
+    re.IGNORECASE,
+)
+_THOUSANDS_SEPARATOR = re.compile(r"(?<=\d),(?=\d{3}(?:\D|$))")
 
 
 @dataclass(frozen=True)
@@ -45,11 +49,11 @@ def check_grounded_claims(
         for index in cited
     ) if cited else " ".join(str(source.get("excerpt", "")) for source in sources)
     answer_without_citations = _CITATION.sub("", response)
-    # Normalize thousands separators and decimal values without conflating
-    # numbers with different units (7 days != 7 weeks).
+    # Preserve units: 7 days and 7 weeks are not interchangeable.
+    # Normalize 1,000 to 1000 while preserving decimal precision.
     def numeric_claims(value: str) -> set[str]:
         return {
-            re.sub(r"(?<=\\d),(?=\\d{3}(?:\\D|$))", "", item.casefold()).strip()
+            _THOUSANDS_SEPARATOR.sub("", item.casefold()).strip()
             for item in _NUMBER.findall(value)
         }
 
