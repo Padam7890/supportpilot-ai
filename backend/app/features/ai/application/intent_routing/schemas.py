@@ -34,6 +34,13 @@ class RoutingDecision(BaseModel):
     should_clarify: bool = False
     reason_code: str = Field(min_length=1, max_length=64)
 
+    @field_validator("intents")
+    @classmethod
+    def unique_intents(cls, value: list[IntentDecision]) -> list[IntentDecision]:
+        if len({item.intent for item in value}) != len(value):
+            raise ValueError("Duplicate intent predictions are not allowed")
+        return value
+
     @field_validator("reason_code")
     @classmethod
     def reason_is_safe(cls, value: str) -> str:
