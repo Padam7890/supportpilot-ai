@@ -159,6 +159,20 @@ async def reply_events(
                     else "execution.cancelled"
                 )
                 if event_type == "message.completed" and committed is not None:
+                    # Do not replay an old answer after a new customer message
+                    # or a human teammate has taken over the conversation.
+                    latest_message_id = await db.scalar(
+                        select(Message.id).where(
+                            Message.organization_id == widget.organization_id,
+                            Message.conversation_id == conversation_id,
+                        ).order_by(Message.created_at.desc(), Message.id.desc()).limit(1)
+                    )
+                    if latest_message_id != committed.id:
+                        frames.append(encode_event(row, conversation_id, "execution.cancelled"))
+                        terminal = True
+                        previous_state = state
+                        # Avoid emitting stale assistant content.
+                        continue
                     # Deliver only text already committed after all grounding,
                     # source-authorization and conversation-state checks.
                     # This is verified progressive playback, NOT model-token
