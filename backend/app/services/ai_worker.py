@@ -17,6 +17,7 @@ from app.features.ai.application.catalog_search import (
     load_candidates,
 )
 from app.features.ai.application.context import load_execution_context
+from app.features.ai.application.claim_grounding import check_generated_answer
 from app.features.ai.application.conversation_orchestration import (
     plan_playground_turn,
     plan_widget_turn,
@@ -723,9 +724,24 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             streamed=stream_context is not None and bool(stream_source_ids),
             correlation_id=correlation_id,
         )
+        generated_draft = str(result.get("draft", ""))[:12000]
+        grounding_check = check_generated_answer(generated_draft, context)
+        if not grounding_check.accepted:
+            # Never persist unsupported model-generated numeric claims.
+            # Streaming deltas can already have reached the client.
+            generated_draft = (
+                "I couldn't verify the details in the available knowledge sources. "
+                "Please contact our support team to confirm."
+            )
+            citations = []
+            outcomes.append({
+                "tool": "claim_grounding",
+                "status": "blocked",
+                "reason": grounding_check.reason,
+            })
         if execution.kind == "widget_reply":
             failure_stage = "reply_persistence"
-            draft = str(result.get("draft", ""))[:12000]
+            draft = generated_draft
             await finish_widget_reply(
                 organization_id,
                 execution_id,
@@ -802,7 +818,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             row.status = "succeeded"
             row.integration_context_encrypted = None
             row.playground_history = None
-            row.draft = str(result.get("draft", ""))[:12000]
+            row.draft = generated_draft
             output_label = "Reply draft" if row.kind == "reply_draft" else "Playground answer"
             row.safe_summary = (
                 f"{output_label} generated using {len(citations)} knowledge source(s)."
