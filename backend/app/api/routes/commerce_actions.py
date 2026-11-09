@@ -11,6 +11,7 @@ from sqlalchemy.orm import aliased
 
 from app.api.deps import get_current_user, require_roles
 from app.core.observability import current_correlation_id
+from app.features.ai.application.shopify_dispatch_policy import authorize_shopify_dispatch
 from app.db.session import get_db, set_tenant_context
 from app.integrations.providers.shopify.actions import (
     ShopifyOrderActionError,
@@ -416,6 +417,22 @@ async def approve_commerce_action(
         await db.commit()
         await set_tenant_context(db, user.organization_id)
         raise HTTPException(status_code=409, detail="This action expired before approval")
+    if action.provider == "shopify":
+        decision = authorize_shopify_dispatch(
+            provider=action.provider,
+            action_type=action.action_type,
+            approval_status="approved",
+            execution_status="running",
+            shopify_order_id=action.shopify_order_id,
+            cancel_refund=action.cancel_refund,
+            cancel_restock=action.cancel_restock,
+            cancel_notify_customer=action.cancel_notify_customer,
+        )
+        if not decision.allowed:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Shopify action cannot be approved: {decision.reason}",
+            )
     action.approval_status = "approved"
     action.execution_status = "queued"
     action.reviewed_by_user_id = user.id
