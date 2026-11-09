@@ -52,7 +52,12 @@ _CODE_INTERRUPTED = re.compile(
 YES = re.compile(
     r"(?:yes|yeah|yep|sure|ok(?:ay)?|please do|continue|yes please)[.! ]*", re.IGNORECASE
 )
-ACTION_RETRACTION = re.compile(\n    r"^(?:please\\s+)?(?:don.t|do\\s+not|never)\\s+(?:cancel|refund|return)\\b|^(?:wait[,! ]*|actually[,! ]*)\\s*(?:don.t|do\\s+not)\\s+(?:cancel|refund|return)\\b",\n    re.IGNORECASE,\n)\nNO = re.compile(
+ACTION_RETRACTION = re.compile(
+    r"^(?:please\s+)?(?:don.t|do\s+not|never)\s+(?:cancel|refund|return)\b|"
+    r"^(?:wait[,! ]*|actually[,! ]*)\s*(?:don.t|do\s+not)\s+(?:cancel|refund|return)\b",
+    re.IGNORECASE,
+)
+NO = re.compile(
     r"(?:no|no thanks|not now|never mind|nevermind|stop this request)[.! ]*", re.IGNORECASE
 )
 TOPIC_SWITCH = re.compile(

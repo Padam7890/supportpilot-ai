@@ -696,6 +696,8 @@
     const [previousExecution, previousAttempt, previousOffset] = streamCursor.split(":");
     if (executionId !== previousExecution) return false;
     if (attempt !== previousAttempt) return Number(attempt) < Number(previousAttempt);
+    // A malformed cursor must never crash the widget or accept a replay.
+    if (!/^\\d+-\\d+$/.test(offset || "") || !/^\\d+-\\d+$/.test(previousOffset || "")) return true;
     const [time, index] = offset.split("-").map(BigInt);
     const [previousTime, previousIndex] = previousOffset.split("-").map(BigInt);
     return time < previousTime || (time === previousTime && index <= previousIndex);
@@ -779,16 +781,20 @@
       while (!signal.aborted) {
         const { value, done } = await reader.read();
         if (done) return false;
-        // SSE permits CRLF line endings; normalize across chunk boundaries.
+        // Keep a trailing CR until the next network chunk: CRLF may be
+        // split between reads. Also accept bare CR, permitted by SSE.
         buffer += value;
-        buffer = buffer.replace(/\r\n/g, "\n");
+        const trailingCR = buffer.endsWith("\r");
+        const normalized = (trailingCR ? buffer.slice(0, -1) : buffer)
+          .replace(/\r\n|\r/g, "\n");
+        buffer = normalized + (trailingCR ? "\r" : "");
         let boundary;
         while ((boundary = buffer.indexOf("\n\n")) >= 0) {
           const frame = buffer.slice(0, boundary);
           buffer = buffer.slice(boundary + 2);
           if (signal.aborted || consumeReplyEvent(frame, activeSession.conversation_id)) return true;
         }
-        if (buffer.length > 64000) return true;
+        if (buffer.length > 64000) throw new Error("Reply stream frame exceeded its limit");
       }
       return true;
     } finally {
@@ -840,7 +846,7 @@
     streamController = controller;
     streamGeneration++;
     try {
-      for (let retry = 0; retry < 2 && !controller.signal.aborted; retry++) {
+      for (let retry = 0; retry < 4 && !controller.signal.aborted; retry++) {
         let terminal = false;
         try {
           terminal = await readReplyStream(activeSession, controller.signal);
@@ -849,6 +855,8 @@
           if (error instanceof SyntaxError) break;
         }
         if (terminal || controller.signal.aborted || !waitingForAssistant) break;
+        // Bound reconnect pressure while preserving the Redis replay cursor.
+        await new Promise((resolve) => setTimeout(resolve, Math.min(250 * 2 ** retry, 1500)));
       }
     } finally {
       if (streamController === controller) {
