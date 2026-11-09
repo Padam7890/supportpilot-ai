@@ -6,6 +6,7 @@ from unittest.mock import patch
 from app.features.ai.application.generation_metrics import (
     log_generation_metrics,
     normalized_token_totals,
+    estimated_generation_cost_usd,
     sanitized_token_usage,
 )
 
@@ -61,3 +62,29 @@ def test_reported_total_is_preserved() -> None:
     assert normalized_token_totals({
         "input_tokens": 80, "output_tokens": 20, "total_tokens": 105,
     }) == {"input_tokens": 80, "output_tokens": 20, "total_tokens": 105}
+
+
+def test_generation_cost_uses_decimal_and_configured_prices() -> None:
+    assert estimated_generation_cost_usd(
+        {"prompt_tokens": 1000, "completion_tokens": 500},
+        input_price_per_million=0.15, output_price_per_million=0.60,
+    ) == "0.00045000"
+
+
+def test_generation_cost_requires_both_prices_and_counters() -> None:
+    assert estimated_generation_cost_usd(
+        {"prompt_tokens": 1000}, input_price_per_million=0.15,
+        output_price_per_million=0.60,
+    ) is None
+    assert estimated_generation_cost_usd(
+        {"prompt_tokens": 1000, "completion_tokens": 100},
+        input_price_per_million=None, output_price_per_million=0.60,
+    ) is None
+
+
+def test_generation_cost_rejects_invalid_price_values() -> None:
+    for price in (-1, float("nan"), float("inf")):
+        assert estimated_generation_cost_usd(
+            {"input_tokens": 100, "output_tokens": 100},
+            input_price_per_million=price, output_price_per_million=0.60,
+        ) is None
