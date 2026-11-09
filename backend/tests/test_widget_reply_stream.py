@@ -205,7 +205,7 @@ def test_committed_reply_chunks_reassemble_exact_text():
     answer = "A verified response. " * 30
     chunks = committed_reply_chunks(answer, "0-0")
     assert "".join(part for _, part in chunks) == answer
-    assert chunks[0][0] == "1-1"
+    assert chunks[0][0] == "18446744073709551614-1"
 
 
 def test_committed_reply_chunks_resume_without_duplicate_text():
@@ -222,6 +222,6 @@ def test_committed_reply_chunks_handle_invalid_and_expired_cursors():
     from app.features.widgets.reply_stream import committed_reply_chunks
 
     answer = "verified"
-    assert committed_reply_chunks(answer, "bad") == [("1-1", answer)]
-    assert committed_reply_chunks(answer, "1-999999") == []
+    assert committed_reply_chunks(answer, "bad") == [("18446744073709551614-1", answer)]
+    assert committed_reply_chunks(answer, "18446744073709551614-999999") == []
     assert committed_reply_chunks("", "0-0") == []
