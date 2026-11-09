@@ -473,12 +473,19 @@ def assess_widget_follow_up(
     ):
         previous = previous[:-1]
     if previous:
-        state = pending_from_assistant(previous[-1], agent_id, now)
+        # A pending prompt may be followed by one or more customer messages.
+        # Do not revive an older prompt after a newer assistant response.
+        latest_assistant = next(
+            (turn for turn in reversed(previous[-12:]) if turn.get("sender") == "assistant"),
+            None,
+        )
+        state = pending_from_assistant(latest_assistant, agent_id, now) if latest_assistant else None
         if state is not None and (allow_refund_workflow or state.active_intent == "order"):
             if resolved := resolve_follow_up(question, state, source_message_id=source_message_id):
                 return resolved, "resolved"
             if (
                 not TOPIC_SWITCH.search(question)
+                and not _is_new_subject(question)
                 and classify_conversational_intent(question) is None
                 and state.stage
                 in {
@@ -514,3 +521,14 @@ def assess_widget_follow_up(
     ):
         return FollowUp("refund_start", draft=REASON_PROMPT, pending=refund_start()), "started"
     return None, "no_matching_pending_question"
+
+
+_NEW_SUBJECT = re.compile(
+    r"\\b(?:exchange|delivery|shipping|tracking|order|payment|product|"
+    r"recommend|warranty|contact|hours|store|price|stock)\\b", re.IGNORECASE
+)
+
+
+def _is_new_subject(message: str) -> bool:
+    """Do not force an unrelated explicit request into a pending refund slot."""
+    return bool(_NEW_SUBJECT.search(message))
