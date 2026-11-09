@@ -80,3 +80,39 @@ def test_stream_segment_acceptance_does_not_authorize_delivery():
     )
     assert result.accepted
     assert result.reason == "lexical_checks_passed"
+
+
+def test_cited_source_does_not_borrow_number_from_uncited_source():
+    from app.features.ai.application.claim_grounding import check_generated_answer
+
+    result = check_generated_answer(
+        "Refunds take 30 days [source: 1]",
+        [
+            {"excerpt": "Refunds take 7 days."},
+            {"excerpt": "Shipping may take 30 days."},
+        ],
+    )
+    assert not result.accepted
+    assert result.reason == "unsupported_numeric_claim"
+
+
+def test_numeric_unit_mismatch_is_not_accepted():
+    from app.features.ai.application.claim_grounding import check_generated_answer
+
+    result = check_generated_answer(
+        "Warranty lasts 7 weeks.", [{"excerpt": "Warranty lasts 7 days."}]
+    )
+    assert not result.accepted
+
+
+def test_cited_source_allows_matching_number():
+    from app.features.ai.application.claim_grounding import check_generated_answer
+
+    result = check_generated_answer(
+        "Returns are accepted within 7 days [source: 1].",
+        [
+            {"excerpt": "Returns are accepted within 7 days."},
+            {"excerpt": "Delivery takes 30 days."},
+        ],
+    )
+    assert result.accepted
