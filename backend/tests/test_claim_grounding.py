@@ -159,3 +159,17 @@ def test_numeric_claims_with_citations_use_only_referenced_excerpt():
         ],
     )
     assert not result.accepted
+
+
+def test_empty_model_answer_is_blocked():
+    from app.features.ai.application.claim_grounding import check_generated_answer
+
+    assert check_generated_answer("  ", []).reason == "empty_answer"
+
+
+def test_empty_cited_excerpt_is_blocked():
+    from app.features.ai.application.claim_grounding import check_generated_answer
+
+    result = check_generated_answer("The policy applies [source: 1].", [{"excerpt": ""}])
+    assert not result.accepted
+    assert result.reason == "empty_evidence"
