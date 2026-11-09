@@ -14,3 +14,16 @@ Expand the existing tenant-scoped teammate feedback API so completed `widget_rep
 6. Run backend/frontend checks, E2E tests and a staged real-provider evaluation before declaring production readiness.
 
 The Phase 8 merge is independent of the unresolved full-spend reconciliation and physical log-retention work, which remain open technical debt.
+
+
+## Offline deterministic quality gate (implemented)
+
+The synthetic, version-controlled evaluation cases in `backend/app/features/ai/application/quality_evaluation.py` check citation indices, missing citations, numeric fabrication, numeric unit mismatches, cross-source evidence borrowing, and missing evidence. `backend/tests/test_ai_quality_evaluation.py` runs the suite under pytest and fails on any unexpected result. Cases contain no private customer data and do not call an external model.
+
+Run locally from `backend`:
+
+```bash
+pytest -q tests/test_ai_quality_evaluation.py tests/test_claim_grounding.py
+```
+
+**Scope limitation:** This suite tests the deterministic claim-grounding gate, not the semantic truth of generated answers or the behavior of a real LLM. A passing lexical check does not establish semantic entailment. The production model evaluation corpus, prompt-injection fixtures, human review, tool authorization tests and staged real-provider runs remain separate release gates.
