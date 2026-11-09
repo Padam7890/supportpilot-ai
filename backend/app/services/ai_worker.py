@@ -52,7 +52,6 @@ from app.features.ai.application.widget_replies import (
     process_widget_shopping_execution,
     widget_reply_is_stale,
 )
-from app.features.ai.application.widget_stream_context import last_grounded_exchange
 from app.features.ai.domain.failure_codes import (
     is_retryable_ai_failure,
 )
@@ -65,7 +64,6 @@ from app.features.ai.infrastructure.llm_gateway import (
     execution_token_budget,
     provider_configuration_error,
 )
-from app.features.ai.infrastructure.widget_stream import publish_widget_deltas
 from app.features.ai.application.generation_metrics import log_generation_metrics
 from app.models import (
     AIAgent,
@@ -673,56 +671,19 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 execution.kind == "widget_reply" and execution.delivery_mode == "auto_reply"
             ),
         }
-        stream_context = None
+        # Do not publish model deltas before full-answer grounding checks and
+        # source authorization. The previous stream branch required both
+        # 'not context' and 'citations', making it unreachable in practice.
         stream_source_ids = None
-        if (
-            settings.widget_ai_streaming_enabled
-            and not context  # Never publish unvalidated knowledge-grounded tokens.
-            and execution.kind == "widget_reply"
-            and execution.delivery_mode == "auto_reply"
-            and execution.conversation_id is not None
-            and citations
-            and not integration_context
-            and not follow_up_query
-        ):
-            stream_context = _stream_conversation_context(execution.question, transcript)
-            source_ids = {str(citation["document_id"]) for citation in citations}
-            if stream_context is None and (grounded := last_grounded_exchange(transcript)):
-                prior_context, prior_sources = grounded
-                async with SessionLocal() as db:
-                    await set_tenant_context(db, organization_id)
-                    authorized = await citations_remain_authorized(
-                        db, organization_id=organization_id, ai_agent_id=execution.ai_agent_id,
-                        citations=[{"document_id": source_id} for source_id in sorted(prior_sources)],
-                    )
-                if authorized:
-                    stream_context = prior_context
-                    source_ids.update(prior_sources)
-            if stream_context is not None:
-                stream_source_ids = sorted(source_ids)
-            _log_ai_execution_event(
-                "ai_widget_stream_decision",
-                execution_id=str(execution_id),
-                correlation_id=correlation_id,
-                decision="streaming" if stream_context is not None else "context_required",
-                historical_context_omitted=stream_context is not None and stream_context != transcript,
-            )
         generation_started = time.monotonic()
-        if stream_context is not None and stream_source_ids:
-            draft_inputs["conversation_context"] = [{"sender": turn["sender"], "content": turn["content"]} for turn in stream_context]
-            async with publish_widget_deltas(
-                organization_id, execution.conversation_id, execution_id, attempt_count, stream_source_ids
-            ) as publish:
-                result = await create_grounded_draft(**draft_inputs, on_delta=publish)
-        else:
-            result = await create_grounded_draft(**draft_inputs)
+        result = await create_grounded_draft(**draft_inputs)
         log_generation_metrics(
             execution_id=str(execution_id),
             execution_kind=execution.kind,
             model_name=result.get("model_name") if isinstance(result.get("model_name"), str) else None,
             started_monotonic=generation_started,
             usage=result.get("usage") if isinstance(result.get("usage"), dict) else None,
-            streamed=stream_context is not None and bool(stream_source_ids),
+            streamed=False,
             correlation_id=correlation_id,
         )
         generated_draft = str(result.get("draft", ""))[:12000]
@@ -731,7 +692,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
         )
         if not grounding_check.accepted:
             # Never persist unsupported model-generated numeric claims.
-            # Streaming deltas can already have reached the client.
+            # No model deltas were published before validation.
             generated_draft = (
                 "I couldn't verify the details in the available knowledge sources. "
                 "Please contact our support team to confirm."
