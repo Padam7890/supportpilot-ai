@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from app.features.ai.application.claim_grounding import check_generated_answer
+from app.features.ai.application.claim_grounding import check_generated_answer, check_grounded_claims
 from app.features.ai.application.conversation_context_builder import build_agent_input
 from app.features.ai.application.conversation_response_composer import compose_natural_answer
 from app.features.ai.application.conversation_response_evidence import ResponseEvidence
@@ -44,6 +44,7 @@ async def generate_guarded_draft(
     correlation_id: str | None,
 ) -> GuardedDraft:
     started = time.monotonic()
+    used_new_rag_composer = False
     # Knowledge-only runs now share the bounded natural-answer composer.
     # Retrieval and citation authorization remain in the existing worker.
     # Integration-backed answers keep their dedicated secure execution path.
@@ -62,6 +63,7 @@ async def generate_guarded_draft(
         evidence_items = [item for item in evidence_items if item["content"].strip()]
         if not evidence_items:
             raise ValueError("Retrieved knowledge has no usable excerpts")
+        used_new_rag_composer = True
         composed = await compose_natural_answer(
             build_agent_input(
                 question, transcript,
@@ -108,9 +110,7 @@ async def generate_guarded_draft(
         correlation_id=correlation_id,
     )
     generated = str(result.get("draft", ""))[:12000]
-    grounding = check_generated_answer(
-        generated, context if not integration_context else []
-    )
+    # New RAG generation requires an explicit reference to retrieved evidence.\n    # The legacy integration path has separate trusted-data handling and is\n    # not covered by this stricter citation contract yet.\n    grounding = (\n        check_grounded_claims(generated, context, require_citations=True)\n        if used_new_rag_composer\n        else check_generated_answer(\n            generated, context if not integration_context else []\n        )\n    )
     if grounding.accepted:
         return GuardedDraft(
             text=generated, accepted=True, grounding_reason=None,
