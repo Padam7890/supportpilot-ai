@@ -1,5 +1,6 @@
 """Compose and verify one complete reply before persistence or delivery."""
 
+import logging
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -11,6 +12,8 @@ from app.features.ai.application.conversation_response_evidence import knowledge
 from app.features.ai.application.conversation_verified_order_evidence import AuthorizedOrderSnapshot
 from app.features.ai.application.generation_metrics import log_generation_metrics
 from app.features.ai.application.semantic_claim_verifier import verify_candidate
+
+logger = logging.getLogger(__name__)
 
 _SAFE_FALLBACK = (
     "I couldn't verify the details in the available sources. "
@@ -57,6 +60,7 @@ async def generate_guarded_draft(
     if order_text and not evidence.items:
         return GuardedDraft(order_text, True, None, [], outcomes, {}, None)
     if requires_evidence and evidence.status != "verified":
+        logger.info("rag_grounding_debug execution_id=%s stage=no_evidence evidence_status=%s evidence_count=%d retrieval=%s", execution_id, evidence.status, len(evidence.items), [{k: outcome.get(k) for k in ("tool", "status", "result_count", "retrieval_outcome", "embedding_status")} for outcome in outcomes if outcome.get("tool") == "tenant_knowledge_search"])
         return GuardedDraft(
             _SAFE_FALLBACK, False, "no_verified_evidence", [],
             [*outcomes, {"tool": "claim_grounding", "status": "blocked", "reason": "no_verified_evidence"}],
@@ -86,6 +90,7 @@ async def generate_guarded_draft(
         },
     ]
     if not verification.accepted:
+        logger.info("rag_grounding_debug execution_id=%s stage=semantic_verification reason=%s evidence_count=%d", execution_id, verification.reason, len(evidence.items))
         text = f"{order_text}\n\n{_SAFE_FALLBACK}" if order_text else _SAFE_FALLBACK
         return GuardedDraft(text, False, verification.reason, [], outcomes, usage, model_name)
 
