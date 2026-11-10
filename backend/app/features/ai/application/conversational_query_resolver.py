@@ -20,9 +20,9 @@ logger = logging.getLogger(__name__)
 
 class _Resolution(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    relation: str
-    standalone_question: str = Field(min_length=1, max_length=1000)
-    confidence: float = Field(ge=0, le=1)
+    relation: str = "unclear"
+    standalone_question: str = Field(default="", max_length=1000)
+    confidence: float = Field(default=0, ge=0, le=1)
 
 
 @dataclass(frozen=True)
@@ -73,7 +73,18 @@ async def resolve_conversational_query(
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
         ], max_tokens=260)
         parsed = json.loads(re.sub(r"^\x60\x60\x60(?:json)?\s*|\s*\x60\x60\x60$", "", raw.strip()))
-        result = _Resolution.model_validate(parsed)
+        if not isinstance(parsed, dict):
+            return ResolvedQuery(original, "invalid_structure")
+        # Small models sometimes omit optional fields or use an alternate
+        # query key; normalize the transport shape without inventing meaning.
+        if "standalone_question" not in parsed:
+            parsed["standalone_question"] = parsed.get("resolved_question", original)
+        if "relation" not in parsed:
+            parsed["relation"] = "unclear"
+        if "confidence" not in parsed:
+            parsed["confidence"] = 0
+        normalized = {key: parsed[key] for key in ("relation", "standalone_question", "confidence")}
+        result = _Resolution.model_validate(normalized)
         if result.relation not in {"follow_up", "new_topic", "unclear"}:
             return ResolvedQuery(original, "invalid_relation")
         if result.relation != "follow_up" or result.confidence < 0.75:
