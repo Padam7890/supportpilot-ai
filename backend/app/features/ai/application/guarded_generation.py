@@ -47,11 +47,16 @@ async def generate_guarded_draft(
     started = time.monotonic()
     # The encrypted snapshot is populated only by the authorized teammate
     # lookup. Never pass it to the composer or its semantic reviewer.
+    order_text = None
     if integration_context:
+        if execution_kind != "reply_draft":
+            raise PermissionError("Only a teammate draft can consume a verified order snapshot")
         order = AuthorizedOrderSnapshot.model_validate(integration_context).as_evidence()
-        return GuardedDraft(order.items[0].content, True, None, [], outcomes, {}, None)
+        order_text = order.items[0].content
 
     evidence = knowledge_evidence(context)
+    if order_text and not evidence.items:
+        return GuardedDraft(order_text, True, None, [], outcomes, {}, None)
     if requires_evidence and evidence.status != "verified":
         return GuardedDraft(
             _SAFE_FALLBACK, False, "no_verified_evidence", [],
@@ -82,9 +87,8 @@ async def generate_guarded_draft(
         },
     ]
     if not verification.accepted:
-        return GuardedDraft(
-            _SAFE_FALLBACK, False, verification.reason, [], outcomes, usage, model_name,
-        )
+        text = f"{order_text}\n\n{_SAFE_FALLBACK}" if order_text else _SAFE_FALLBACK
+        return GuardedDraft(text, False, verification.reason, [], outcomes, usage, model_name)
 
     available = {(str(c["document_id"]), c["chunk_index"]): c for c in citations}
     selected = []
@@ -98,4 +102,6 @@ async def generate_guarded_draft(
         selected.append(citation)
     remap = {index: position for position, index in enumerate(verification.source_indices, 1)}
     text = _SOURCE_MARKER.sub(lambda match: f"[source {remap[int(match[1])]}]", composed.text)
+    if order_text:
+        text = f"{order_text}\n\n{text}"
     return GuardedDraft(text, True, None, selected, outcomes, usage, model_name)

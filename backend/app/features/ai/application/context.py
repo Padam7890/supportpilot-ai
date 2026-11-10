@@ -193,7 +193,7 @@ async def load_execution_context(
             execution.instructions = "\n\n".join(
                 item for item in (agent_instructions, request_instructions) if item
             )[:9000]
-        if execution.kind == "playground":
+        if execution.kind == "playground" and include_knowledge is None:
             from app.features.ai.application.conversation_orchestration import plan_playground_turn
 
             if plan_playground_turn(question, conversation_context) is not None:

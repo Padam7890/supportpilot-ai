@@ -56,5 +56,5 @@ async def test_unresolved_playground_turn_uses_playground_channel() -> None:
     assert result.completed is False
     assert result.outcome == {"tool": "intent_router", "status": "completed"}
     router.assert_awaited_once_with(
-        "What is the return policy?", [], channel="playground"
+        "What is the return policy?", [], channel="playground", for_generation=True
     )

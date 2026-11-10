@@ -82,7 +82,7 @@ async def test_order_snapshot_is_rendered_without_model_calls():
         new_callable=AsyncMock,
     ) as compose:
         result = await generate_guarded_draft(**(_arguments() | {
-            "execution_kind": "reply_draft",
+            "execution_kind": "reply_draft", "context": [], "citations": [],
             "integration_context": {
                 "order_number": "#42", "financial_status": "PAID", "email": "private@example.test",
             },

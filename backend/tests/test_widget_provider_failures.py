@@ -1,5 +1,4 @@
 import json
-from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -8,6 +7,10 @@ import httpx
 import pytest
 
 from app.core.config import settings
+from app.features.ai.application.conversation_orchestration import CustomerTurnPlan
+from app.features.ai.application.execution_failure_persistence import FailureTransition
+from app.features.ai.application.guarded_generation import GuardedDraft
+from app.features.ai.application.widget_turn_routing import WidgetRouteResult
 from app.features.ai.domain.failure_codes import is_retryable_ai_failure
 from app.features.ai.infrastructure.llm_gateway import (
     AIProviderError,
@@ -107,18 +110,10 @@ async def test_widget_worker_keeps_retrieval_and_provider_outcomes_separate(
     monkeypatch.setattr(worker, "load_execution_context", loading)
     monkeypatch.setattr(worker, "widget_reply_is_stale", AsyncMock(return_value=False))
     monkeypatch.setattr(worker, "process_widget_shopping_execution", AsyncMock(return_value=False))
-    monkeypatch.setattr(worker, "resolve_customer_routing", AsyncMock(
-        return_value=SimpleNamespace(tool_outcome=lambda: {"primary_intent": "policy"})
-    ))
-    monkeypatch.setattr(worker, "apply_routing_to_widget_plan", lambda *_args: SimpleNamespace(route="knowledge"))
+    monkeypatch.setattr(worker, "resolve_widget_turn", AsyncMock(return_value=WidgetRouteResult(
+        CustomerTurnPlan(route="knowledge"), {"primary_intent": "policy"}, False,
+    )))
     monkeypatch.setattr(settings, "widget_ai_streaming_enabled", scenario == "stream_existing_chat")
-    publish = AsyncMock()
-
-    @asynccontextmanager
-    async def fake_publisher(*_args):
-        yield publish
-
-    monkeypatch.setattr(worker, "publish_widget_deltas", fake_publisher)
     monkeypatch.setattr(worker, "provider_configuration_error", lambda: (
         AIProviderError("provider_not_configured", "missing settings") if scenario == "missing" else None
     ))
@@ -128,16 +123,19 @@ async def test_widget_worker_keeps_retrieval_and_provider_outcomes_separate(
     }
     generate = AsyncMock(
         side_effect=failures.get(scenario),
-        return_value={"draft": "Returns are accepted within 30 days.", "usage": {}, "model_name": "test-model"},
+        return_value=GuardedDraft("Returns are accepted within 30 days.", True, None, citations, [], {}, "test-model"),
     )
-    monkeypatch.setattr(worker, "create_grounded_draft", generate)
+    monkeypatch.setattr(worker, "generate_guarded_draft", generate)
     finish = AsyncMock()
     monkeypatch.setattr(worker, "finish_widget_reply", finish)
-    db = AsyncMock()
-    db.scalar.return_value = row
-    monkeypatch.setattr(worker, "SessionLocal", lambda: db)
-    db.__aenter__.return_value = db
-    monkeypatch.setattr(worker, "set_tenant_context", AsyncMock())
+    persist = AsyncMock(return_value=FailureTransition(
+        found=True,
+        attempt_count=attempt,
+        max_attempts=2,
+        reason=decision or "not_retryable",
+        widget_needs_fallback=decision != "retry_scheduled",
+    ))
+    monkeypatch.setattr(worker, "persist_execution_failure", persist)
 
     await worker.process_ai_execution(org, execution_id)
 
@@ -152,15 +150,12 @@ async def test_widget_worker_keeps_retrieval_and_provider_outcomes_separate(
     if scenario in {"missing", "retrieval"}:
         generate.assert_not_awaited()
     if decision == "retry_scheduled":
-        assert row.status == "queued"
-        assert row.error_code == "provider_timeout"
+        assert persist.await_args.kwargs["retryable"]
+        assert persist.await_args.kwargs["failure_code"] == "provider_timeout"
         finish.assert_not_awaited()
     elif scenario in {"success", "stream_existing_chat"}:
-        if scenario == "stream_existing_chat":
-            assert generate.await_args.kwargs["on_delta"] is publish
-            assert generate.await_args.kwargs["conversation_context"] == []
-        else:
-            assert generate.await_args.kwargs["conversation_context"] == history
+        assert "on_delta" not in generate.await_args.kwargs
+        assert generate.await_args.kwargs["transcript"] == history
         assert finish.await_args.kwargs["citations"] == citations
         assert finish.await_args.kwargs["reply_status"] == "sent"
     elif scenario == "retrieval":

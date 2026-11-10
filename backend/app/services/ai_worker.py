@@ -375,13 +375,18 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 channel="playground",
                 **{k: (intent_router_outcome or {}).get(k) for k in ("mode", "primary_intent", "metrics")},
             )
-        if execution.kind == "reply_draft" and not integration_context:
+        if execution.kind == "reply_draft":
             routing = await resolve_customer_routing(
-                question, transcript, channel="reply_draft", for_generation=True,
+                question, transcript, channel="reply_draft", for_generation=not integration_context,
             )
-            requires_store_evidence = routing.requires_evidence
+            # An authorized snapshot answers order status deterministically.
+            # Independently retrieve policy evidence for mixed support drafts.
+            requires_store_evidence = (
+                routing.deterministic.requires_knowledge if integration_context
+                else routing.requires_evidence
+            )
             intent_router_outcome = routing.tool_outcome()
-        if requires_store_evidence and not integration_context:
+        if requires_store_evidence:
             failure_stage = "knowledge_retrieval"
             loaded = await load_execution_context(
                 organization_id,

@@ -16,10 +16,15 @@ class OrderTrackingFact(BaseModel):
     company: OrderText | None = None
     number: OrderText | None = None
 
-    @field_validator("company", "number")
+    @field_validator("company", "number", mode="before")
     @classmethod
-    def exclude_private_or_unsafe_text(cls, value: str | None) -> str | None:
-        if value is not None and any(character in value for character in "\r\n<>@"):
+    def exclude_private_or_unsafe_text(cls, value: object) -> str | None:
+        if not isinstance(value, str):
+            return None
+        value = value.strip()
+        if not 1 <= len(value) <= 100 or any(character in value for character in "\r\n<>@"):
+            return None
+        if "://" in value:
             return None
         return value
 

@@ -142,8 +142,7 @@ def plan_widget_turn(
             tool_name="widget_clarification_intent",
         )
 
-    # Knowledge path: follow-ups stay on retrieval (context assembly handles history).
-    _ = is_contextual_follow_up(message)
+    # Follow-ups stay on retrieval; context assembly resolves the history.
     return CustomerTurnPlan(route="knowledge")
 
 

@@ -86,12 +86,15 @@ class MockProviderResponse:
     status_code = 200
     is_error = False
 
-    @staticmethod
-    def json():
+    def __init__(self, *, review: bool = False):
+        self.content = (
+            '{"spans":[{"index":1,"verdict":"entailed","sources":[1]}]}'
+            if review else "Unused products may be returned within thirty days [source 1]."
+        )
+
+    def json(self):
         return {
-            "choices": [
-                {"message": {"content": "Unused products may be returned within thirty days."}}
-            ],
+            "choices": [{"message": {"content": self.content}}],
             "usage": {"prompt_tokens": 21, "completion_tokens": 11, "total_tokens": 32},
         }
 
@@ -113,7 +116,7 @@ class MockProviderClient:
         type(self).last_request = json
         assert url.endswith("/chat/completions")
         assert "authorization" not in headers
-        return MockProviderResponse()
+        return MockProviderResponse(review="Audit the candidate reply" in json["messages"][0]["content"])
 
 
 @pytest.mark.anyio
@@ -194,6 +197,7 @@ async def test_ai_reply_draft_is_grounded_safe_and_never_sent(client, monkeypatc
     monkeypatch.setattr(settings, "ai_model", "test-support-model")
     monkeypatch.setattr(settings, "ai_provider_api_key", None)
     monkeypatch.setattr(httpx, "AsyncClient", MockProviderClient)
+    MockProviderClient.last_request = None
     verified_order_email = customer.email
 
     async def mock_verified_lookup(**kwargs):
@@ -254,12 +258,13 @@ async def test_ai_reply_draft_is_grounded_safe_and_never_sent(client, monkeypatc
     )
     assert result.status_code == 200, result.text
     assert result.json()["status"] == "succeeded"
-    assert result.json()["draft"] == "Unused products may be returned within thirty days."
+    assert "I checked your verified order #42." in result.json()["draft"]
+    assert "Unused products may be returned within thirty days [source 1]." in result.json()["draft"]
     assert result.json()["citations"][0]["document_name"] == "returns-policy.txt"
-    assert result.json()["usage"]["total_tokens"] == 32
+    assert result.json()["usage"]["total_tokens"] == 64
     assert "reasoning" not in result.text.lower()
     assert "PRIVATE TEAM NOTE" not in str(MockProviderClient.last_request)
-    assert '"order_number": "#42"' in str(MockProviderClient.last_request)
+    assert "#42" not in str(MockProviderClient.last_request)
     assert verified_order_email not in str(MockProviderClient.last_request)
 
     evaluation_payload = {
@@ -291,7 +296,7 @@ async def test_ai_reply_draft_is_grounded_safe_and_never_sent(client, monkeypatc
     )
     assert usage.status_code == 200, usage.text
     assert usage.json()["executions"] == 1
-    assert usage.json()["total_tokens"] == 32
+    assert usage.json()["total_tokens"] == 64
 
     async with SessionLocal() as db:
         await set_tenant_context(db, organization_id)
@@ -426,7 +431,7 @@ async def test_uploaded_document_flows_through_assigned_bot_to_scoped_citation(c
         "returns-policy.txt"
     ]
     assert "shipping-policy.txt" not in str(result.json()["citations"])
-    assert result.json()["draft"] == "Unused products may be returned within thirty days."
+    assert result.json()["draft"] == "Unused products may be returned within thirty days [source 1]."
 
 
 @pytest.mark.anyio

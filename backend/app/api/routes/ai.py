@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -281,6 +282,10 @@ async def create_reply_draft(
             encrypted_context = encrypt_credential(
                 AuthorizedOrderSnapshot.from_authorized_lookup(order).model_dump_json()
             )
+        except ValidationError as exc:
+            raise HTTPException(
+                status_code=502, detail="Shopify returned order fields that could not be verified"
+            ) from exc
         except RuntimeError as exc:
             raise HTTPException(
                 status_code=503, detail="Shopify order context encryption is unavailable"
