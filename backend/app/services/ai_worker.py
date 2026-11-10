@@ -3,6 +3,7 @@
 import json
 import logging
 import time
+from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -11,16 +12,23 @@ from sqlalchemy import select
 from app.core.observability import current_correlation_id
 from app.db.session import SessionLocal, set_tenant_context
 from app.features.ai.application.catalog_conversation import (
-    answer_catalog_follow_up, remember_catalog,
+    answer_catalog_follow_up,
+    remember_catalog,
 )
 from app.features.ai.application.catalog_discovery import (
-    list_verified_products, render_product_listing, resolve_catalog_connection,
+    list_verified_products,
+    render_product_listing,
+    resolve_catalog_connection,
 )
 from app.features.ai.application.catalog_search import (
     catalog_has_active_products,
     load_candidates,
 )
 from app.features.ai.application.context import load_execution_context
+from app.features.ai.application.conversation_understanding import (
+    policy_conversation,
+    understand_conversation_turn,
+)
 from app.features.ai.application.execution_failure_persistence import persist_execution_failure
 from app.features.ai.application.execution_failure_policy import (
     assess_execution_failure,
@@ -31,19 +39,24 @@ from app.features.ai.application.execution_lifecycle import (
     finish_deterministic_ai_execution,
 )
 from app.features.ai.application.follow_up import (
+    PendingQuestion,
     assess_widget_follow_up,
     infer_assistant_question,
 )
 from app.features.ai.application.generated_reply_persistence import (
     complete_non_widget_generated_reply,
 )
-from app.features.ai.application.guarded_generation import generate_guarded_draft
+from app.features.ai.application.guarded_generation import GuardedDraft, generate_guarded_draft
 from app.features.ai.application.intent_extraction import extract_intent
-from app.features.ai.application.intent_routing import resolve_customer_routing
+from app.features.ai.application.intent_routing import (
+    resolve_contextual_policy_turn,
+    resolve_customer_routing,
+)
 from app.features.ai.application.knowledge_inventory import is_knowledge_inventory_question
 from app.features.ai.application.missing_evidence_policy import plan_missing_evidence_reply
 from app.features.ai.application.playground_execution import complete_playground_knowledge_inventory
 from app.features.ai.application.playground_routing import route_playground_conversation
+from app.features.ai.application.policy_evaluation import answer_delivery_date
 from app.features.ai.application.stream_context_policy import (
     can_stream_transcript as _can_stream_transcript,
 )
@@ -68,6 +81,7 @@ from app.features.ai.infrastructure.llm_gateway import (
     AIProviderError,
     execution_token_budget,
     provider_configuration_error,
+    reported_execution_usage,
 )
 from app.models import (
     AIAgent,
@@ -261,12 +275,28 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             return
         routed_question = execution.question if execution.kind == "widget_reply" else question
         follow_up_query = None
-        generic_clarification = None
-        requires_store_evidence = True
+        policy_follow_up = None
+        contextual_routing = None
         if execution.kind == "widget_reply":
             if await widget_reply_is_stale(organization_id, execution_id):
                 return
             delivery_status = "draft_ready" if execution.delivery_mode == "draft_only" else "sent"
+        if execution.kind in {"widget_reply", "playground"}:
+            policy_follow_up, contextual_routing = await resolve_contextual_policy_turn(
+                question, transcript, agent_id=execution.ai_agent_id, now=now,
+                channel="widget" if execution.kind == "widget_reply" else "playground",
+            )
+        if policy_follow_up:
+            follow_up_query = policy_follow_up.query
+            _log_ai_execution_event(
+                "policy_follow_up_resolved", execution_id=str(execution_id),
+                correlation_id=correlation_id, decision=policy_follow_up.kind,
+            )
+        if contextual_routing is not None:
+            intent_router_outcome = contextual_routing.tool_outcome()
+        generic_clarification = None
+        requires_store_evidence = True
+        if execution.kind == "widget_reply" and policy_follow_up is None:
             # Explicit catalog browsing is a new intent, never an answer to a
             # previous product-selection question. Prevent stale follow-up state
             # from swallowing repeated "list all products" requests.
@@ -304,18 +334,19 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 routed_question = follow_up.routed_question
                 if follow_up.decision == "policy_timing":
                     follow_up_query = routed_question
-            context_query_resolved = False
-            if follow_up is None:
-                from app.features.ai.application.conversational_query_resolver import resolve_conversational_query
-                resolved_query = await resolve_conversational_query(execution.question, transcript)
-                if resolved_query.mode == "resolved":
-                    context_query_resolved = True
-                    routed_question = resolved_query.question
-                    follow_up_query = resolved_query.question
+            understanding = understand_conversation_turn(execution.question, transcript)
+            contextual = (
+                follow_up is None and understanding.contextual_follow_up
+                and not understanding.topic_switch and not understanding.needs_clarification
+                and understanding.retrieval_query != understanding.message
+            )
+            if contextual:
+                follow_up_query = understanding.retrieval_query
             route_result = await resolve_widget_turn(
                 routed_question,
                 transcript,
-                allow_model=not context_query_resolved,
+                allow_model=not contextual,
+                **({"routing": contextual_routing} if contextual_routing else {}),
                 follow_up_decision=(
                     follow_up.decision
                     if follow_up is not None and follow_up.routed_question else None
@@ -471,12 +502,13 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 ai_agent_id=execution.ai_agent_id,
             )
             return
-        if execution.kind == "playground":
+        if execution.kind == "playground" and policy_follow_up is None:
             playground_routing = await route_playground_conversation(
                 organization_id,
                 execution_id,
                 question=question,
                 transcript=transcript,
+                **({"routing": contextual_routing} if contextual_routing else {}),
             )
             if playground_routing.completed:
                 return
@@ -501,7 +533,10 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 else routing.requires_evidence
             )
             intent_router_outcome = routing.tool_outcome()
-        if requires_store_evidence:
+        policy_date = policy_follow_up is not None and policy_follow_up.kind in {
+            "delivery_date", "ambiguous_date",
+        }
+        if requires_store_evidence and not (policy_follow_up and policy_follow_up.kind == "ambiguous_date"):
             failure_stage = "knowledge_retrieval"
             loaded = await load_execution_context(
                 organization_id,
@@ -516,8 +551,6 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             )
             if intent_router_outcome:
                 outcomes = [intent_router_outcome, *outcomes]
-            if follow_up_query:
-                question = f"Customer follow-up: {follow_up_query}"
             retrieval_match_count = len(citations)
             _log_ai_execution_event(
                 "ai_knowledge_retrieval_completed",
@@ -529,7 +562,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             )
         elif intent_router_outcome:
             outcomes = [intent_router_outcome, *outcomes]
-        if requires_store_evidence and not context and not integration_context:
+        if requires_store_evidence and not context and not integration_context and not policy_date:
             missing = plan_missing_evidence_reply(
                 execution_kind=execution.kind,
                 question=execution.question if execution.kind == "widget_reply" else question,
@@ -541,7 +574,10 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 await finish_widget_reply(
                     organization_id,
                     execution_id,
-                    draft=missing.draft,
+                    draft=(
+                        "I couldn’t confirm that from the store’s policy. The store team can review your request."
+                        if policy_follow_up else missing.draft
+                    ),
                     reply_status=missing.reply_status,
                     safe_summary=missing.safe_summary,
                     citations=[],
@@ -552,36 +588,68 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 return
             await finish_no_knowledge_execution(organization_id, execution_id, question=question)
             return
-        if execution.kind == "widget_reply":
-            failure_stage = "provider_configuration"
-            if error := provider_configuration_error():
-                raise error
-        failure_stage = "provider_generation"
-        guarded = await generate_guarded_draft(
-            execution_id=str(execution_id),
-            execution_kind=execution.kind,
-            question=question,
-            instructions=execution.instructions,
-            transcript=transcript,
-            context=context,
-            integration_context=integration_context,
-            citations=citations,
-            outcomes=outcomes,
-            requires_evidence=requires_store_evidence,
-            correlation_id=correlation_id,
-        )
+        if policy_follow_up and policy_date:
+            failure_stage = "provider_generation"
+            policy_answer = await answer_delivery_date(policy_follow_up, context, citations, now)
+            accepted = policy_answer.reason == "reporting_deadline_calculated"
+            guarded = GuardedDraft(
+                policy_answer.text, accepted, None if accepted else policy_answer.reason,
+                policy_answer.citations, [
+                    *outcomes, {"tool": "policy_reporting_window", "status": policy_answer.reason},
+                ], policy_answer.usage, policy_answer.model_name,
+            )
+        else:
+            if execution.kind == "widget_reply":
+                failure_stage = "provider_configuration"
+                if error := provider_configuration_error():
+                    raise error
+            failure_stage = "provider_generation"
+            guarded = await generate_guarded_draft(
+                execution_id=str(execution_id),
+                execution_kind=execution.kind,
+                question=question,
+                instructions=execution.instructions,
+                transcript=transcript,
+                context=context,
+                integration_context=integration_context,
+                citations=citations,
+                outcomes=outcomes,
+                requires_evidence=requires_store_evidence,
+                correlation_id=correlation_id,
+            )
+        measured_usage = reported_execution_usage()
+        if measured_usage:
+            guarded = replace(guarded, usage=measured_usage)
         generated_draft = guarded.text
         citations = guarded.citations
         outcomes = guarded.outcomes
         if execution.kind == "widget_reply":
+            remembered_policy = policy_follow_up.state if policy_follow_up else None
+            pending = infer_assistant_question(generated_draft)
+            if (
+                remembered_policy is None and guarded.accepted and citations
+                and (pending is None or pending.stage == "policy_timing")
+            ):
+                remembered_policy = policy_conversation(question, generated_draft)
+            if remembered_policy is not None and citations:
+                remembered_policy = remembered_policy.model_copy(update={
+                    "source_document_ids": tuple(dict.fromkeys(UUID(str(c["document_id"])) for c in citations)),
+                })
             failure_stage = "reply_persistence"
             draft = generated_draft
             await finish_widget_reply(
                 organization_id,
                 execution_id,
                 draft=draft,
-                reply_status="draft_ready" if execution.delivery_mode == "draft_only" else "sent",
+                reply_status=(
+                    "draft_ready" if execution.delivery_mode == "draft_only" else
+                    "sent" if guarded.accepted or guarded.grounding_reason in {
+                        "ambiguous_date", "invalid_delivery_date",
+                    } else "escalated"
+                ),
                 safe_summary=(
+                    "Policy follow-up completed with a safe next step."
+                    if policy_date else
                     "Generated answer failed knowledge grounding checks; a safe fallback was used."
                     if not guarded.accepted else
                     f"Reply generated using {len(citations)} tenant knowledge source(s)."
@@ -590,7 +658,14 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 outcomes=outcomes,
                 usage=guarded.usage,
                 model_name=guarded.model_name,
-                pending_question=infer_assistant_question(draft),
+                failure_code=guarded.grounding_reason,
+                pending_question=(
+                    PendingQuestion(
+                        active_intent="knowledge", stage="policy_context",
+                        expected_answer_type="contextual", policy_context=remembered_policy,
+                    )
+                    if remembered_policy else pending
+                ),
             )
             return
         failure_stage = "result_persistence"
@@ -704,5 +779,11 @@ def _log_ai_execution_event(event: str, **fields: object) -> None:
 
 async def process_ai_execution(organization_id: UUID, execution_id: UUID) -> None:
     """Execute under an aggregate per-job model-call and token budget."""
-    with execution_token_budget():
-        await _process_ai_execution(organization_id, execution_id)
+    with execution_token_budget() as budget:
+        try:
+            await _process_ai_execution(organization_id, execution_id)
+        finally:
+            _log_ai_execution_event(
+                "ai_execution_model_budget", execution_id=str(execution_id),
+                correlation_id=current_correlation_id(), **budget.log_fields(),
+            )

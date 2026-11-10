@@ -552,7 +552,11 @@ async def finish_widget_reply(
                         if row.started_at
                         else None
                     ),
-                    "retrieval_match_count": len(citations),
+                    "retrieval_match_count": next((
+                        outcome.get("result_count", 0) for outcome in outcomes
+                        if outcome.get("tool") == "tenant_knowledge_search"
+                    ), 0),
+                    "citation_count": len(citations),
                     "error_code": failure_code,
                     "execution_status": row.status,
                     "delivery_status": row.reply_status,

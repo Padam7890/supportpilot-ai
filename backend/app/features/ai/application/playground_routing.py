@@ -3,13 +3,18 @@
 from dataclasses import dataclass
 from uuid import UUID
 
-from app.features.ai.application.conversation_orchestration import plan_playground_turn
-from app.features.ai.application.catalog_discovery import (
-    list_verified_products, render_product_listing, resolve_catalog_connection,
-)
 from app.db.session import SessionLocal, set_tenant_context
+from app.features.ai.application.catalog_discovery import (
+    list_verified_products,
+    render_product_listing,
+    resolve_catalog_connection,
+)
+from app.features.ai.application.conversation_orchestration import plan_playground_turn
 from app.features.ai.application.execution_lifecycle import finish_deterministic_ai_execution
-from app.features.ai.application.intent_routing import resolve_customer_routing
+from app.features.ai.application.intent_routing import (
+    CustomerRoutingResolution,
+    resolve_customer_routing,
+)
 
 
 @dataclass(frozen=True)
@@ -25,6 +30,7 @@ async def route_playground_conversation(
     *,
     question: str,
     transcript: list[dict[str, str]] | None,
+    routing: CustomerRoutingResolution | None = None,
 ) -> PlaygroundRoutingResult:
     """Finish deterministic preview turns; classify other turns for retrieval."""
     plan = plan_playground_turn(question, transcript)
@@ -59,9 +65,10 @@ async def route_playground_conversation(
             result_count=0,
         )
         return PlaygroundRoutingResult(completed=True)
-    routing = await resolve_customer_routing(
-        question, transcript or [], channel="playground", for_generation=True
-    )
+    if routing is None:
+        routing = await resolve_customer_routing(
+            question, transcript or [], channel="playground", for_generation=True,
+        )
     return PlaygroundRoutingResult(
         completed=False, outcome=routing.tool_outcome(), requires_evidence=routing.requires_evidence,
     )

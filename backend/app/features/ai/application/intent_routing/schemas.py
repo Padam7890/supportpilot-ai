@@ -4,6 +4,8 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.features.ai.application.policy_follow_up import FollowUpInterpretation
+
 
 class Intent(str, Enum):
     GREETING = "greeting"
@@ -32,6 +34,7 @@ class RoutingDecision(BaseModel):
     intents: list[IntentDecision] = Field(min_length=1, max_length=4)
     requires_context: bool = False
     should_clarify: bool = False
+    follow_up: FollowUpInterpretation | None = None
     reason_code: str = Field(min_length=1, max_length=64)
 
     @field_validator("intents")

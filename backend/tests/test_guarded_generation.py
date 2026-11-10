@@ -32,14 +32,14 @@ def _arguments() -> dict:
 
 
 @pytest.mark.anyio
-async def test_verified_reply_remaps_citations_and_counts_review_usage(monkeypatch):
+async def test_verified_reply_keeps_structured_provenance_and_counts_review_usage(monkeypatch):
     compose = AsyncMock(return_value=ComposedAnswer("Returns within 14 days [source 2].", {"total_tokens": 5}, None))
     verify = AsyncMock(return_value=SemanticVerification(True, "verified", (2,), {"total_tokens": 4}))
     monkeypatch.setattr("app.features.ai.application.guarded_generation.compose_natural_answer", compose)
     monkeypatch.setattr("app.features.ai.application.guarded_generation.verify_candidate", verify)
     result = await generate_guarded_draft(**_arguments())
     assert result.accepted
-    assert result.text == "Returns within 14 days [source 1]."
+    assert result.text == "Returns within 14 days."
     assert result.citations == [{"document_id": "returns", "chunk_index": 2}]
     assert result.usage == {"total_tokens": 9}
     assert result.model_name is None

@@ -13,6 +13,7 @@ from app.features.ai.application.order_reference import (
     order_reference_recovered,
     order_reference_unavailable,
 )
+from app.features.ai.application.policy_follow_up import PolicyConversation, asks_delivery_date
 
 PENDING_KEY = "support_pending_question"
 PENDING_TTL = timedelta(minutes=30)
@@ -26,6 +27,7 @@ Stage = Literal[
     "order_verification",
     "product_selection",
     "policy_timing",
+    "policy_context",
 ]
 Intent = Literal["refund", "order", "shopping", "knowledge"]
 
@@ -89,8 +91,9 @@ class PendingQuestion(BaseModel):
     active_intent: Intent
     stage: Stage
     expected_answer_type: Literal[
-        "reason", "item", "otp", "confirmation", "ordinal", "time", "order_reference"
+        "reason", "item", "otp", "confirmation", "ordinal", "time", "order_reference", "contextual"
     ]
+    policy_context: PolicyConversation | None = None
     refund_reason: RefundReason | None = None
     item_message_id: UUID | None = None
     verification_id: UUID | None = None
@@ -100,6 +103,7 @@ class PendingQuestion(BaseModel):
     order_reference_message_id: UUID | None = None
     handoff_status: Literal["offered", "declined", "requested"] | None = None
     ai_agent_id: UUID | None = None
+    updated_at: datetime | None = None
     expires_at: datetime | None = None
 
     def attached_to(self, agent_id: UUID, now: datetime) -> dict[str, object]:
@@ -107,6 +111,7 @@ class PendingQuestion(BaseModel):
             update={
                 "ai_agent_id": agent_id,
                 "expires_at": now + PENDING_TTL,
+                "updated_at": now,
             }
         ).model_dump(mode="json")
 
@@ -171,7 +176,7 @@ def infer_assistant_question(text: str) -> PendingQuestion | None:
         return PendingQuestion(
             active_intent="shopping", stage="product_selection", expected_answer_type="ordinal"
         )
-    if re.search(
+    if asks_delivery_date(text) or re.search(
         r"(?:when|what day|which day)[^?]{0,80}\b(?:deliver(?:ed|y)?|ship(?:ped)?|arrive)[^?]{0,30}\?",
         folded,
     ):
@@ -249,9 +254,8 @@ def resolve_order_support(
     # Once a handoff has been requested, subsequent customer turns must not
     # be trapped in the order-reference workflow. Only a recovered reference
     # can explicitly resume it; other messages return to normal routing.
-    if state is not None and state.handoff_status == "requested":
-        if not order_reference_recovered(message):
-            return None
+    if state is not None and state.handoff_status == "requested" and not order_reference_recovered(message):
+        return None
     if order_reference_unavailable(message, in_order_context=in_order_context):
         pending = (
             state
