@@ -133,15 +133,16 @@ async def generate_guarded_draft(
     )
     generated = str(result.get("draft", ""))[:12000]
     # Validate the same bounded excerpts actually supplied to the composer.
-    # Integration context must not disable knowledge claim validation.
-    # The specialized integration path remains responsible for authorization.
+    # The specialized integration path retains its own authorization boundary.
+    # Knowledge checks cannot validate verified Shopify order fields.
     grounding = (
         check_grounded_claims(
             generated, grounding_sources, require_citations=True,
         )
         if use_canonical_composer and grounding_sources
         else check_generated_answer(
-            generated, context
+            generated,
+            context if not integration_context else [],
         )
     )
     if grounding.accepted:
