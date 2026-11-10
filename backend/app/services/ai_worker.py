@@ -28,7 +28,6 @@ from app.features.ai.application.stream_context_policy import (
     can_stream_transcript as _can_stream_transcript,
     stream_conversation_context as _stream_conversation_context,
 )
-from app.features.ai.application.claim_grounding import check_generated_answer
 from app.features.ai.application.conversation_orchestration import playground_missing_knowledge_reply
 from app.features.ai.application.follow_up import (
     assess_widget_follow_up,
@@ -41,6 +40,7 @@ from app.features.ai.application.widget_follow_up_execution import complete_widg
 from app.features.ai.application.knowledge_inventory import is_knowledge_inventory_question
 from app.features.ai.application.playground_execution import complete_playground_knowledge_inventory
 from app.features.ai.application.playground_routing import route_playground_conversation
+from app.features.ai.application.guarded_generation import generate_guarded_draft
 from app.features.ai.application.retrieval_search import citations_remain_authorized
 from app.features.ai.application.widget_orders import _question_order_number
 from app.features.ai.application.widget_replies import (
@@ -57,13 +57,11 @@ from app.features.ai.infrastructure.llm_gateway import (
     execution_token_budget,
     provider_configuration_error,
 )
-from app.features.ai.application.generation_metrics import log_generation_metrics
 from app.models import (
     AIAgent,
     AIExecution,
     RecommendationSettings,
 )
-from app.services.ai_execution import create_grounded_draft
 from app.services.widget_ai import (
     AI_TEMPORARY_FAILURE_REPLY,
     WIDGET_PROVIDER_UNAVAILABLE_REPLY,
@@ -420,50 +418,26 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             if error := provider_configuration_error():
                 raise error
         failure_stage = "provider_generation"
-        draft_inputs = {
-            "organization_id": organization_id,
-            "execution_id": execution_id,
-            "question": question,
-            "instructions": execution.instructions,
-            "conversation_context": [{"sender": turn["sender"], "content": turn["content"]} for turn in transcript],
-            "knowledge_context": context,
-            "integration_context": integration_context,
-            "auto_reply": (
+        guarded = await generate_guarded_draft(
+            organization_id=organization_id,
+            execution_id=execution_id,
+            execution_kind=execution.kind,
+            question=question,
+            instructions=execution.instructions,
+            transcript=transcript,
+            context=context,
+            integration_context=integration_context,
+            citations=citations,
+            outcomes=outcomes,
+            auto_reply=(
                 execution.kind == "widget_reply" and execution.delivery_mode == "auto_reply"
             ),
-        }
-        # Do not publish model deltas before full-answer grounding checks and
-        # source authorization. The previous stream branch required both
-        # 'not context' and 'citations', making it unreachable in practice.
-        stream_source_ids = None
-        generation_started = time.monotonic()
-        result = await create_grounded_draft(**draft_inputs)
-        log_generation_metrics(
-            execution_id=str(execution_id),
-            execution_kind=execution.kind,
-            model_name=result.get("model_name") if isinstance(result.get("model_name"), str) else None,
-            started_monotonic=generation_started,
-            usage=result.get("usage") if isinstance(result.get("usage"), dict) else None,
-            streamed=False,
             correlation_id=correlation_id,
         )
-        generated_draft = str(result.get("draft", ""))[:12000]
-        grounding_check = check_generated_answer(
-            generated_draft, context if not integration_context else []
-        )
-        if not grounding_check.accepted:
-            # Never persist unsupported model-generated numeric claims.
-            # No model deltas were published before validation.
-            generated_draft = (
-                "I couldn't verify the details in the available knowledge sources. "
-                "Please contact our support team to confirm."
-            )
-            citations = []
-            outcomes.append({
-                "tool": "claim_grounding",
-                "status": "blocked",
-                "reason": grounding_check.reason,
-            })
+        generated_draft = guarded.text
+        citations = guarded.citations
+        outcomes = guarded.outcomes
+        stream_source_ids = None
         if execution.kind == "widget_reply":
             failure_stage = "reply_persistence"
             draft = generated_draft
@@ -474,13 +448,13 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 reply_status="draft_ready" if execution.delivery_mode == "draft_only" else "sent",
                 safe_summary=(
                     "Generated answer failed knowledge grounding checks; a safe fallback was used."
-                    if not grounding_check.accepted else
+                    if not guarded.accepted else
                     f"Reply generated using {len(citations)} tenant knowledge source(s)."
                 ),
                 citations=citations,
                 outcomes=outcomes,
-                usage=result.get("usage", {}) if isinstance(result.get("usage"), dict) else {},
-                model_name=str(result.get("model_name", ""))[:120] or None,
+                usage=guarded.usage,
+                model_name=guarded.model_name,
                 pending_question=infer_assistant_question(draft),
                 stream_source_ids=stream_source_ids,
             )
