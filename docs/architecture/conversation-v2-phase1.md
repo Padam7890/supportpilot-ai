@@ -37,3 +37,11 @@ No passing execution result has been verified through the GitHub connector. Keep
 - Kept all existing row locks, tenant filters, status checks, field clearing and commit behavior intact.
 
 **Important:** Phase 1 is still open: the main execution function remains large, and worker failure handling and widget/playground orchestration are not yet fully extracted. Do not treat this PR as ready to merge without review and verification.
+
+## Failure handling extraction
+
+- Added `application/execution_failure_policy.py` with immutable `FailureAssessment` and `RetryDecision` contracts.
+- Worker now delegates error-code normalization, provider HTTP status extraction, retry exhaustion, retry delays, and widget fallback eligibility to pure policy functions.
+- Added `tests/test_execution_failure_policy.py` for provider errors, retrieval errors, retry exhaustion, non-retryable errors, widget fallback and invalid attempts.
+- Database writes and customer-facing fallback persistence remain in the worker for now. This change does not implement true streaming or a unified widget/playground engine.
+- Compilation and test execution remain unverified; run `python -m compileall -q app` and `pytest -q tests/test_execution_failure_policy.py tests/test_stream_context_policy.py` before merging.
