@@ -13,7 +13,7 @@ Use a language model for open-ended conversation understanding and natural groun
 3. Typed tool registry, argument validation, and authorization — contracts, allowlist, and adapter-based executor implemented; live provider adapters pending.
 4. Topic and unresolved-workflow memory with explicit verified/unverified separation — pending.
 5. LLM response composition from trusted tool results — pending.
-6. Semantic knowledge retrieval and Shopify catalog tool orchestration — pending.
+6. Semantic knowledge retrieval and Shopify catalog tool orchestration — tenant-scoped knowledge adapter implemented; catalog adapter and live orchestration pending.
 7. Streaming, latency and usage safeguards — pending.
 8. Gradual removal of obsolete canned replies, rollout and rollback — pending.
 
@@ -44,3 +44,11 @@ Enable only in a controlled development environment after reviewing model costs 
 - Added targeted regression scenarios for context normalization, read-only execution, fail-closed authorization, and tool-call limits.
 - **Important:** no live Shopify/order/handoff adapter is wired yet. Model-provided customer identifiers are untrusted; real adapters must obtain identity and tenant from authenticated server-side state and recheck permissions. No new side-effecting tool path is enabled.
 - **Verification:** source changes committed; tests and CI/CD not executed. No production readiness claim.
+
+## Increment: real read-only RAG adapter and response evidence
+
+- Added `conversation_knowledge_adapter.py`, which calls the existing tenant- and AI-agent-scoped hybrid knowledge search using trusted server IDs. It exposes no tenant selection to the model.
+- Added `conversation_response_evidence.py` to cap and normalize facts from authorized tools, ignore denied/unavailable facts, and carry source identifiers for downstream grounding.
+- Added focused adapter and evidence regression scenarios.
+- **Not yet live:** the worker is not switched to the new tool executor; Shopify catalog adapters and LLM response composition remain pending. This increment does not change production chatbot behavior.
+- Tests/CI/CD not executed.
