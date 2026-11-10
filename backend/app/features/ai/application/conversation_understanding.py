@@ -180,8 +180,8 @@ def _has_distinct_clauses(message: str) -> bool:
 
 
 _NEGATED_ACTION = re.compile(
-    r"\\b(?:do\\s+not|don't|dont|never|stop|please\\s+don't)\\s+"
-    r"(?:\\w+\\s+){0,2}?(?:cancel|refund|return|order)\\b",
+    r"\b(?:do\s+not|don't|dont|never|stop|please\s+don't)\s+"
+    r"(?:\w+\s+){0,2}?(?:cancel|refund|return|order)\b",
     re.IGNORECASE,
 )
 
