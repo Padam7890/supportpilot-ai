@@ -13,10 +13,10 @@ from app.features.ai.application.claim_grounding import check_generated_answer, 
 from app.features.ai.application.conversation_context_builder import build_agent_input
 from app.features.ai.application.conversation_response_composer import compose_natural_answer
 from app.features.ai.application.conversation_response_evidence import ResponseEvidence
+from app.features.ai.application.generation_metrics import log_generation_metrics
 from app.features.ai.application.intent_routing.deterministic import assess_deterministic_route
 from app.features.ai.application.intent_routing.schemas import Intent
-from app.features.ai.application.generation_metrics import log_generation_metrics
-from app.services.ai_execution import create_grounded_draft
+from app.features.ai.workflows.grounded_reply import create_grounded_draft
 
 
 @dataclass(frozen=True)
