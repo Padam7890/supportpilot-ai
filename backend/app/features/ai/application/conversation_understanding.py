@@ -173,12 +173,20 @@ def _has_distinct_clauses(message: str) -> bool:
 
 
 _NEGATED_ACTION = re.compile(
-    r"\b(?:do\s+not|don't|dont|never|stop|please\s+don't)\s+"
+    r"\b(?:do\s+not|don't|dont|never|please\s+don't)\s+"
     r"(?:\w+\s+){0,2}?(?:cancel|refund|return|order)\b",
     re.IGNORECASE,
 )
+_ACTION_VERB = re.compile(r"\b(?:cancel|refund|return|exchange)\b", re.IGNORECASE)
 
 
 def _is_negated_action(message: str) -> bool:
-    """Advisory signal; commerce authorization still belongs to action services."""
-    return bool(_NEGATED_ACTION.search(message))
+    """Only short, standalone negations are safe to resolve without an action."""
+    if not _NEGATED_ACTION.search(message):
+        return False
+    # Compound messages may contain a new positive request. Keep these in
+    # ordinary routing rather than claiming the entire turn is cancelled.
+    clauses = [part.strip() for part in _CLAUSE_SEPARATOR.split(message) if part.strip()]
+    if len(clauses) > 1:
+        return False
+    return len(_ACTION_VERB.findall(message)) <= 1
