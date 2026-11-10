@@ -140,3 +140,10 @@ Enable only in a controlled development environment after reviewing model costs 
 - Grounding checks run against **the exact excerpts provided to the model**, not a different or larger retrieval list. Missing citations, invalid citation indices and unsupported numeric claims fail closed to the existing safe fallback.
 - Legacy integration-backed generation is deliberately not switched to this contract yet; it needs typed authorized integration evidence. Added regression cases for missing and invalid citations.
 - This is lexical validation, **not semantic entailment**. Tests and CI/CD have not been executed.
+
+## Increment: fix RAG grounding syntax and enforce agent citations
+
+- Repaired an invalid literal-backslash-newline sequence introduced in `guarded_generation.py` by an earlier edit. This was a Python syntax issue and must be tested before merging.
+- The standalone read-only agent now requires source citations on tool-backed responses, consistent with migrated RAG generation. The greeting path remains citation-free because it uses no tool evidence.
+- Added a regression test rejecting uncited tool-backed answers and updated the positive tool-answer fixture. Corrected stale runtime comments.
+- **Not yet migrated:** integration-backed order/Shopify generation and complete legacy removal. No tests or CI/CD were executed in this session.
