@@ -113,3 +113,9 @@ Enable only in a controlled development environment after reviewing model costs 
 - Removed the old flag-driven forced model-first behavior in `intent_routing/service.py`, preventing a redundant legacy intent-model call for every low-risk non-agent turn. The existing confidence-based legacy router remains available as fallback, so this is not yet a complete removal of the old routing stack.
 - Extracted the pilot's ad-hoc response checks into `conversation_greeting_policy.py`; the new policy rejects numbers, URLs, email addresses and common unverified store assertions. This is not semantic grounding and is not sufficient for broader customer traffic.
 - Added focused output-policy tests. **No tests or CI/CD were run**. Before deployment, review environment overrides, provider costs and the pilot's routing/persistence behavior.
+
+## Increment: stale execution race prevention
+
+- The default first-contact widget agent pilot now checks execution freshness both before and after the model call. A newer customer message can supersede an execution during LLM latency; the old answer must not be persisted.
+- Added a regression test simulating an execution becoming stale between the two checks.
+- The new path is still restricted to first-contact greetings. **Do not delete legacy knowledge, commerce or follow-up execution yet**: those paths are not replaced by this pilot. Tests and CI/CD have not been executed.
