@@ -33,7 +33,6 @@ from app.features.ai.application.stream_context_policy import (
 from app.features.ai.application.claim_grounding import check_generated_answer
 from app.features.ai.application.conversation_orchestration import (
     plan_playground_turn,
-    plan_widget_turn,
     playground_missing_knowledge_reply,
 )
 from app.features.ai.application.follow_up import (
