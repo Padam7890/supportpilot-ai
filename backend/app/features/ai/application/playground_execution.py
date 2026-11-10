@@ -27,12 +27,6 @@ async def complete_playground_knowledge_inventory(
     now = datetime.now(UTC)
     async with SessionLocal() as db:
         await set_tenant_context(db, organization_id)
-        inventory = await load_knowledge_inventory(
-            db,
-            organization_id=organization_id,
-            ai_agent_id=ai_agent_id,
-        )
-        answer, document_count = format_knowledge_inventory(inventory)
         row = await db.scalar(
             select(AIExecution)
             .where(
@@ -46,6 +40,17 @@ async def complete_playground_knowledge_inventory(
         if row is None:
             await db.rollback()
             return
+        # The locked execution is authoritative: never trust an agent ID
+        # supplied by the worker when selecting assigned knowledge.
+        if ai_agent_id is not None and ai_agent_id != row.ai_agent_id:
+            await db.rollback()
+            raise ValueError("Playground execution agent mismatch")
+        inventory = await load_knowledge_inventory(
+            db,
+            organization_id=organization_id,
+            ai_agent_id=row.ai_agent_id,
+        )
+        answer, document_count = format_knowledge_inventory(inventory)
         row.status = "succeeded"
         row.playground_history = None
         row.integration_context_encrypted = None
