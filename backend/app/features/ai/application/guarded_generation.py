@@ -55,9 +55,8 @@ async def generate_guarded_draft(
         auto_reply=auto_reply,
     )
     usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
-    model_name = (
-        str(result.get("model_name", ""))[:120] or None
-    )
+    raw_model_name = result.get("model_name")
+    model_name = raw_model_name[:120] if isinstance(raw_model_name, str) and raw_model_name else None
     log_generation_metrics(
         execution_id=str(execution_id),
         execution_kind=execution_kind,
