@@ -525,7 +525,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             output_label = "Reply draft" if row.kind == "reply_draft" else "Playground answer"
             row.safe_summary = (
                 "Generated answer failed knowledge grounding checks; a safe fallback was used."
-                if not grounding_check.accepted else
+                if not guarded.accepted else
                 f"{output_label} generated using {len(citations)} knowledge source(s)."
             )
             row.citations = citations
