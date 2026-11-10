@@ -126,3 +126,10 @@ Enable only in a controlled development environment after reviewing model costs 
 - Existing tenant/bot-scoped retrieval, source citation checks at persistence, grounding validation, and widget lifecycle remain intact. Integration-backed responses, custom instructions and reply drafts still use `create_grounded_draft` until their contracts are migrated.
 - Added regression tests for new composer selection, custom-instruction compatibility and unsupported numeric claims. Tests have not been executed.
 - **Not a full RAG migration or safe blanket legacy deletion.** Remaining: instruction-aware composer, source provenance, citation/semantic grounding, integration-specific data boundaries, source freshness and end-to-end verification. Do not remove `create_grounded_draft` while it has active callers.
+
+## Increment: instruction-aware knowledge generation migration
+
+- The shared natural composer now accepts bounded, workspace-configured bot instructions as system-level configuration, distinct from untrusted history and retrieved evidence.
+- Knowledge-only `widget_reply`, `playground`, and `reply_draft` executions now use the shared composer even when bot instructions are present.
+- Integration-backed generation continues through `create_grounded_draft`; it cannot be removed safely until verified Shopify/order integration evidence is represented in typed, authorized tool results.
+- Added regression cases for custom instructions, reply drafts, and integration isolation. Tests and CI/CD have not been executed. Grounding remains lexical, not semantic entailment.
