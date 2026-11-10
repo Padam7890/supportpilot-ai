@@ -9,8 +9,8 @@ Use a language model for open-ended conversation understanding and natural groun
 ## Packages
 
 1. **Opt-in model-first routing foundation** — implemented: `AI_CONVERSATION_LLM_FIRST_ENABLED=false` by default, shared interpretation policy, high-risk/negation/clarification protections, and policy regression scenarios.
-2. Typed conversation agent input/output and bounded context — contracts implemented; runtime integration pending.
-3. Typed tool registry, argument validation, and authorization — contracts and allowlist gate implemented; provider adapters pending.
+2. Typed conversation agent input/output and bounded context — contracts and normalized context builder implemented; existing LLM router integrated.
+3. Typed tool registry, argument validation, and authorization — contracts, allowlist, and adapter-based executor implemented; live provider adapters pending.
 4. Topic and unresolved-workflow memory with explicit verified/unverified separation — pending.
 5. LLM response composition from trusted tool results — pending.
 6. Semantic knowledge retrieval and Shopify catalog tool orchestration — pending.
@@ -36,3 +36,11 @@ Enable only in a controlled development environment after reviewing model costs 
 - Added `conversation_tool_registry.py` with a server-controlled capability allowlist and explicit verification/side-effect checks.
 - These are **contracts only**. They do not execute Shopify, retrieval, or support actions. A model-provided `verified_customer_id` must never be trusted: execution adapters must derive verified identity from server-side session state and enforce tenant ownership.
 - Added focused regression scenarios; tests have not been executed.
+
+## Increment: bounded context and guarded tool executor
+
+- Added `conversation_context_builder.py` to normalize user/customer roles, exclude internal notes, bound history and avoid duplicate latest messages. The existing structured LLM router now uses this builder.
+- Added `conversation_tool_executor.py` to pre-authorize the entire batch, cap calls at three, reject missing adapters, and validate returned tool identity. Providers are injected, not imported into the agent.
+- Added targeted regression scenarios for context normalization, read-only execution, fail-closed authorization, and tool-call limits.
+- **Important:** no live Shopify/order/handoff adapter is wired yet. Model-provided customer identifiers are untrusted; real adapters must obtain identity and tenant from authenticated server-side state and recheck permissions. No new side-effecting tool path is enabled.
+- **Verification:** source changes committed; tests and CI/CD not executed. No production readiness claim.
