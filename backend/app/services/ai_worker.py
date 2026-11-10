@@ -51,7 +51,10 @@ from app.features.ai.application.widget_replies import (
     process_widget_shopping_execution,
     widget_reply_is_stale,
 )
-from app.features.ai.application.widget_stream_context import last_grounded_exchange
+from app.features.ai.application.widget_stream_context import (
+    MAX_STREAM_HISTORY_SOURCES,
+    last_grounded_exchange,
+)
 from app.features.ai.domain.failure_codes import (
     is_retryable_ai_failure,
 )
@@ -692,7 +695,9 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                         db, organization_id=organization_id, ai_agent_id=execution.ai_agent_id,
                         citations=[{"document_id": source_id} for source_id in sorted(prior_sources)],
                     )
-                if authorized:
+                if not authorized:
+                    draft_inputs["conversation_context"] = []
+                elif len(source_ids | prior_sources) <= MAX_STREAM_HISTORY_SOURCES:
                     stream_context = prior_context
                     source_ids.update(prior_sources)
             if stream_context is not None:
