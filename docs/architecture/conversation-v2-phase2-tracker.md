@@ -37,3 +37,12 @@ Fixed the clause separator regex: it previously matched literal backslash-s text
 - Added regression scenarios for negated cancellation, Nepali script detection and a context-free follow-up.
 
 **Remaining:** Clarification behavior, language-specific cases, follow-up edge cases, latency review and final consolidation. Do not mark Phase 2 complete before these are reviewed. Tests and CI/CD were not executed, per request.
+
+## Additional implementation — action safety and bounded follow-ups
+
+- Both Playground and widget now resolve explicitly negated commerce requests to a deterministic non-action reply **before** sensitive-order or pending-order follow-up handling. No cancellation, refund, or return action is initiated by that route.
+- Follow-up query resolution no longer treats arbitrary prior customer text (such as a greeting) as an actionable topic anchor. It requires an explicit recognized prior topic, otherwise asks for clarification.
+- Understanding input is bounded to 1,000 characters before rule-based parsing. This does not replace upstream request-size validation.
+- Added regression scenarios for negative cancellation in both channels and for an unrelated prior greeting.
+
+**Still outstanding before completing Phase 2:** review nuanced correction/negation phrasing, multi-intent routing conflicts, multilingual cases, and end-to-end behavior. The PR remains draft. No tests or CI/CD were run.
