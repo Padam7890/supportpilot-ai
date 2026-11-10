@@ -73,3 +73,35 @@ def test_unrelated_previous_customer_message_does_not_become_topic_anchor() -> N
     )
     assert result.needs_clarification is True
     assert result.retrieval_query == "what about that?"
+
+
+def test_compound_negation_is_not_silently_accepted_as_whole_turn() -> None:
+    result = understand_conversation_turn(
+        "Don't cancel my order and tell me about delivery", []
+    )
+    assert result.negated_action is False
+
+
+def test_standalone_negative_refund_is_non_action() -> None:
+    from app.features.ai.application.conversation_orchestration import plan_widget_turn
+
+    plan = plan_widget_turn("Do not refund my order", [])
+    assert plan.intent == "negated_action"
+
+
+def test_short_contextual_delivery_location_uses_bounded_anchor() -> None:
+    result = understand_conversation_turn(
+        "in Pokhara?",
+        [{"sender": "customer", "content": "What are the delivery fees?"}],
+    )
+    assert result.needs_clarification is False
+    assert "Pokhara" in result.retrieval_query
+
+
+def test_new_topic_does_not_inherit_old_topic() -> None:
+    result = understand_conversation_turn(
+        "What about warranty?",
+        [{"sender": "customer", "content": "Tell me about delivery"}],
+    )
+    assert result.topic_switch is True
+    assert "delivery" not in result.retrieval_query.casefold()
