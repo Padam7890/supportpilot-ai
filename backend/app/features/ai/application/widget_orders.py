@@ -8,6 +8,10 @@ from uuid import UUID
 from sqlalchemy import select
 
 from app.db.session import SessionLocal, set_tenant_context
+from app.features.ai.application.claim_grounding import check_grounded_claims
+from app.features.ai.application.conversation_context_builder import build_agent_input
+from app.features.ai.application.conversation_response_composer import compose_natural_answer
+from app.features.ai.application.conversation_verified_order_evidence import build_verified_order_evidence
 from app.features.ai.application.order_action_policy import authorize_order_action
 from app.integrations.core.contracts.provider import IntegrationConnectionRef
 from app.integrations.core.interfaces import CommerceCapability
@@ -114,7 +118,29 @@ async def verified_widget_order_reply(
         if order is None or order.get("id") != order_id:
             return False, None
         mapped = ShopifyOrderOut.model_validate(order)
-        return True, format_verified_order_status(mapped, opening="I checked your verified order")
+        # Keep the deterministic verified answer available if composition fails.
+        fallback = format_verified_order_status(mapped, opening="I checked your verified order")
+        try:
+            verified = build_verified_order_evidence(
+                mapped.model_dump(mode="json"), identity_verified=True,
+            )
+            composed = await compose_natural_answer(
+                build_agent_input(question, [], channel="widget"),
+                verified.evidence,
+            )
+            grounded = check_grounded_claims(
+                composed.text,
+                [{"excerpt": item["content"]} for item in verified.evidence.context],
+                require_citations=True,
+            )
+            if grounded.accepted:
+                return True, composed.text
+        except Exception as exc:  # noqa: BLE001 - verified fallback, no private payloads in logs.
+            logger.warning(
+                "Verified order composition unavailable: organization_id=%s error_type=%s",
+                organization_id, type(exc).__name__,
+            )
+        return True, fallback
     except Exception as exc:  # noqa: BLE001 - fail closed while retaining the verified session.
         logger.warning(
             "Verified widget order lookup failed: organization_id=%s conversation_id=%s error_type=%s",
