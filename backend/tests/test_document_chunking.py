@@ -42,3 +42,20 @@ def test_single_long_word_does_not_hang_overlap_processing():
         overlap_tokens=1,
     )
     assert [chunk.text for chunk in chunks] == ["x" * 20, "y" * 20]
+
+
+def test_oversized_unbroken_token_is_split_within_budget():
+    from app.features.ai.application.document_chunking import estimate_tokens
+
+    chunks = make_chunks("x" * 600, max_tokens=20, overlap_tokens=0)
+    assert len(chunks) > 1
+    assert all(estimate_tokens(content) <= 20 for content, _, _ in chunks)
+
+
+def test_invalid_chunking_budgets_fail_fast():
+    import pytest
+
+    with pytest.raises(ValueError, match="max_tokens"):
+        make_chunks("example", max_tokens=0)
+    with pytest.raises(ValueError, match="overlap_tokens"):
+        make_chunks("example", max_tokens=20, overlap_tokens=-1)
