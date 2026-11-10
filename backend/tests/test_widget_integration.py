@@ -1363,6 +1363,16 @@ async def test_widget_refund_follow_up_persists_through_otp_and_hands_off(client
     _, organization_id, public_id = await setup_widget(
         client, "widget-refund-otp", origin, ai_enabled=True, ai_reply_mode="auto_reply",
     )
+    from unittest.mock import AsyncMock
+
+    from app.features.ai.application.intent_routing.schemas import RoutingDecision
+
+    router = AsyncMock(return_value=(RoutingDecision.model_validate({
+        "intents": [{"intent": "knowledge", "confidence": 0.99, "requires_knowledge": False, "requires_tools": False}],
+        "reason_code": "refund_item",
+        "follow_up": {"relation": "answer_to_question", "goal": "refund_item", "confidence": 0.99},
+    }), {}, None, None))
+    monkeypatch.setattr("app.features.ai.application.intent_routing.service.invoke_llm_intent_router", router)
     captured = {}
 
     async def send_code(_email, code):
@@ -1424,6 +1434,7 @@ async def test_widget_refund_follow_up_persists_through_otp_and_hands_off(client
     await send("damaged")
     assert "Which item was it?" in (await history())[-1]["content"]
     await send("Two blue mugs")
+    router.assert_awaited_once()
     assert (await history())[-1]["verification_required"] is True
     await send("yes")
     assert (await history())[-1]["verification_required"] is True
@@ -1549,12 +1560,24 @@ async def test_widget_policy_conversation_retrieves_fresh_evidence_per_turn(clie
             ))
         await db.commit()
 
+    submitted_date = datetime.now(UTC).date() - timedelta(days=10)
     replies = [
-        ("You are a helpful", "Report damaged products within seven days of delivery [source 1]. What was the delivery date?"),
+        ("You are a helpful", {
+            "text": "Report damaged products within seven days of delivery [source 1]. When did the package reach you?",
+            "expected_answer": "delivery_date",
+        }),
         ("Audit the candidate", {"spans": [
             {"index": 1, "verdict": "entailed", "sources": [1]},
             {"index": 2, "verdict": "general", "sources": []},
         ]}),
+        ("You classify", {
+            "intents": [{"intent": "knowledge", "confidence": 0.98, "requires_knowledge": True, "requires_tools": False}],
+            "reason_code": "contextual_policy",
+            "follow_up": {
+                "relation": "answer_to_question", "goal": "delivery_date",
+                "date_text": f"{submitted_date:%d %b %Y}", "confidence": 0.99,
+            },
+        }),
         ("Extract the explicit", {"rule": {
             "source": 1, "quote": "Damaged products: report the issue within seven days of delivery.",
             "subject": "reporting damaged products", "measure": "seven days", "start_event": "delivery",
@@ -1611,10 +1634,9 @@ async def test_widget_policy_conversation_retrieves_fresh_evidence_per_turn(clie
     conversation_id = started.json()["conversation_id"]
     headers = {"Origin": origin, "Authorization": f"Bearer {started.json()['visitor_token']}"}
     path = f"/api/v1/widget/conversations/{conversation_id}"
-    submitted_date = datetime.now(UTC).date() - timedelta(days=10)
     for index, (message, phrase, source, model_calls) in enumerate((
-        (None, "What was the delivery date?", 0, 2),
-        (f"{submitted_date:%d %b %Y} is the delivery date.", "estimated deadline around", 0, 2),
+        (None, "When did the package reach you?", 0, 2),
+        (f"{submitted_date:%d %b %Y} is the delivery date.", "estimated deadline around", 0, 3),
         ("I want a replacement.", "reviews replacement requests", 0, 3),
         ("What should I do next?", "Include a photo", 0, 3),
         ("Actually, what is your shipping policy?", "free standard shipping", 1, 2),
@@ -1647,5 +1669,5 @@ async def test_widget_policy_conversation_retrieves_fresh_evidence_per_turn(clie
                 row = await db.scalar(select(Message).where(Message.source_ai_execution_id == execution_id))
                 state = PendingQuestion.model_validate(row.provider_metadata[PENDING_KEY]).policy_context
                 assert state and state.delivery_date.normalized == submitted_date
-    assert len(calls) == 12
+    assert len(calls) == 13
     assert "ai_execution_model_budget" in caplog.text

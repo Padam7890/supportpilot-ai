@@ -16,13 +16,14 @@ from app.features.ai.application.policy_follow_up import (
 
 _NOW = datetime(2026, 11, 10, 12, tzinfo=UTC)
 _CONTEXT = PolicyConversation(
-    topic="My product arrived damaged.", assistant_question="What was the delivery date?",
+    topic="My product arrived damaged.", assistant_question="When did the package reach you?",
+    expected_answer="delivery_date",
 )
 
 
 @pytest.mark.parametrize(("message", "goal", "span", "expected"), [
-    ("1 Nov 2026 is the delivery date", None, None, "delivery_date"),
-    ("It was delivered on 2026-11-01.", None, None, "delivery_date"),
+    ("1 Nov 2026 is the delivery date", "delivery_date", "1 Nov 2026", "delivery_date"),
+    ("It was delivered on 2026-11-01.", "delivery_date", "2026-11-01", "delivery_date"),
     ("November 1, 2026", None, None, "delivery_date"),
     ("13/10/2026", None, None, "delivery_date"),
     ("01/11/2026", None, None, "ambiguous_date"),

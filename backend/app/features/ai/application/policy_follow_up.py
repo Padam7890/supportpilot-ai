@@ -9,9 +9,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# A fast-path hint for the date slot. Other question and follow-up wording
-# is interpreted by the shared structured intent router.
-_DELIVERY_DATE = re.compile(r"\bdelivery date\b", re.IGNORECASE)
 _ABSOLUTE_DATE = re.compile(
     r"\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{4}|"
     r"\d{1,2} [a-z]{3,9} \d{4}|[a-z]{3,9} \d{1,2},? \d{4})\b", re.IGNORECASE,
@@ -40,16 +37,21 @@ class PolicyConversation(BaseModel):
     version: Literal[1] = 1
     topic: str = Field(min_length=1, max_length=240)
     assistant_question: str = Field(min_length=1, max_length=240)
+    expected_answer: Literal["delivery_date", "contextual"] = "contextual"
     delivery_date: DeliveryDate | None = None
     quantity: int | None = Field(default=None, ge=1, le=1000)
     source_document_ids: tuple[UUID, ...] = Field(default=(), max_length=6)
+
+
+RefundReason = Literal["damaged", "defective", "incorrect", "change_of_mind"]
 
 
 class FollowUpInterpretation(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     relation: Literal["new_topic", "follow_up", "answer_to_question", "unclear"]
-    goal: Literal["delivery_date", "replacement", "refund", "next_step", "policy_question", "none"]
+    goal: Literal["delivery_date", "replacement", "refund", "next_step", "policy_question", "refund_reason", "refund_item", "none"]
+    refund_reason: RefundReason | None = None
     date_text: str | None = Field(default=None, max_length=40)
     quantity_text: str | None = Field(default=None, max_length=40)
     confidence: float = Field(ge=0, le=1)
@@ -60,10 +62,6 @@ class PolicyFollowUp:
     kind: Literal["delivery_date", "ambiguous_date", "replacement", "refund", "next_step", "policy_question"]
     query: str
     state: PolicyConversation
-
-
-def asks_delivery_date(text: str) -> bool:
-    return "?" in text[-400:] and bool(_DELIVERY_DATE.search(text[-400:]))
 
 
 def parse_policy_quantity(text: str) -> int | None:
@@ -134,16 +132,13 @@ def resolve_policy_follow_up(
     interpretation: FollowUpInterpretation | None = None,
 ) -> PolicyFollowUp | None:
     if interpretation is None:
-        # Only a standalone date plus conversational date words can use the
-        # fast path. A compound request goes to semantic understanding.
         found = list(_ABSOLUTE_DATE.finditer(message))
-        if len(found) != 1 or not asks_delivery_date(state.assistant_question):
+        if state.expected_answer != "delivery_date" or len(found) != 1:
             return None
         candidate = found[0]
-        surrounding = message[:candidate.start()] + message[candidate.end():]
-        date_words = {"the", "my", "date", "delivery", "is", "was", "on", "it", "arrived",
-                      "delivered", "sorry", "actually", "received", "came"}
-        if set(re.findall(r"\w+", surrounding.casefold())) - date_words:
+        # Plain date values are unambiguous in a typed slot. Sentences can
+        # carry corrections or a second request and use the shared router.
+        if message.strip().rstrip(".!") != candidate[0]:
             return None
         goal, value = "delivery_date", candidate[0]
     else:
@@ -167,7 +162,7 @@ def resolve_policy_follow_up(
             f"{state.topic} reporting deadline from delivery",
             state.model_copy(update={"delivery_date": delivery}),
         )
-    if goal == "none":
+    if goal in {"none", "refund_reason", "refund_item"}:
         return None
     topic = {
         "replacement": "replacement exchange policy",

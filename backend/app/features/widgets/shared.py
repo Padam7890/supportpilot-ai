@@ -74,7 +74,6 @@ def widget_message_out(message: Message, *, ai_agent_id: UUID | None = None) -> 
             {"sender": message.sender_type, PENDING_KEY: json.dumps(message.provider_metadata[PENDING_KEY])},
             ai_agent_id,
             datetime.now(UTC),
-            allow_legacy=False,
         )
     return WidgetMessageOut(
         id=message.id,

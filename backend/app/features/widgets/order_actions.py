@@ -379,7 +379,7 @@ async def confirm_widget_order_verification(
         if locked is not None and locked.ai_mode == "ai" and latest is not None:
             state = pending_from_assistant(
                 {"sender": latest.sender_type, PENDING_KEY: json.dumps((latest.provider_metadata or {}).get(PENDING_KEY))},
-                locked.ai_agent_id, now, allow_legacy=False,
+                locked.ai_agent_id, now,
             )
             if state and state.stage == "refund_verification" and state.refund_reason and state.item_message_id:
                 state = state.model_copy(update={
