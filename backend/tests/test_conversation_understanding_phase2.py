@@ -105,3 +105,34 @@ def test_new_topic_does_not_inherit_old_topic() -> None:
     )
     assert result.topic_switch is True
     assert "delivery" not in result.retrieval_query.casefold()
+
+
+def test_requested_handoff_does_not_repeat_on_new_product_question() -> None:
+    from app.features.ai.application.follow_up import (
+        order_verification_question,
+        resolve_order_support,
+    )
+
+    pending = order_verification_question().model_copy(
+        update={"order_number_unavailable": True, "handoff_status": "requested"}
+    )
+    assert resolve_order_support("do you have a mobile phone?", pending) is None
+    assert resolve_order_support("store team doesnt follow me", pending) is None
+
+
+def test_unresolved_order_handoff_allows_new_product_subject() -> None:
+    from app.features.ai.application.follow_up import (
+        order_verification_question,
+        resolve_order_support,
+    )
+
+    pending = order_verification_question().model_copy(
+        update={"order_number_unavailable": True, "handoff_status": "offered"}
+    )
+    assert resolve_order_support("do you have a mobile phone?", pending) is None
+
+
+def test_mobile_phone_question_routes_to_knowledge_not_handoff() -> None:
+    from app.features.ai.application.conversation_orchestration import plan_widget_turn
+
+    assert plan_widget_turn("do you have a mobile phone?", []).route == "knowledge"
