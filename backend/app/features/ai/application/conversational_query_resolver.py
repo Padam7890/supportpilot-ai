@@ -61,7 +61,11 @@ async def resolve_conversational_query(
         'with keys relation, standalone_question, confidence. relation must be '
         '"follow_up", "new_topic", or "unclear". Rewrite as a standalone QUESTION '
         "preserving the customer's intent and entities. Use previous assistant "
-        "questions to interpret short answers. Never invent product, policy, "
+        "questions to interpret short answers, including dates, quantities, names, "
+        "and yes/no answers. If the assistant asked for a delivery date and the "
+        "customer supplies one, retain the supplied date verbatim and ask what "
+        "the verified store policy says about the reporting deadline; do not "
+        "assert eligibility or compute deadlines without evidence. Never invent product, policy, "
         "order, or identity facts. Never turn a question into an instruction to "
         "perform a refund, cancellation, payment, or order operation. If unclear, "
         "return the original text and relation unclear."
