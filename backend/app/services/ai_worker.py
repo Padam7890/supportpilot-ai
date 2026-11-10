@@ -40,9 +40,9 @@ from app.features.ai.application.knowledge_inventory import is_knowledge_invento
 from app.features.ai.application.playground_execution import complete_playground_knowledge_inventory
 from app.features.ai.application.playground_routing import route_playground_conversation
 from app.features.ai.application.guarded_generation import generate_guarded_draft
+from app.features.ai.application.generated_reply_persistence import complete_non_widget_generated_reply
 from app.features.ai.application.missing_evidence_policy import plan_missing_evidence_reply
 from app.features.ai.application.widget_failure_fallback import plan_widget_failure_fallback
-from app.features.ai.application.retrieval_search import citations_remain_authorized
 from app.features.ai.application.widget_orders import _question_order_number
 from app.features.ai.application.widget_replies import (
     finish_widget_reply,
@@ -457,83 +457,13 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 stream_source_ids=stream_source_ids,
             )
             return
-        async with SessionLocal() as db:
-            failure_stage = "result_persistence"
-            await set_tenant_context(db, organization_id)
-            row = await db.scalar(
-                select(AIExecution)
-                .where(
-                    AIExecution.id == execution_id,
-                    AIExecution.organization_id == organization_id,
-                    AIExecution.status == "running",
-                )
-                .with_for_update()
-            )
-            if row is None:
-                await db.rollback()
-                return
-            active_agent = await db.scalar(
-                select(AIAgent)
-                .where(
-                    AIAgent.id == row.ai_agent_id,
-                    AIAgent.organization_id == organization_id,
-                    AIAgent.status == "active",
-                )
-                .with_for_update()
-            )
-            if active_agent is None:
-                row.status = "succeeded"
-                row.integration_context_encrypted = None
-                row.playground_history = None
-                row.draft = "This AI bot is inactive. Activate it and run the request again."
-                row.safe_summary = (
-                    "The selected AI bot was deactivated before the answer completed."
-                )
-                row.citations = []
-                row.error_code = None
-                row.completed_at = now
-                await db.commit()
-                return
-            if not await citations_remain_authorized(
-                db,
-                organization_id=organization_id,
-                ai_agent_id=row.ai_agent_id,
-                citations=citations,
-            ):
-                row.status = "succeeded"
-                row.integration_context_encrypted = None
-                row.playground_history = None
-                row.draft = (
-                    "A knowledge source used for this answer changed before it completed. "
-                    "Please run the request again to use the bot’s current sources."
-                )
-                row.safe_summary = (
-                    "A cited knowledge source was removed or changed before this answer completed; "
-                    "the generated response was suppressed."
-                )
-                row.citations = []
-                row.error_code = None
-                row.completed_at = now
-                await db.commit()
-                return
-            row.status = "succeeded"
-            row.integration_context_encrypted = None
-            row.playground_history = None
-            row.draft = generated_draft
-            output_label = "Reply draft" if row.kind == "reply_draft" else "Playground answer"
-            row.safe_summary = (
-                "Generated answer failed knowledge grounding checks; a safe fallback was used."
-                if not guarded.accepted else
-                f"{output_label} generated using {len(citations)} knowledge source(s)."
-            )
-            row.citations = citations
-            row.tool_outcomes = outcomes
-            raw_usage = guarded.usage
-            row.usage = raw_usage if isinstance(raw_usage, dict) else {}
-            row.model_name = guarded.model_name
-            row.error_code = None
-            row.completed_at = now
-            await db.commit()
+        failure_stage = "result_persistence"
+        await complete_non_widget_generated_reply(
+            organization_id,
+            execution_id,
+            guarded=guarded,
+            completed_at=now,
+        )
     except Exception as exc:  # noqa: BLE001 - record failures safely and keep the worker alive
         failure = assess_execution_failure(exc, failure_stage)
         failure_code = failure.code
