@@ -10,6 +10,9 @@ from sqlalchemy import select
 
 from app.core.observability import current_correlation_id
 from app.db.session import SessionLocal, set_tenant_context
+from app.features.ai.application.catalog_conversation import (
+    answer_catalog_follow_up, remember_catalog,
+)
 from app.features.ai.application.catalog_discovery import (
     list_verified_products, render_product_listing, resolve_catalog_connection,
 )
@@ -326,6 +329,47 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                     **{k: intent_router_outcome.get(k) for k in ("mode", "primary_intent", "metrics")},
                 )
             router_outcomes = [intent_router_outcome] if intent_router_outcome else []
+            # Resolve product references against the last authorized catalog page
+            # before falling through to generic RAG or clarification.
+            if turn.route in {"knowledge", "clarification"} and execution.conversation_id:
+                async with SessionLocal() as db:
+                    await set_tenant_context(db, organization_id)
+                    from app.models import Conversation
+                    conversation = await db.scalar(
+                        select(Conversation).where(
+                            Conversation.id == execution.conversation_id,
+                            Conversation.organization_id == organization_id,
+                        )
+                    )
+                    if conversation is not None:
+                        connection_id = await resolve_catalog_connection(
+                            db, organization_id,
+                            bound_connection_id=conversation.integration_connection_id,
+                        )
+                        catalog_answer = (
+                            await answer_catalog_follow_up(
+                                db, conversation, organization_id,
+                                connection_id, execution.question,
+                            )
+                            if connection_id is not None else None
+                        )
+                    else:
+                        catalog_answer = None
+                if catalog_answer is not None:
+                    trace_catalog_route(
+                        execution_id=str(execution_id), route="catalog_follow_up",
+                        tool="catalog_conversation", follow_up=follow_up_reason,
+                        catalog_request=False, connection_resolved=True,
+                    )
+                    await finish_widget_reply(
+                        organization_id, execution_id, draft=catalog_answer,
+                        reply_status=delivery_status,
+                        safe_summary="Verified catalog follow-up resolved from store-bound context.",
+                        citations=[],
+                        outcomes=[{"tool": "catalog_conversation", "status": "completed"}],
+                        usage={}, model_name=None,
+                    )
+                    return
             if turn.route == "inventory":
                 async with SessionLocal() as db:
                     await set_tenant_context(db, organization_id)
@@ -348,6 +392,9 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                         )
                         if connection_id is not None else []
                     )
+                    if conversation is not None and connection_id is not None and products:
+                        remember_catalog(conversation, products, connection_id)
+                        await db.commit()
                 trace_catalog_route(
                     execution_id=str(execution_id), route="inventory_result",
                     tool="catalog_discovery", follow_up=follow_up_reason,
