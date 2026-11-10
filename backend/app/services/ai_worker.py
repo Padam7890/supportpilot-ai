@@ -3,7 +3,7 @@
 import json
 import logging
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import select
@@ -41,6 +41,7 @@ from app.features.ai.application.playground_execution import complete_playground
 from app.features.ai.application.playground_routing import route_playground_conversation
 from app.features.ai.application.guarded_generation import generate_guarded_draft
 from app.features.ai.application.missing_evidence_policy import plan_missing_evidence_reply
+from app.features.ai.application.widget_failure_fallback import plan_widget_failure_fallback
 from app.features.ai.application.retrieval_search import citations_remain_authorized
 from app.features.ai.application.widget_orders import _question_order_number
 from app.features.ai.application.widget_replies import (
@@ -619,25 +620,21 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                     failure_stage in {"provider_configuration", "provider_generation"}
                     and isinstance(exc, AIProviderError)
                 )
-                fallback_draft = (
-                    WIDGET_PROVIDER_UNAVAILABLE_REPLY
-                    if provider_failed and retrieval_match_count
-                    else AI_TEMPORARY_FAILURE_REPLY
+                fallback = plan_widget_failure_fallback(
+                    failure_stage=failure_stage,
+                    provider_failed=provider_failed,
+                    retrieval_match_count=retrieval_match_count,
+                    provider_unavailable_reply=WIDGET_PROVIDER_UNAVAILABLE_REPLY,
+                    temporary_failure_reply=AI_TEMPORARY_FAILURE_REPLY,
                 )
-                summary = {
-                    "provider_configuration": "Chat provider configuration prevented generation.",
-                    "provider_generation": "AI generation could not complete.",
-                    "knowledge_retrieval": "Knowledge retrieval could not complete.",
-                    "reply_persistence": "The generated reply could not be saved.",
-                }.get(failure_stage, "AI reply processing could not complete.")
                 await finish_widget_reply(
                     organization_id,
                     execution_id,
-                    draft=fallback_draft,
+                    draft=fallback.draft,
                     reply_status="escalated",
-                    safe_summary=summary + " A safe handoff reply was prepared.",
-                    citations=citations if failure_stage == "provider_configuration" else [],
-                    outcomes=outcomes if failure_stage == "provider_configuration" else [],
+                    safe_summary=fallback.safe_summary,
+                    citations=citations if fallback.retain_retrieval_evidence else [],
+                    outcomes=outcomes if fallback.retain_retrieval_evidence else [],
                     usage={},
                     model_name=None,
                     failure_code=failure_code,
