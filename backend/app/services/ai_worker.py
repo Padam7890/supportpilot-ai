@@ -34,6 +34,7 @@ from app.features.ai.application.follow_up import (
 )
 from app.features.ai.application.intent_extraction import extract_intent
 from app.features.ai.application.widget_turn_routing import resolve_widget_turn
+from app.features.ai.application.widget_agent_pilot import try_complete_widget_agent_pilot
 from app.features.ai.application.widget_sensitive_execution import complete_sensitive_widget_turn
 from app.features.ai.application.widget_follow_up_execution import complete_widget_follow_up
 from app.features.ai.application.knowledge_inventory import is_knowledge_inventory_question
@@ -285,6 +286,15 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 routed_question = follow_up.routed_question
                 if follow_up.decision == "policy_timing":
                     follow_up_query = routed_question
+            if follow_up is None and await try_complete_widget_agent_pilot(
+                organization_id=organization_id,
+                execution_id=execution_id,
+                ai_agent_id=execution.ai_agent_id,
+                message=routed_question,
+                transcript=transcript,
+                delivery_mode=execution.delivery_mode,
+            ):
+                return
             route_result = await resolve_widget_turn(
                 routed_question,
                 transcript,
