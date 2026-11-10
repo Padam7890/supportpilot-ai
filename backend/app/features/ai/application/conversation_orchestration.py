@@ -132,11 +132,10 @@ def plan_widget_turn(
     informational_question = bool(re.match(
         r"^\\s*(?:what|why|when|where|which|who|how|is|are|does|do|did|"
         r"should|would|could|can)\\b", message, re.IGNORECASE,
-    )) and not bool(
-        widget_ai.CANCELLATION_REQUEST.search(message)
-        or widget_ai.REFUND_ACTION.search(message)
-        or widget_ai.RETURN_ACTION.search(message)
-    )
+    )) and not bool(re.match(
+        r"^\\s*(?:(?:can|could|would|will)\\s+you\\s+|please\\s+)",
+        message, re.IGNORECASE,
+    ))
     sensitive = None if informational_question else widget_ai.widget_sensitive_reply(message)
     if sensitive is not None:
         draft, safe_summary = sensitive
