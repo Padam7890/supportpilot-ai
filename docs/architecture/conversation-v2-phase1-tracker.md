@@ -31,3 +31,10 @@
 ## Latest implementation note
 
 Failure persistence and retry transitions now use `persist_execution_failure`. The worker retains exception diagnostics and last-resort widget handoff. Phase 1 remains **not complete** until focused runtime verification, import checks, and architecture review; CI/CD cleanup is deferred, not the correctness gate.
+
+## Manual compatibility review — latest pass
+
+- Inspected worker delegation, guarded generation, Playground routing, missing-evidence policy, sensitive order support, and verified refund follow-up.
+- Fixed a verified refund review path that returned `completed=True` without persisting any result when its retrieval context disappeared. It now raises a typed exception so the worker's existing failure handling runs rather than silently stranding the execution.
+- Added a targeted regression scenario for the missing-context path.
+- **Verification limitation:** This is a source-level review, not a successful runtime test. GitHub checkout in the execution environment failed due to DNS/network resolution, so imports and tests remain unverified. The tracker stays at 10/11; Phase 1 is not complete.
