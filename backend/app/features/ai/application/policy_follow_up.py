@@ -15,13 +15,16 @@ def resolve_policy_option(message: str, transcript: list[dict[str, str]]) -> str
     match = _REASON.fullmatch(message.strip())
     if not match or not transcript:
         return None
-    previous = transcript[-1]
+    prior = transcript[:-1] if transcript[-1].get("sender") in {"customer", "user"} and transcript[-1].get("content", "").strip() == message.strip() else transcript
+    if not prior:
+        return None
+    previous = prior[-1]
     if previous.get("sender") != "assistant":
         return None
     prompt = previous.get("content", "")
     if "?" not in prompt or not _POLICY.search(prompt) and not (
         _CHOICE.search(prompt) and re.search(r"\b(return|refund)\b", " ".join(
-            turn.get("content", "") for turn in transcript[-6:] if turn.get("sender") == "customer"
+            turn.get("content", "") for turn in prior[-6:] if turn.get("sender") == "customer"
         ), re.I)
     ):
         return None
