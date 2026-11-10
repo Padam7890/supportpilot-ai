@@ -21,7 +21,7 @@ async def complete_playground_knowledge_inventory(
     organization_id: UUID,
     execution_id: UUID,
     *,
-    ai_agent_id: UUID,
+    ai_agent_id: UUID | None,
 ) -> None:
     """List assigned knowledge without a model call or cross-tenant reads."""
     now = datetime.now(UTC)
