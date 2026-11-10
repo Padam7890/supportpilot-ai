@@ -1,7 +1,7 @@
-"""Composition root for the standalone read-only conversation agent.
+"""Composition root for the read-only conversation agent.
 
-The caller must supply server-authenticated tenant and bot identifiers. This
-module is intentionally not invoked from the live execution worker yet.
+The caller must supply server-authenticated tenant and bot identifiers. The
+widget worker currently invokes this runtime only for its guarded greeting pilot.
 """
 
 from uuid import UUID
