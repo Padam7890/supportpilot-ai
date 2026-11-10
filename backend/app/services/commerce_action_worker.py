@@ -7,6 +7,7 @@ from uuid import UUID
 from sqlalchemy import and_, or_, select
 
 from app.workers.domain.lease_policy import COMMERCE_ACTION_LEASE as ACTION_LEASE_TIMEOUT
+from app.features.ai.application.shopify_dispatch_policy import authorize_shopify_dispatch
 from app.db.session import SessionLocal, set_tenant_context
 from app.integrations.providers.shopify.actions import (
     ShopifyOrderActionError,
@@ -17,6 +18,7 @@ from app.integrations.providers.shopify.orders import lookup_authorized_order
 from app.integrations.providers.shopify.security import decrypt_credential
 from app.models import CommerceAction, CommerceActionAudit, Customer, ShopifyInstallation, Ticket
 from app.services.mock_commerce import MockCommerceService
+from app.services.commerce_action_recovery import decide_lease_recovery
 
 logger = logging.getLogger(__name__)
 MAX_EXECUTION_ATTEMPTS = 3
@@ -105,7 +107,36 @@ async def claim_commerce_action(organization_id: UUID) -> UUID | None:
             )
             if not (is_queued or is_reclaimable):
                 continue
-            if action.execution_attempt_count >= MAX_EXECUTION_ATTEMPTS:
+            # Shopify cancellations are non-idempotent at the provider boundary.
+            # A timed-out lease can mean Shopify accepted the mutation while our
+            # worker crashed before committing success. Never dispatch it again.
+            recovery = decide_lease_recovery(
+                provider=action.provider,
+                status=action.execution_status,
+                lease_expired=is_reclaimable,
+                attempts=action.execution_attempt_count,
+                max_attempts=MAX_EXECUTION_ATTEMPTS,
+            )
+            if recovery == "manual_reconciliation":
+                action.execution_status = "failed"
+                action.execution_error_code = "shopify_outcome_unknown_manual_review"
+                action.execution_completed_at = now
+                db.add(
+                    CommerceActionAudit(
+                        organization_id=organization_id,
+                        commerce_action_id=action.id,
+                        actor_user_id=None,
+                        event_type="execution_failed",
+                        details={
+                            "error_code": action.execution_error_code,
+                            "attempt": action.execution_attempt_count,
+                            "manual_reconciliation_required": True,
+                        },
+                    )
+                )
+                await db.commit()
+                return None
+            if recovery == "retry_limit":
                 action.execution_status = "failed"
                 action.execution_error_code = "worker_lease_retry_limit"
                 action.execution_completed_at = now
@@ -159,7 +190,11 @@ async def fail_exhausted_action_leases(organization_id: UUID) -> bool:
             await db.rollback()
             return False
         action.execution_status = "failed"
-        action.execution_error_code = "worker_lease_retry_limit"
+        action.execution_error_code = (
+            "shopify_outcome_unknown_manual_review"
+            if action.provider == "shopify"
+            else "worker_lease_retry_limit"
+        )
         action.execution_completed_at = now
         db.add(
             CommerceActionAudit(
@@ -192,6 +227,8 @@ async def process_commerce_action(organization_id: UUID, action_id: UUID) -> Non
         correlation_id = action.correlation_id
         operation = {
             "idempotency_key_hash": action.idempotency_key_hash,
+            "approval_status": action.approval_status,
+            "execution_status": action.execution_status,
             "action_type": action.action_type,
             "provider": action.provider,
             "order_number": action.order_number,
@@ -242,6 +279,18 @@ async def process_commerce_action(organization_id: UUID, action_id: UUID) -> Non
 
     try:
         if operation["provider"] == "shopify":
+            decision = authorize_shopify_dispatch(
+                provider=operation["provider"],
+                action_type=operation["action_type"],
+                approval_status=operation["approval_status"],
+                execution_status=operation["execution_status"],
+                shopify_order_id=operation["shopify_order_id"],
+                cancel_refund=operation["cancel_refund"],
+                cancel_restock=operation["cancel_restock"],
+                cancel_notify_customer=operation["cancel_notify_customer"],
+            )
+            if not decision.allowed:
+                raise ShopifyOrderActionError(decision.reason)
             if operation.get("shopify_error"):
                 raise ShopifyOrderActionError(operation["shopify_error"])
             customer_email = operation.get("customer_email")

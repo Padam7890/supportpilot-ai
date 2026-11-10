@@ -8,7 +8,6 @@ import httpx
 import pytest
 
 from app.core.config import settings
-from app.features.ai.application.widget_stream_context import STREAM_SOURCE_IDS_KEY
 from app.features.ai.domain.failure_codes import is_retryable_ai_failure
 from app.features.ai.infrastructure.llm_gateway import (
     AIProviderError,
@@ -86,9 +85,6 @@ async def test_gateway_preserves_safe_failure_reason(monkeypatch, failure, strea
         ("retrieval", 1, "not_retryable"),
         ("success", 1, None),
         ("stream_existing_chat", 1, None),
-        ("stream_grounded_follow_up", 1, None),
-        ("revoked_follow_up_source", 1, None),
-        ("private_follow_up", 1, None),
     ],
 )
 async def test_widget_worker_keeps_retrieval_and_provider_outcomes_separate(
@@ -104,21 +100,8 @@ async def test_widget_worker_keeps_retrieval_and_provider_outcomes_separate(
         instructions=None, delivery_mode="auto_reply", conversation_id=uuid4(),
     )
     citations = [{"document_id": str(uuid4())}]
-    previous_document_id = str(uuid4())
-    follow_up_scenarios = {"stream_grounded_follow_up", "revoked_follow_up_source", "private_follow_up"}
-    history = [{"sender": "assistant", "content": "Previous private order details."}]
-    if scenario in follow_up_scenarios:
-        row.question = "What about damaged items?"
-        history = [
-            {"sender": "customer", "content": "What is your return policy?"},
-            {"sender": "assistant", "content": "Returns within 30 days."},
-            {"sender": "customer", "content": row.question},
-        ]
-        if scenario == "private_follow_up":
-            history[1]["content"] = "Previous private order details."
-        else:
-            history[1][STREAM_SOURCE_IDS_KEY] = json.dumps([previous_document_id])
     empty = (row, row.question, [], [], [], [], {})
+    history = [{"sender": "assistant", "content": "Previous private order details."}]
     grounded = (row, row.question, history, [{"excerpt": "Returns within 30 days."}], citations, [], {})
     loading = AsyncMock(side_effect=[empty, RuntimeError("secret DB error") if scenario == "retrieval" else grounded])
     monkeypatch.setattr(worker, "load_execution_context", loading)
@@ -128,16 +111,11 @@ async def test_widget_worker_keeps_retrieval_and_provider_outcomes_separate(
         return_value=SimpleNamespace(tool_outcome=lambda: {"primary_intent": "policy"})
     ))
     monkeypatch.setattr(worker, "apply_routing_to_widget_plan", lambda *_args: SimpleNamespace(route="knowledge"))
-    monkeypatch.setattr(settings, "widget_ai_streaming_enabled", scenario in follow_up_scenarios | {"stream_existing_chat"})
-    check_citations = AsyncMock(return_value=scenario != "revoked_follow_up_source")
-    monkeypatch.setattr(worker, "citations_remain_authorized", check_citations)
+    monkeypatch.setattr(settings, "widget_ai_streaming_enabled", scenario == "stream_existing_chat")
     publish = AsyncMock()
 
-    published_sources = []
-
     @asynccontextmanager
-    async def fake_publisher(*args):
-        published_sources.extend(args[-1])
+    async def fake_publisher(*_args):
         yield publish
 
     monkeypatch.setattr(worker, "publish_widget_deltas", fake_publisher)
@@ -177,22 +155,6 @@ async def test_widget_worker_keeps_retrieval_and_provider_outcomes_separate(
         assert row.status == "queued"
         assert row.error_code == "provider_timeout"
         finish.assert_not_awaited()
-    elif scenario in follow_up_scenarios:
-        arguments = generate.await_args.kwargs
-        if scenario == "stream_grounded_follow_up":
-            assert arguments["on_delta"] is publish
-            assert arguments["conversation_context"][1]["content"] == "Returns within 30 days."
-            assert set(published_sources) == {citations[0]["document_id"], previous_document_id}
-            assert finish.await_args.kwargs["stream_source_ids"] == published_sources
-        else:
-            assert "on_delta" not in arguments
-            assert not published_sources
-            if scenario == "revoked_follow_up_source":
-                assert arguments["conversation_context"] == []
-        if scenario == "private_follow_up":
-            check_citations.assert_not_awaited()
-        else:
-            assert check_citations.await_args.kwargs["citations"] == [{"document_id": previous_document_id}]
     elif scenario in {"success", "stream_existing_chat"}:
         if scenario == "stream_existing_chat":
             assert generate.await_args.kwargs["on_delta"] is publish

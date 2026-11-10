@@ -1,11 +1,12 @@
 """Tenant- and bot-scoped hybrid retrieval shared by AI runs and diagnostics."""
 
 import logging
+import re
 import time
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import func, literal, literal_column, select
+from sqlalchemy import func, literal, literal_column, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -32,6 +33,22 @@ from app.models.knowledge_document import Vector
 
 logger = logging.getLogger(__name__)
 RRF_K = 60
+
+
+def _fast_relevance_boost(query_terms: set[str], row: object) -> float:
+    """Bounded lexical tie-breaker; never a substitute for evidence validation."""
+    if not query_terms:
+        return 0.0
+    content = str(getattr(row, "content", "") or "")
+    title = (
+        f"{getattr(row, 'document_name', '') or ''} "
+        f"{getattr(row, 'knowledge_base_name', '') or ''}"
+    )
+    content_terms = set(build_retrieval_terms(content, limit=256))
+    title_terms = set(build_retrieval_terms(title, limit=64))
+    content_coverage = len(query_terms & content_terms) / len(query_terms)
+    title_coverage = len(query_terms & title_terms) / len(query_terms)
+    return min(0.03, content_coverage * 0.025 + title_coverage * 0.005)
 
 
 def reciprocal_rank_fusion(
@@ -132,6 +149,7 @@ async def _embedding_readiness(
                     DocumentEmbedding.embedding_model == settings.ai_embedding_model,
                     DocumentEmbedding.embedding_version == settings.ai_embedding_version,
                     DocumentEmbedding.dimensions == settings.ai_embedding_dimensions,
+                    DocumentEmbedding.content_hash == DocumentChunk.content_hash,
                     DocumentEmbedding.content_hash == DocumentChunk.content_hash,
                 )
             )
@@ -296,7 +314,7 @@ async def search_agent_knowledge(
             ).all()
         )
         if len(keyword_rows) < keyword_limit:
-            seen = {row.document_id for row in keyword_rows}
+            seen = {(row.document_id, row.chunk_index) for row in keyword_rows}
             keyword_rows.extend(
                 (
                     await db.execute(
@@ -305,7 +323,8 @@ async def search_agent_knowledge(
                         )
                         .where(
                             (document_vector.op("@@")(ts_query)) | (base_vector.op("@@")(ts_query)),
-                            DocumentChunk.document_id.not_in(seen) if seen else True,
+                            tuple_(DocumentChunk.document_id, DocumentChunk.chunk_index).not_in(seen)
+                            if seen else True,
                         )
                         .order_by(rank.desc(), DocumentChunk.document_id, DocumentChunk.chunk_index)
                         .limit(keyword_limit - len(keyword_rows))
@@ -359,6 +378,7 @@ async def search_agent_knowledge(
                     DocumentEmbedding.embedding_model == settings.ai_embedding_model,
                     DocumentEmbedding.embedding_version == settings.ai_embedding_version,
                     DocumentEmbedding.dimensions == settings.ai_embedding_dimensions,
+                    DocumentEmbedding.content_hash == DocumentChunk.content_hash,
                 )
             )
             if settings.ai_retrieval_similarity_threshold is not None:
@@ -419,10 +439,19 @@ async def search_agent_knowledge(
             rank_index,
         )
 
+    query_terms = set(re.findall(r"[\w\u0900-\u097f]+", search_text.casefold()))
+    rerank_started = time.monotonic()
     ranked = sorted(
         merged.values(),
         key=lambda item: (
-            -float(item["score"]),
+            -(
+                float(item["score"])
+                + (
+                    _fast_relevance_boost(query_terms, item["row"])
+                    if settings.ai_retrieval_rerank_enabled
+                    else 0.0
+                )
+            ),
             str(item["row"].document_id),
             int(item["row"].chunk_index),
         ),
@@ -436,13 +465,13 @@ async def search_agent_knowledge(
         normalized_excerpt = excerpt.casefold()
         if settings.ai_retrieval_dedupe and normalized_excerpt in seen_excerpts:
             continue
-        seen_excerpts.add(normalized_excerpt)
         estimated_tokens = max(1, (len(excerpt) + 3) // 4)
         if estimated_tokens > remaining_tokens:
             continue
         if float(candidate["score"]) < settings.ai_retrieval_min_rrf_score:
             continue
         remaining_tokens -= estimated_tokens
+        seen_excerpts.add(normalized_excerpt)
         matches.append(
             KnowledgeMatch(
                 document_id=row.document_id,
@@ -501,6 +530,8 @@ async def search_agent_knowledge(
             "latency_ms": latency_ms,
             "embedding_status": embedding_status,
             "retrieval_outcome": retrieval_outcome,
+            "reranking_enabled": settings.ai_retrieval_rerank_enabled,
+            "reranking_latency_ms": round((time.monotonic() - rerank_started) * 1000),
         },
     )
     return KnowledgeSearchResult(

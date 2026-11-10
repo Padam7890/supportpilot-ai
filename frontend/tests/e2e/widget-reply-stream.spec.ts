@@ -118,6 +118,10 @@ test("widget renders a partial reply, resumes after disconnect, and keeps one fi
   )).toBeGreaterThan(0);
   await expect(partial).toContainText("Shipping takes two days.");
   await expect.poll(async () => Number(await widget.getAttribute("data-burst-paints"))).toBeGreaterThan(2);
+  // The browser must paint several intermediate lengths even when the final
+  // network burst contains most of the response in a single read.
+  const observedPaints = Number(await widget.getAttribute("data-burst-paints"));
+  expect(observedPaints).toBeGreaterThan(2);
   await page.evaluate(() => window.dispatchEvent(new Event("commit-history")));
   await expect(widget.locator(".assistant .message")).toHaveCount(1);
   const reply = widget.locator(".assistant:not(.streaming-row) .message");

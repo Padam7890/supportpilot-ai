@@ -155,3 +155,106 @@ async def test_stream_endpoint_requires_conversation_scoped_visitor_token(client
     denied = await client.get(path, headers={"Authorization": f"Bearer {token}"})
     assert denied.status_code == 403
     assert "text/event-stream" not in denied.headers["content-type"]
+
+
+def test_terminal_event_rejects_uncommitted_text():
+    row = SimpleNamespace(id=uuid4(), attempt_count=1)
+    conversation = uuid4()
+    with pytest.raises(ValidationError):
+        ReplyEvent(
+            execution_id=row.id,
+            conversation_id=conversation,
+            sequence=f"{row.id}:1:0-0",
+            event_type="execution.cancelled",
+            timestamp=datetime.now(UTC),
+            payload=StreamPayload(text="Unsafe provisional content"),
+        )
+
+
+def test_completed_event_requires_persisted_message_id():
+    row = SimpleNamespace(id=uuid4(), attempt_count=1)
+    conversation = uuid4()
+    with pytest.raises(ValidationError):
+        ReplyEvent(
+            execution_id=row.id,
+            conversation_id=conversation,
+            sequence=f"{row.id}:1:0-0",
+            event_type="message.completed",
+            timestamp=datetime.now(UTC),
+            payload=StreamPayload(),
+        )
+
+
+def test_delta_event_cannot_contain_terminal_message_id():
+    row = SimpleNamespace(id=uuid4(), attempt_count=1)
+    conversation = uuid4()
+    with pytest.raises(ValidationError):
+        ReplyEvent(
+            execution_id=row.id,
+            conversation_id=conversation,
+            sequence=f"{row.id}:1:1-0",
+            event_type="message.delta",
+            timestamp=datetime.now(UTC),
+            payload=StreamPayload(text="partial", message_id=uuid4()),
+        )
+
+
+def test_committed_reply_chunks_reassemble_exact_text():
+    from app.features.widgets.reply_stream import committed_reply_chunks
+
+    answer = "A verified response. " * 30
+    chunks = committed_reply_chunks(answer, "0-0")
+    assert "".join(part for _, part in chunks) == answer
+    assert chunks[0][0] == "18446744073709551614-1"
+
+
+def test_committed_reply_chunks_resume_without_duplicate_text():
+    from app.features.widgets.reply_stream import committed_reply_chunks
+
+    answer = "Policy text. " * 40
+    chunks = committed_reply_chunks(answer, "0-0")
+    assert len(chunks) > 2
+    resumed = committed_reply_chunks(answer, chunks[1][0])
+    assert resumed == chunks[2:]
+
+
+def test_committed_reply_chunks_handle_invalid_and_expired_cursors():
+    from app.features.widgets.reply_stream import committed_reply_chunks
+
+    answer = "verified"
+    assert committed_reply_chunks(answer, "bad") == [("18446744073709551614-1", answer)]
+    assert committed_reply_chunks(answer, "18446744073709551614-999999") == []
+    assert committed_reply_chunks("", "0-0") == []
+
+
+def test_committed_reply_playback_never_exceeds_widget_limit():
+    from app.features.widgets.reply_stream import (
+        MAX_COMMITTED_REPLY_CHARS,
+        committed_reply_chunks,
+    )
+
+    text = "a" * (MAX_COMMITTED_REPLY_CHARS + 2000)
+    chunks = committed_reply_chunks(text, "0-0")
+    assert "".join(part for _, part in chunks) == "a" * MAX_COMMITTED_REPLY_CHARS
+    assert all(0 < len(part) <= 96 for _, part in chunks)
+
+
+def test_committed_cursor_does_not_collide_with_redis_offsets():
+    from app.features.widgets.reply_stream import committed_reply_chunks
+
+    text = "verified response"
+    assert committed_reply_chunks(text, "123456789-0") == [
+        ("18446744073709551614-1", text)
+    ]
+
+
+def test_committed_reply_offset_is_attempt_scoped_in_event():
+    from app.features.widgets.reply_stream import committed_reply_chunks
+
+    execution_id, conversation_id = uuid4(), uuid4()
+    row = SimpleNamespace(id=execution_id, attempt_count=3)
+    offset, part = committed_reply_chunks("verified", "0-0")[0]
+    frame = encode_event(row, conversation_id, "message.delta", offset, text=part)
+    event = ReplyEvent.model_validate_json(frame.split("data: ", 1)[1])
+    assert event.sequence == f"{execution_id}:3:{offset}"
+    assert event.payload.text == "verified"

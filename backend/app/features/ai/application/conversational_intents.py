@@ -64,6 +64,13 @@ _EMOTIONAL = re.compile(
     re.IGNORECASE,
 )
 
+_OFF_TOPIC = re.compile(
+    r"(?:tell me (?:a |one )?joke|make me laugh|"
+    r"what is the meaning of life|can you write (?:my |a )?(?:essay|poem)|"
+    r"solve (?:my |this )?homework)",
+    re.IGNORECASE,
+)
+
 _END_PUNCTUATION = re.compile(r"[.!?,;:]+$")
 
 
@@ -148,6 +155,12 @@ def classify_conversational_intent(message: str) -> ConversationalIntent | None:
             "Hey! How can I help you today? Ask me a question and I’ll check this bot’s assigned sources.",
             "Hi there! I’m your store’s support assistant. I can help with order updates, product questions, "
             "and store policies. What can I help you with?",
+        )
+    if _social_only_pattern(_OFF_TOPIC, text):
+        return ConversationalIntent(
+            "off_topic",
+            "I'm focused on this bot's assigned support knowledge. Ask me a question about its sources and I'll help.",
+            "I'm here to help with this store's products, policies, and orders. What can I help you find?",
         )
     if _social_only_pattern(_EMOTIONAL, text):
         return ConversationalIntent(

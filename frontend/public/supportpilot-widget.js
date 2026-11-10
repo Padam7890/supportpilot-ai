@@ -131,7 +131,7 @@
   const ACTIVE_HISTORY_REFRESH_MS = 5_000;
   const FINAL_HISTORY_REFRESH_MS = 500;
   const STREAM_WORD_INTERVAL_MS = 30;
-  const STREAM_CATCH_UP_STEPS = 70;
+  const STREAM_MAX_WORDS_PER_FRAME = 2;
   const IDLE_HISTORY_REFRESH_MS = 30_000;
   const MAX_HISTORY_RETRY_MS = 120_000;
   let historyTimer;
@@ -661,8 +661,9 @@
         visibleLength = partialText.length;
       } else {
         const words = partialText.slice(visibleLength).match(/\s*\S+\s*|\s+/g) || [];
-        const step = Math.ceil(words.length / STREAM_CATCH_UP_STEPS);
-        for (const word of words.slice(0, step)) visibleLength += word.length;
+        // Bound the visual catch-up rate: a buffered network burst must not
+        // instantly paint the entire reply and look like non-streaming output.
+        for (const word of words.slice(0, STREAM_MAX_WORDS_PER_FRAME)) visibleLength += word.length;
       }
       nextWordAt = now + STREAM_WORD_INTERVAL_MS;
       renderPartial();
@@ -695,6 +696,8 @@
     const [previousExecution, previousAttempt, previousOffset] = streamCursor.split(":");
     if (executionId !== previousExecution) return false;
     if (attempt !== previousAttempt) return Number(attempt) < Number(previousAttempt);
+    // A malformed cursor must never crash the widget or accept a replay.
+    if (!/^\\d+-\\d+$/.test(offset || "") || !/^\\d+-\\d+$/.test(previousOffset || "")) return true;
     const [time, index] = offset.split("-").map(BigInt);
     const [previousTime, previousIndex] = previousOffset.split("-").map(BigInt);
     return time < previousTime || (time === previousTime && index <= previousIndex);
@@ -713,15 +716,24 @@
       typeof event.timestamp !== "string" ||
       !event.payload || typeof event.payload !== "object"
     ) return false;
-    if (event.event_type !== "execution.status" && alreadyReadSequence(event.sequence)) return false;
+    // Status events are allowed through for state updates; stale deltas are not.
+    if (event.event_type === "message.delta" && alreadyReadSequence(event.sequence)) return false;
     switch (event.event_type) {
       case "execution.queued":
       case "execution.started":
-      case "execution.status":
-        streamCursor = event.sequence;
-        clearPartial();
-        if (waitingForAssistant && !thread.querySelector(".typing-row")) addTyping();
+      case "execution.status": {
+        // A status frame may be repeated during reconnect. Never erase text
+        // already received for the same execution attempt.
+        const previousAttempt = streamCursor.split(":").slice(0, 2).join(":");
+        const incomingAttempt = event.sequence.split(":").slice(0, 2).join(":");
+        if (previousAttempt && previousAttempt !== incomingAttempt) clearPartial();
+        // Status offsets (0-0) must not rewind a real Redis delta cursor.
+        if (!partialText || previousAttempt !== incomingAttempt) {
+          streamCursor = event.sequence;
+        }
+        if (waitingForAssistant && !partialText && !thread.querySelector(".typing-row")) addTyping();
         return false;
+      }
       case "message.delta":
         if (typeof event.payload?.text !== "string" || !event.payload.text) return false;
         if (partialText.length + event.payload.text.length > 16000) throw new Error("Reply stream exceeded its limit");
@@ -769,14 +781,20 @@
       while (!signal.aborted) {
         const { value, done } = await reader.read();
         if (done) return false;
+        // Keep a trailing CR until the next network chunk: CRLF may be
+        // split between reads. Also accept bare CR, permitted by SSE.
         buffer += value;
+        const trailingCR = buffer.endsWith("\r");
+        const normalized = (trailingCR ? buffer.slice(0, -1) : buffer)
+          .replace(/\r\n|\r/g, "\n");
+        buffer = normalized + (trailingCR ? "\r" : "");
         let boundary;
         while ((boundary = buffer.indexOf("\n\n")) >= 0) {
           const frame = buffer.slice(0, boundary);
           buffer = buffer.slice(boundary + 2);
           if (signal.aborted || consumeReplyEvent(frame, activeSession.conversation_id)) return true;
         }
-        if (buffer.length > 64000) return true;
+        if (buffer.length > 64000) throw new Error("Reply stream frame exceeded its limit");
       }
       return true;
     } finally {
@@ -828,7 +846,7 @@
     streamController = controller;
     streamGeneration++;
     try {
-      for (let retry = 0; retry < 2 && !controller.signal.aborted; retry++) {
+      for (let retry = 0; retry < 4 && !controller.signal.aborted; retry++) {
         let terminal = false;
         try {
           terminal = await readReplyStream(activeSession, controller.signal);
@@ -837,6 +855,8 @@
           if (error instanceof SyntaxError) break;
         }
         if (terminal || controller.signal.aborted || !waitingForAssistant) break;
+        // Bound reconnect pressure while preserving the Redis replay cursor.
+        await new Promise((resolve) => setTimeout(resolve, Math.min(250 * 2 ** retry, 1500)));
       }
     } finally {
       if (streamController === controller) {
@@ -933,11 +953,15 @@
     const latestSupportMessage = latestMessages.findLast((message) => message.sender_type !== "customer");
     const verificationPaused = latestSupportMessage?.verification_paused === true;
     const verificationRequired = latestPublicMessage?.verification_required === true;
-    const needsOrderVerification = !verificationPaused && (verificationRequired || (
-      verificationRequested && !/refund request/i.test(latestPublicMessage?.content || "")
-    ) || (
-      containsOrderIntent(latestMessages) && (!verifiedOrder || verificationRequested) && !cancellationWasSubmitted(latestMessages)
-    ));
+    // Order words in a customer message are not enough to open the private
+    // verification form. Let the assistant first understand the request and
+    // explicitly ask for verification; otherwise ordinary questions about
+    // ordering, returns, or store policies get interrupted by a generic form.
+    const needsOrderVerification = !verificationPaused && !cancellationWasSubmitted(latestMessages) && (
+      verificationRequired || (
+        verificationRequested && !/refund request/i.test(latestPublicMessage?.content || "")
+      )
+    );
     if (waitingForAssistant && conversationMode === "ai" && config?.ai_enabled && !needsOrderVerification) {
       const latestCustomer = [...latestMessages].reverse().find((item) => item.sender_type === "customer")?.content || "";
       if (/\b(recommend|suggest|phone|smartphone|mobile|laptop|camera|budget|compare|better|only)\b/i.test(latestCustomer) && window.SupportPilotRecommendationUI) {

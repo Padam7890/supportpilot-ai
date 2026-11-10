@@ -12,6 +12,7 @@ from app.features.ai.application.conversational_intents import (
 )
 from app.features.ai.application.follow_up import infer_assistant_question, resolve_order_support
 from app.features.ai.application.retrieval import is_contextual_follow_up
+from app.features.ai.application.conversation_understanding import understand_conversation_turn
 from app.services import widget_ai
 
 Route = Literal[
@@ -53,6 +54,9 @@ def plan_playground_turn(
             intent="order",
             tool_name="playground_order_follow_up",
         )
+    understanding = understand_conversation_turn(question, transcript or [])
+    if understanding.needs_clarification:
+        return CustomerTurnPlan(route="clarification", draft="Could you clarify which product, order, or policy you mean?", intent="clarification")
     conversational = playground_conversational_reply(question)
     if conversational is not None:
         draft, intent = conversational
@@ -72,6 +76,9 @@ def plan_widget_turn(
     message: str,
     transcript: list[dict[str, str]],
 ) -> CustomerTurnPlan:
+    understanding = understand_conversation_turn(message, transcript)
+    if understanding.needs_clarification:
+        return CustomerTurnPlan(route="clarification", draft="Could you tell me which product, order, or policy you're referring to?", intent="clarification", tool_name="widget_context_clarification")
     conversational = widget_conversational_reply(message)
     if conversational is not None:
         draft, intent = conversational

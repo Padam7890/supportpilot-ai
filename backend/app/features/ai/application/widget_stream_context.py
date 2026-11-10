@@ -4,7 +4,6 @@ import json
 from uuid import UUID
 
 STREAM_SOURCE_IDS_KEY = "stream_source_ids"
-MAX_STREAM_HISTORY_SOURCES = 32
 
 
 def last_grounded_exchange(
@@ -19,7 +18,7 @@ def last_grounded_exchange(
             return None
         try:
             raw_ids = json.loads(turn.get(STREAM_SOURCE_IDS_KEY, "null"))
-            if not isinstance(raw_ids, list) or not 1 <= len(raw_ids) <= MAX_STREAM_HISTORY_SOURCES:
+            if not isinstance(raw_ids, list) or not raw_ids:
                 return None
             source_ids = {str(UUID(source_id)) for source_id in raw_ids}
         except (ValueError, TypeError, AttributeError):
