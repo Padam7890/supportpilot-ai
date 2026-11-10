@@ -12,7 +12,7 @@ def test_chunks_do_not_duplicate_identical_segments():
     text = "Returns Policy:\n\nSame paragraph.\n\nSame paragraph.\n\nDifferent text about shipping."
     chunks = make_chunks(text, max_tokens=120, overlap_tokens=8)
     bodies = [item[0] for item in chunks]
-    assert len(bodies) == len(set(body.casefold() for body in bodies))
+    assert len(bodies) == len({body.casefold() for body in bodies})
 
 
 def test_make_chunks_respects_token_budget():

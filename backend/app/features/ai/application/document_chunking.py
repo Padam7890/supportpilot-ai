@@ -98,7 +98,6 @@ def _merge_to_token_budget(
             ]
             while start < len(words):
                 window: list[str] = []
-                token_count = 0
                 index = start
                 while index < len(words):
                     candidate = " ".join([*window, words[index]])
@@ -106,7 +105,6 @@ def _merge_to_token_budget(
                     if window and next_tokens > max_tokens:
                         break
                     window.append(words[index])
-                    token_count = next_tokens
                     index += 1
                 if window:
                     chunks.append(

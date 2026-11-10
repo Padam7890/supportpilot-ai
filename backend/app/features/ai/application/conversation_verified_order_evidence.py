@@ -58,7 +58,7 @@ def build_verified_order_evidence(
                 if not isinstance(value, str):
                     continue
                 value = value.strip()
-                if not value or len(value) > 100 or any(c in value for c in "\\r\\n<>"):
+                if not value or len(value) > 100 or any(c in value for c in "\r\n<>"):
                     continue
                 facts.append(f"tracking_{index}_{field}: {value}")
                 accepted.append(f"tracking_{index}_{field}")

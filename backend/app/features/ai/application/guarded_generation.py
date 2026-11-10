@@ -9,7 +9,10 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from app.features.ai.application.claim_grounding import check_generated_answer, check_grounded_claims
+from app.features.ai.application.claim_grounding import (
+    check_generated_answer,
+    check_grounded_claims,
+)
 from app.features.ai.application.conversation_context_builder import build_agent_input
 from app.features.ai.application.conversation_response_composer import compose_natural_answer
 from app.features.ai.application.conversation_response_evidence import ResponseEvidence
@@ -63,7 +66,9 @@ async def generate_guarded_draft(
         ]
         evidence_items = [item for item in evidence_items if item["content"].strip()]
         grounding_sources = [{"excerpt": item["content"]} for item in evidence_items]
-        route = assess_deterministic_route(question, [])
+        if context and not evidence_items:
+            raise ValueError("Retrieved knowledge has no usable excerpts")
+        route = assess_deterministic_route(question, transcript)
         needs_verified_facts = (
             route.requires_tools
             or route.requires_knowledge

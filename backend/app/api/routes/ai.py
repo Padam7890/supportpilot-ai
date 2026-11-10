@@ -14,6 +14,7 @@ from app.db.session import get_db
 from app.features.ai.application.defaults import get_default_agent
 from app.features.ai.application.retrieval import build_retrieval_terms, is_contextual_follow_up
 from app.features.ai.application.retrieval_search import search_agent_knowledge
+from app.features.ai.infrastructure.llm_gateway import is_provider_configured
 from app.integrations.providers.shopify.security import encrypt_credential
 from app.models import (
     AIAgent,
@@ -37,7 +38,6 @@ from app.schemas.ai import (
     WidgetAIReplyStatusOut,
 )
 from app.schemas.errors import COMMON_ERROR_RESPONSES
-from app.features.ai.infrastructure.llm_gateway import is_provider_configured
 from app.services.shopify_order_lookup import verified_lookup
 
 router = APIRouter(prefix="/ai", tags=["AI assistance"], responses=COMMON_ERROR_RESPONSES)

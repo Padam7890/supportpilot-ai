@@ -14,9 +14,9 @@ from app.features.ai.application.retrieval import build_retrieval_terms
 from app.features.ai.application.retrieval_search import reciprocal_rank_fusion
 from app.features.ai.domain.failure_codes import is_retryable_ai_failure
 from app.features.ai.domain.policies import widget_reply_is_superseded
-from app.schemas.ai import AIExecutionOut
 from app.features.ai.infrastructure.llm_gateway import AIProviderError, is_provider_configured
 from app.features.ai.workflows.grounded_reply import ExecutionState, build_grounded_draft_graph
+from app.schemas.ai import AIExecutionOut
 from app.services.ai_worker import _safe_ai_failure_code, process_ai_execution
 
 

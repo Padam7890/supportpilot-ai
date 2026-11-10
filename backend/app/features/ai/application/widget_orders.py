@@ -121,12 +121,6 @@ async def verified_widget_order_reply(
         return True, format_verified_order_status(
             mapped, opening="I checked your verified order",
         )
-    except Exception as exc:  # noqa: BLE001 - verified fallback, no private payloads in logs.
-            logger.warning(
-                "Verified order composition unavailable: organization_id=%s error_type=%s",
-                organization_id, type(exc).__name__,
-            )
-        return True, fallback
     except Exception as exc:  # noqa: BLE001 - fail closed while retaining the verified session.
         logger.warning(
             "Verified widget order lookup failed: organization_id=%s conversation_id=%s error_type=%s",
