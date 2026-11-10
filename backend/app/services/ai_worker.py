@@ -293,6 +293,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 message=routed_question,
                 transcript=transcript,
                 delivery_mode=execution.delivery_mode,
+                allowed_tools_snapshot=execution.ai_agent_tools_snapshot,
             ):
                 return
             route_result = await resolve_widget_turn(
