@@ -41,7 +41,7 @@ def understand_conversation_turn(
 
     from app.features.ai.application.intent_routing.deterministic import assess_deterministic_route
 
-    normalized = " ".join(message.split())
+    normalized = " ".join(message.split())[:1000]
     prior_turns = transcript
     if (
         prior_turns
@@ -61,7 +61,7 @@ def understand_conversation_turn(
     negated_action = _is_negated_action(normalized)
     # Prefer the latest explicit subject over acknowledgements and pronouns.
     memory = derive_topic_memory(prior_turns)
-    previous_customer = memory.topic_anchor or (recent_customer_turns[0] if recent_customer_turns else "")
+    previous_customer = memory.topic_anchor or ""
     contextual = (is_contextual_follow_up(normalized) or _is_short_prepositional_follow_up(normalized)) and not correction
     # A follow-up that names its own subject ("what about shipping?") already
     # forms a usable query. Do not blend an earlier, unrelated question into it.
