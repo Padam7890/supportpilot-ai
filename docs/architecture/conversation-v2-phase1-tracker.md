@@ -38,3 +38,9 @@ Failure persistence and retry transitions now use `persist_execution_failure`. T
 - Fixed a verified refund review path that returned `completed=True` without persisting any result when its retrieval context disappeared. It now raises a typed exception so the worker's existing failure handling runs rather than silently stranding the execution.
 - Added a targeted regression scenario for the missing-context path.
 - **Verification limitation:** This is a source-level review, not a successful runtime test. GitHub checkout in the execution environment failed due to DNS/network resolution, so imports and tests remain unverified. The tracker stays at 10/11; Phase 1 is not complete.
+
+## Compatibility fixes — follow-up review
+
+- Verified refund missing-context exceptions now declare `knowledge_retrieval` as their failure stage. The worker accepts only explicit known stage labels, avoiding misleading generic failure diagnostics.
+- Guarded generation no longer persists the string `"None"` when the model provider omits its model name. Added a regression scenario.
+- The architecture extraction packages remain implemented, but runtime verification and final review are still pending. No CI/CD pipeline work or merge was performed.
