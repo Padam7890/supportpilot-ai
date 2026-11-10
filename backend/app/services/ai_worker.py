@@ -40,6 +40,8 @@ from app.features.ai.application.knowledge_inventory import is_knowledge_invento
 from app.features.ai.application.playground_execution import complete_playground_knowledge_inventory
 from app.features.ai.application.playground_routing import route_playground_conversation
 from app.features.ai.application.guarded_generation import generate_guarded_draft
+from app.features.ai.application.intent_routing.deterministic import assess_deterministic_route
+from app.features.ai.application.intent_routing.schemas import Intent
 from app.features.ai.application.generated_reply_persistence import complete_non_widget_generated_reply
 from app.features.ai.application.missing_evidence_policy import plan_missing_evidence_reply
 from app.features.ai.application.widget_failure_fallback import plan_widget_failure_fallback
@@ -392,7 +394,16 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 channel="playground",
                 **{k: (intent_router_outcome or {}).get(k) for k in ("mode", "primary_intent", "metrics")},
             )
-        if not context and not integration_context:
+        route = assess_deterministic_route(execution.question, [])
+        requires_store_evidence = (
+            route.requires_tools
+            or route.requires_knowledge
+            or route.intent in {Intent.PRODUCT, Intent.ORDER, Intent.REFUND}
+        )
+        if not context and not integration_context and (
+            execution.kind not in {"widget_reply", "playground", "reply_draft"}
+            or requires_store_evidence
+        ):
             missing = plan_missing_evidence_reply(
                 execution_kind=execution.kind,
                 question=execution.question if execution.kind == "widget_reply" else question,
