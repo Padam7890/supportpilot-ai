@@ -46,6 +46,7 @@ async def list_verified_products(
             CatalogProduct.status == "active",
             CatalogProduct.deleted_at.is_(None),
             CatalogVariant.organization_id == organization_id,
+            CatalogVariant.connection_id == connection_id,
             CatalogVariant.deleted_at.is_(None),
             CatalogVariant.availability != "unavailable",
             IntegrationConnection.status == "connected",
@@ -66,11 +67,11 @@ def is_catalog_discovery_request(message: str) -> bool:
     """Recognize explicit browse/list intent without requiring a product name."""
     normalized = " ".join(message.casefold().split())
     return bool(re.search(
-        r"\\b(?:list|show|browse|see|view|display)\\s+(?:(?:me|all|your|the|available|some)\\s+){0,3}"
-        r"(?:products|items|catalog|inventory)\\b"
-        r"|\\bwhat\\s+(?:(?:kind|types?)\\s+of\\s+)?(?:products|items)\\s+"
-        r"(?:do\\s+you\\s+have|are\\s+available|do\\s+you\\s+sell)\\b"
-        r"|\\bwhat\\s+do\\s+you\\s+sell\\b",
+        r"\b(?:list|show|browse|see|view|display)\s+(?:(?:me|all|your|the|available|some)\s+){0,3}"
+        r"(?:products|items|catalog|inventory)\b"
+        r"|\bwhat\s+(?:(?:kind|types?)\s+of\s+)?(?:products|items)\s+"
+        r"(?:do\s+you\s+have|are\s+available|do\s+you\s+sell)\b"
+        r"|\bwhat\s+do\s+you\s+sell\b",
         normalized,
     ))
 
@@ -83,7 +84,7 @@ def render_product_listing(products: list[ProductListing]) -> str:
     for item in products:
         lines.append(f"- {item.title} — {item.price} {item.currency}")
     lines.append("Would you like details about any of these?")
-    return "\\n".join(lines)
+    return "\n".join(lines)
 
 async def resolve_catalog_connection(
     db: AsyncSession, organization_id: UUID, *, bound_connection_id: UUID | None,
