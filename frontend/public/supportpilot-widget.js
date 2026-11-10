@@ -57,7 +57,7 @@
       @keyframes rise{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
       .message{white-space:pre-wrap;overflow-wrap:anywhere;border-radius:17px;padding:10px 12px;font-size:12px;line-height:1.55}
       .message p,.message ul,.message ol{margin:0}
-      .message p+p,.message p+ul,.message p+ol,.message ul+p,.message ol+p,.message ul+ol,.message ol+ul{margin-top:6px}
+      .message p+p,.message p+ul,.message p+ol,.message ul+p,.message ol+p,.message ul+ol,.message ol+ul{margin-top:12px}
       .message ul,.message ol{padding-left:19px}
       .message li+li{margin-top:3px}
       .customer .message{border-bottom-right-radius:5px;background:#3158d8;color:#fff}
@@ -236,6 +236,12 @@
         node.append(partial && index === parts.length - 1 ? part.replace(/\*\*([^*]*)\*?$/, "$1").replace(/\*$/, "") : part);
       }
     }
+  }
+
+  function normalizeAssistantLineBreaks(content) {
+    // Model output and previously stored messages may contain one or two
+    // layers of escaped newline separators. Never interpret HTML here.
+    return String(content || "").replace(/\\\\\\\\n/g, "\\n").replace(/\\\\n/g, "\\n").replace(/\\r\\n/g, "\\n");
   }
 
   function renderAssistantMessage(bubble, content, partial = false) {
