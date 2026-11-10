@@ -9,7 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app.features.ai.application.claim_grounding import check_grounded_claims
+from app.features.ai.application.claim_grounding import CITATION_PATTERN, check_grounded_claims
 from app.features.ai.application.conversation_response_evidence import ResponseEvidence
 from app.features.ai.infrastructure.llm_gateway import generate_completion
 
@@ -20,7 +20,6 @@ ReviewReason = Literal[
 ]
 _MAX_SPANS = 12
 _REVIEW_TIMEOUT_SECONDS = 12
-_CITATION_MARKER = re.compile(r"\[(?:source|doc)\s*:?\s*[0-9]+\]", re.IGNORECASE)
 _SPAN_BREAK = re.compile(r"\n+|(?<=[.!?।])\s+(?!\[(?:source|doc)\b)", re.IGNORECASE)
 
 _SENSITIVE_ASSERTION = re.compile(
@@ -116,7 +115,7 @@ async def verify_candidate(
         if result.verdict in _REJECTION_REASONS:
             return SemanticVerification(False, _REJECTION_REASONS[result.verdict], usage=usage)
         if result.verdict == "general":
-            if result.sources or _CITATION_MARKER.search(span):
+            if result.sources or CITATION_PATTERN.search(span):
                 return SemanticVerification(False, "invalid_review", usage=usage)
             continue
         if not result.sources or any(not 1 <= index <= len(sources) for index in result.sources):

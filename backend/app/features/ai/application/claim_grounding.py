@@ -10,7 +10,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-_CITATION = re.compile(r"\[(?:source|doc)\s*:?\s*(\d+)\]", re.IGNORECASE)
+CITATION_PATTERN = re.compile(r"\[(?:source|doc)\s*:?\s*(\d+)\]", re.IGNORECASE)
 _NUMBER = re.compile(
     r"(?<!\w)(?:[$€£₹]\s*)?\d+(?:,\d{3})*(?:\.\d+)?"
     r"(?:\s*%|\s*(?:days?|hours?|weeks?|months?|years?|usd|eur|gbp|cad|aud|npr|inr|"
@@ -41,7 +41,7 @@ def check_grounded_claims(
     """
     if not response.strip():
         return ClaimCheck(False, "empty_answer")
-    cited = tuple(sorted({int(value) for value in _CITATION.findall(response)}))
+    cited = tuple(sorted({int(value) for value in CITATION_PATTERN.findall(response)}))
     if not sources:
         return ClaimCheck(False, "no_sources", cited)
     if require_citations and not cited:
@@ -54,7 +54,7 @@ def check_grounded_claims(
     ) if cited else " ".join(str(source.get("excerpt", "")) for source in sources)
     if not evidence.strip():
         return ClaimCheck(False, "empty_evidence", cited)
-    answer_without_citations = _CITATION.sub("", response)
+    answer_without_citations = CITATION_PATTERN.sub("", response)
     # Preserve units: 7 days and 7 weeks are not interchangeable.
     # Normalize 1,000 to 1000 while preserving decimal precision.
     def numeric_claims(value: str) -> set[str]:
@@ -70,35 +70,3 @@ def check_grounded_claims(
         return ClaimCheck(False, "unsupported_numeric_claim", cited, missing)
     return ClaimCheck(True, "lexical_checks_passed", cited)
 
-
-def check_generated_answer(
-    response: str,
-    sources: Sequence[Mapping[str, object]],
-) -> ClaimCheck:
-    """Delivery gate for generated knowledge answers.
-
-    Existing replies do not consistently include inline source markers, so
-    validate explicit markers when present and always check numeric claims.
-    A separate citation-enforcement rollout is needed before requiring markers.
-    """
-    if not response.strip():
-        return ClaimCheck(False, "empty_answer")
-    if not sources:
-        return ClaimCheck(True, "no_knowledge_sources")
-    return check_grounded_claims(response, sources, require_citations=False)
-
-
-def check_stream_segment(
-    segment: str,
-    sources: Sequence[Mapping[str, object]],
-) -> ClaimCheck:
-    """Conservative segment-level gate for future verified streaming.
-
-    A passing segment is not sufficient for delivery: source authorization and
-    final-answer validation must also complete before any bytes are published.
-    """
-    if not segment.strip():
-        return ClaimCheck(False, "empty_segment")
-    if not sources:
-        return ClaimCheck(False, "no_sources")
-    return check_grounded_claims(segment, sources, require_citations=False)

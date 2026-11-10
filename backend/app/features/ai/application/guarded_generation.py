@@ -1,10 +1,10 @@
 """Compose and verify one complete reply before persistence or delivery."""
 
-import re
 import time
 from dataclasses import dataclass
 from typing import Any
 
+from app.features.ai.application.claim_grounding import CITATION_PATTERN
 from app.features.ai.application.conversation_context_builder import build_agent_input
 from app.features.ai.application.conversation_response_composer import compose_natural_answer
 from app.features.ai.application.conversation_response_evidence import knowledge_evidence
@@ -12,7 +12,6 @@ from app.features.ai.application.conversation_verified_order_evidence import Aut
 from app.features.ai.application.generation_metrics import log_generation_metrics
 from app.features.ai.application.semantic_claim_verifier import verify_candidate
 
-_SOURCE_MARKER = re.compile(r"\[(?:source|doc)\s*:?\s*(\d+)\]", re.IGNORECASE)
 _SAFE_FALLBACK = (
     "I couldn't verify the details in the available sources. "
     "Please contact our support team to confirm."
@@ -101,7 +100,7 @@ async def generate_guarded_draft(
             )
         selected.append(citation)
     remap = {index: position for position, index in enumerate(verification.source_indices, 1)}
-    text = _SOURCE_MARKER.sub(lambda match: f"[source {remap[int(match[1])]}]", composed.text)
+    text = CITATION_PATTERN.sub(lambda match: f"[source {remap[int(match[1])]}]", composed.text)
     if order_text:
         text = f"{order_text}\n\n{text}"
     return GuardedDraft(text, True, None, selected, outcomes, usage, model_name)

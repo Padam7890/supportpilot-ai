@@ -45,8 +45,10 @@ def _build_user_prompt(
     message: str,
     transcript: list[dict[str, str]],
     assessment: DeterministicRouteAssessment,
+    *,
+    channel: str = "widget",
 ) -> str:
-    context = build_agent_input(message, transcript, channel="widget")
+    context = build_agent_input(message, transcript, channel=channel)
     history = [
         f"{turn.sender}: {turn.content[:320]}"
         for turn in context.history[-6:]
@@ -69,13 +71,14 @@ async def invoke_llm_intent_router(
     assessment: DeterministicRouteAssessment,
     *,
     max_attempts: int | None = None,
+    channel: str = "widget",
 ) -> tuple[RoutingDecision | None, dict[str, int], str | None, str | None]:
     """Return a validated routing decision, token usage, model, and failure code."""
     if not is_provider_configured():
         return None, {}, None, "provider_not_configured"
     messages = [
         {"role": "system", "content": _SYSTEM},
-        {"role": "user", "content": _build_user_prompt(message, transcript, assessment)},
+        {"role": "user", "content": _build_user_prompt(message, transcript, assessment, channel=channel)},
     ]
     last_code = "intent_router_failed"
     for attempt in range(max_attempts or settings.ai_intent_router_max_attempts):

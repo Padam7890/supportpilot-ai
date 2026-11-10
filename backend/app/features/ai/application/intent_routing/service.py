@@ -143,7 +143,7 @@ async def resolve_customer_routing(
         llm_invoked = True
         metrics.llm_router_invocation_count = 1
         decision, usage, router_model, failure = await invoke_llm_intent_router(
-            message, transcript, assessment, **({"max_attempts": 1} if for_generation else {}),
+            message, transcript, assessment, **({"max_attempts": 1, "channel": channel} if for_generation else {}),
         )
         if decision is not None and not assessment.requires_tools and any(
             item.requires_tools or item.intent in {Intent.ORDER, Intent.REFUND}
@@ -182,7 +182,6 @@ async def resolve_customer_routing(
     resolution.metrics = metrics
     record_aggregate(llm_invoked=llm_invoked)
     log_intent_router_event(metrics, mode=resolution.mode, reason_code=assessment.reason_code)
-    _ = channel
     return resolution
 
 
