@@ -6,6 +6,7 @@ existing grounding policy before it can be persisted or delivered.
 
 import time
 from dataclasses import dataclass
+from typing import Any
 from uuid import UUID
 
 from app.features.ai.application.claim_grounding import check_generated_answer
@@ -32,8 +33,8 @@ async def generate_guarded_draft(
     question: str,
     instructions: str | None,
     transcript: list[dict[str, str]],
-    context: str,
-    integration_context: str,
+    context: list[dict[str, str | int]],
+    integration_context: dict[str, Any] | None,
     citations: list,
     outcomes: list,
     auto_reply: bool,
