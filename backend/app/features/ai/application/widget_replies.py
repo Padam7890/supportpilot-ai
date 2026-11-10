@@ -13,7 +13,6 @@ from app.db.session import SessionLocal, set_tenant_context
 from app.features.ai.application.follow_up import (
     PENDING_KEY,
     PendingQuestion,
-    infer_assistant_question,
 )
 from app.features.ai.application.retrieval_search import citations_remain_authorized
 from app.features.ai.application.widget_stream_context import STREAM_SOURCE_IDS_KEY
@@ -252,7 +251,6 @@ async def process_widget_shopping_execution(
             displayed_recommendations=outcome.displayed_recommendations,
             recommendation_payload=outcome.recommendation_payload,
             switch_to_human=outcome.switch_to_human,
-            pending_question=infer_assistant_question(outcome.draft or ""),
         )
         await db.commit()
         return True

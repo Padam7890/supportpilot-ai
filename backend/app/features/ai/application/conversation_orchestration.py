@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 from typing import Literal
 
+from app.features.ai.application.catalog_discovery import is_catalog_discovery_request
+from app.features.ai.application.conversation_understanding import understand_conversation_turn
 from app.features.ai.application.conversational_intents import (
     classify_conversational_intent,
     playground_conversational_reply,
     widget_conversational_reply,
 )
-from app.features.ai.application.follow_up import infer_assistant_question, resolve_order_support
+from app.features.ai.application.follow_up import resolve_order_support
 from app.features.ai.application.retrieval import is_contextual_follow_up
-from app.features.ai.application.conversation_understanding import understand_conversation_turn
-from app.features.ai.application.catalog_discovery import is_catalog_discovery_request
 from app.services import widget_ai
 
 Route = Literal[
@@ -60,9 +60,7 @@ def plan_playground_turn(
     understanding = understand_conversation_turn(question, transcript or [])
     if understanding.negated_action:
         return _negated_action_plan()
-    previous = transcript[-1] if transcript else {}
-    state = infer_assistant_question(previous.get("content", "")) if previous.get("sender") == "assistant" else None
-    order_follow_up = resolve_order_support(" ".join(question.strip().split()), state)
+    order_follow_up = resolve_order_support(" ".join(question.strip().split()))
     if order_follow_up and order_follow_up.draft:
         return CustomerTurnPlan(
             route="direct",

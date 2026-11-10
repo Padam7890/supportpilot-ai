@@ -10,7 +10,7 @@ from uuid import UUID
 
 from app.features.ai.application.conversation_memory import derive_topic_memory
 from app.features.ai.application.follow_up import PendingQuestion, pending_from_assistant
-from app.features.ai.application.policy_follow_up import PolicyConversation, asks_delivery_date
+from app.features.ai.application.policy_follow_up import PolicyConversation
 from app.features.ai.application.query_resolution import resolve_retrieval_query
 from app.features.ai.application.retrieval import build_retrieval_terms, is_contextual_follow_up
 
@@ -213,37 +213,14 @@ def read_policy_conversation(
     assistant = previous[-1]
     if not preview:
         pending = pending_from_assistant(assistant, agent_id, now)
-        if pending is not None and pending.policy_context is not None:
-            return pending.policy_context
-        if pending is None and not pending_from_recent_question(assistant, now):
-            return None
-        if pending is not None and pending.stage != "policy_timing":
-            return None
-    content = assistant.get("content", "")
+        return pending.policy_context if pending else None
     anchor = previous[-2]
-    if anchor.get("sender") not in {"customer", "user"} or "?" not in content[-400:]:
+    if anchor.get("sender") not in {"customer", "user"}:
         return None
+    # Playground history is supplied by the browser. It is a semantic hint
+    # only and cannot establish a typed date slot or any verification state.
     topic = anchor.get("content", "").strip()[:240]
-    return policy_conversation(topic, content)
-
-
-def policy_conversation(topic: str, assistant_text: str) -> PolicyConversation | None:
-    question = assistant_text.rsplit("?", 1)[0].strip().splitlines()[-1:] if "?" in assistant_text else []
-    if not topic or not question:
+    content = assistant.get("content", "").strip()[-240:]
+    if not topic or not content:
         return None
-    if asks_delivery_date(assistant_text):
-        # Keep both slots in a compound question for semantic interpretation.
-        question = [assistant_text[-239:].rstrip("?")]
-    return PolicyConversation(topic=topic[:240], assistant_question=f"{question[0][-239:]}?")
-
-
-def pending_from_recent_question(turn: dict[str, str], now: datetime) -> bool:
-    from app.features.ai.application.follow_up import PENDING_KEY, PENDING_TTL
-
-    if PENDING_KEY in turn:
-        return False
-    try:
-        created = datetime.fromisoformat(turn["created_at"])
-    except (ValueError, KeyError):
-        return False
-    return bool(created.tzinfo and now - PENDING_TTL < created <= now)
+    return PolicyConversation(topic=topic, assistant_question=content)

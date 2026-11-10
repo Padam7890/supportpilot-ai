@@ -3,7 +3,7 @@
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from app.features.ai.application.claim_grounding import CITATION_PATTERN
 from app.features.ai.application.conversation_context_builder import build_agent_input
@@ -34,6 +34,7 @@ class GuardedDraft:
     outcomes: list[dict[str, Any]]
     usage: dict[str, int]
     model_name: str | None
+    expected_answer: Literal["delivery_date", "contextual"] | None = None
 
 
 async def generate_guarded_draft(
@@ -126,4 +127,4 @@ async def generate_guarded_draft(
     text = "\n".join(line.rstrip() for line in text.splitlines()).strip()
     if order_text:
         text = f"{order_text}\n\n{text}"
-    return GuardedDraft(text, True, None, selected, outcomes, usage, model_name)
+    return GuardedDraft(text, True, None, selected, outcomes, usage, model_name, composed.expected_answer)

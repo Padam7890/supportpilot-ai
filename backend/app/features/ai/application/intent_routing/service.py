@@ -20,6 +20,7 @@ from app.features.ai.application.conversation_understanding import (
     read_policy_conversation,
     understand_conversation_turn,
 )
+from app.features.ai.application.follow_up import FollowUp, read_pending_turn, resolve_follow_up
 from app.features.ai.application.intent_routing.deterministic import assess_deterministic_route
 from app.features.ai.application.intent_routing.llm_router import invoke_llm_intent_router
 from app.features.ai.application.intent_routing.metrics import (
@@ -151,7 +152,7 @@ async def resolve_customer_routing(
     ).should_use_model(
         risk_level=assessment.risk_level,
         negated_action=understanding.negated_action,
-        needs_clarification=understanding.needs_clarification,
+        needs_clarification=understanding.needs_clarification and not interpret_follow_up,
         legacy_router_would_invoke=(
             interpret_follow_up or should_invoke_llm_router(assessment, message)
         ),
@@ -284,8 +285,7 @@ async def resolve_contextual_policy_turn(
     if fast := resolve_policy_follow_up(message, state, source_time):
         return fast, None
     if (
-        assessment.reason_code == "policy_question" and not assessment.requires_context
-        or widget_ai.PURCHASE_INTENT.search(message)
+        widget_ai.PURCHASE_INTENT.search(message)
         or is_catalog_discovery_request(message)
     ):
         return None, None
@@ -301,3 +301,32 @@ async def resolve_contextual_policy_turn(
     ):
         return None, routing
     return resolve_policy_follow_up(message, state, source_time, interpretation=interpretation), routing
+
+
+async def resolve_refund_slot(
+    message: str,
+    transcript: list[dict[str, str]],
+    *,
+    agent_id: UUID,
+    source_message_id: UUID | None,
+    now: datetime,
+) -> tuple[FollowUp | None, CustomerRoutingResolution | None]:
+    state = read_pending_turn(message, transcript, agent_id, now)
+    if state is None or state.stage not in {"refund_reason", "refund_item"}:
+        return None, None
+    assessment = assess_deterministic_route(message, transcript)
+    if (
+        assessment.requires_tools or assessment.intent in {Intent.HANDOFF, Intent.GREETING}
+        or assessment.reason_code == "policy_question"
+    ):
+        return None, None
+    routing = await resolve_customer_routing(
+        message, transcript, channel="widget", for_generation=True, interpret_follow_up=True,
+        follow_up_topic=f"Refund request. Pending answer type: {state.expected_answer_type}.",
+    )
+    interpretation = routing.llm.follow_up if routing.llm is not None else None
+    if interpretation is None or interpretation.confidence < settings.ai_intent_router_high_confidence or routing.multi_intent:
+        return None, routing
+    return resolve_follow_up(
+        message, state, source_message_id=source_message_id, interpretation=interpretation,
+    ), routing

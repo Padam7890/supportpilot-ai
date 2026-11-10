@@ -1,6 +1,9 @@
 """Natural answer composition for live customer-support executions."""
 
 from dataclasses import dataclass
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.features.ai.application.conversation_agent_contracts import AgentInput
 from app.features.ai.application.conversation_response_evidence import ResponseEvidence
@@ -12,6 +15,14 @@ class ComposedAnswer:
     text: str
     usage: dict[str, int]
     model_name: str | None
+    expected_answer: Literal["delivery_date", "contextual"] | None = None
+
+
+class AnswerEnvelope(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    text: str = Field(min_length=1, max_length=4000)
+    expected_answer: Literal["delivery_date", "contextual"] | None
 
 
 _SYSTEM = (
@@ -35,7 +46,11 @@ _SYSTEM = (
     "three readable paragraphs with simple wording, followed by an optional "
     "question on its own paragraph. Do not combine unrelated policy conditions "
     "into a single run-on sentence. Do not write literal Markdown headings or "
-    "bullet markers unless explicitly requested."
+    "bullet markers unless explicitly requested. Return a JSON object with text and "
+    "expected_answer. Set expected_answer to delivery_date if your reply asks when "
+    "the customer's item was delivered, contextual for any other follow-up question, "
+    "or null if you did not ask a question. This field records the question only. "
+    "Never include actions, authorization, identity or verification in this field."
 )
 
 
@@ -81,4 +96,17 @@ async def compose_natural_answer(
         build_answer_messages(agent_input, evidence, instructions=instructions),
         max_tokens=400,
     )
+    envelope = text.strip()
+    if envelope.startswith("```") and envelope.endswith("```"):
+        envelope = envelope.partition("\n")[2][:-3].strip()
+    if envelope.startswith(("{", "[{")):
+        try:
+            answer = AnswerEnvelope.model_validate_json(envelope)
+        except ValidationError as exc:
+            from app.features.ai.infrastructure.llm_gateway import AIProviderError
+
+            raise AIProviderError("provider_invalid_response", "Invalid answer envelope") from exc
+        return ComposedAnswer(answer.text, usage, model, answer.expected_answer)
+    # Existing providers can return plain text. It still goes through the
+    # release gate, and no workflow state is inferred from it.
     return ComposedAnswer(text=text, usage=usage, model_name=model)

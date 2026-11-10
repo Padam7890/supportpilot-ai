@@ -26,7 +26,6 @@ from app.features.ai.application.catalog_search import (
 )
 from app.features.ai.application.context import load_execution_context
 from app.features.ai.application.conversation_understanding import (
-    policy_conversation,
     understand_conversation_turn,
 )
 from app.features.ai.application.execution_failure_persistence import persist_execution_failure
@@ -41,7 +40,6 @@ from app.features.ai.application.execution_lifecycle import (
 from app.features.ai.application.follow_up import (
     PendingQuestion,
     assess_widget_follow_up,
-    infer_assistant_question,
 )
 from app.features.ai.application.generated_reply_persistence import (
     complete_non_widget_generated_reply,
@@ -52,11 +50,13 @@ from app.features.ai.application.intent_routing import (
     resolve_contextual_policy_turn,
     resolve_customer_routing,
 )
+from app.features.ai.application.intent_routing.service import resolve_refund_slot
 from app.features.ai.application.knowledge_inventory import is_knowledge_inventory_question
 from app.features.ai.application.missing_evidence_policy import plan_missing_evidence_reply
 from app.features.ai.application.playground_execution import complete_playground_knowledge_inventory
 from app.features.ai.application.playground_routing import route_playground_conversation
 from app.features.ai.application.policy_evaluation import answer_delivery_date
+from app.features.ai.application.policy_follow_up import PolicyConversation
 from app.features.ai.application.stream_context_policy import (
     can_stream_transcript as _can_stream_transcript,
 )
@@ -309,6 +309,16 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                     source_message_id=getattr(execution, "source_message_id", None), now=now,
                     allow_refund_workflow=execution.delivery_mode == "auto_reply",
                 )
+            if (
+                follow_up is None and contextual_routing is None
+                and follow_up_reason != "catalog_browse_override" and execution.delivery_mode == "auto_reply"
+            ):
+                follow_up, contextual_routing = await resolve_refund_slot(
+                    execution.question, transcript, agent_id=execution.ai_agent_id,
+                    source_message_id=getattr(execution, "source_message_id", None), now=now,
+                )
+                if follow_up is not None:
+                    follow_up_reason = "semantic_slot_resolved"
             _log_ai_execution_event(
                 "widget_follow_up_routing", execution_id=str(execution_id),
                 correlation_id=correlation_id, reason=follow_up_reason,
@@ -332,8 +342,6 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                     return
             if follow_up is not None and follow_up.routed_question:
                 routed_question = follow_up.routed_question
-                if follow_up.decision == "policy_timing":
-                    follow_up_query = routed_question
             understanding = understand_conversation_turn(execution.question, transcript)
             contextual = (
                 follow_up is None and understanding.contextual_follow_up
@@ -625,12 +633,22 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
         outcomes = guarded.outcomes
         if execution.kind == "widget_reply":
             remembered_policy = policy_follow_up.state if policy_follow_up else None
-            pending = infer_assistant_question(generated_draft)
-            if (
-                remembered_policy is None and guarded.accepted and citations
-                and (pending is None or pending.stage == "policy_timing")
-            ):
-                remembered_policy = policy_conversation(question, generated_draft)
+            if guarded.accepted and citations and guarded.expected_answer:
+                if remembered_policy is None:
+                    remembered_policy = PolicyConversation(
+                        topic=question.strip()[:240],
+                        assistant_question=generated_draft[-240:],
+                        expected_answer=guarded.expected_answer,
+                    )
+                else:
+                    remembered_policy = remembered_policy.model_copy(update={
+                        "assistant_question": generated_draft[-240:],
+                        "expected_answer": guarded.expected_answer,
+                    })
+            elif remembered_policy is not None and guarded.accepted:
+                remembered_policy = remembered_policy.model_copy(update={
+                    "expected_answer": "contextual",
+                })
             if remembered_policy is not None and citations:
                 remembered_policy = remembered_policy.model_copy(update={
                     "source_document_ids": tuple(dict.fromkeys(UUID(str(c["document_id"])) for c in citations)),
@@ -664,7 +682,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                         active_intent="knowledge", stage="policy_context",
                         expected_answer_type="contextual", policy_context=remembered_policy,
                     )
-                    if remembered_policy else pending
+                    if remembered_policy else None
                 ),
             )
             return

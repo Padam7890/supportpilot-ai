@@ -8,11 +8,14 @@ from app.features.ai.application.follow_up import (
     PENDING_KEY,
     PENDING_TTL,
     assess_widget_follow_up,
-    infer_assistant_question,
+    order_verification_question,
     pending_from_assistant,
     refund_start,
     resolve_follow_up,
 )
+from app.features.ai.application.policy_follow_up import FollowUpInterpretation
+
+_ITEM = FollowUpInterpretation(relation="answer_to_question", goal="refund_item", confidence=0.99)
 
 
 def test_refund_context_survives_serialization_and_requires_verification():
@@ -22,7 +25,12 @@ def test_refund_context_survives_serialization_and_requires_verification():
         "I want a refund.", [], agent_id=bot_id, source_message_id=uuid4(), now=now
     )
     assert start and start.pending
-    reason = resolve_follow_up("actually, broken", start.pending, source_message_id=uuid4())
+    reason = resolve_follow_up(
+        "actually, broken", start.pending, source_message_id=uuid4(),
+        interpretation=FollowUpInterpretation(
+            relation="answer_to_question", goal="refund_reason", refund_reason="damaged", confidence=0.99,
+        ),
+    )
     assert reason and reason.pending and reason.pending.refund_reason == "damaged"
     assert "Which item" in reason.draft
     state = pending_from_assistant(
@@ -31,7 +39,7 @@ def test_refund_context_survives_serialization_and_requires_verification():
         now,
     )
     assert state is not None
-    item = resolve_follow_up("Two blue mugs", state, source_message_id=item_message_id)
+    item = resolve_follow_up("Two blue mugs", state, source_message_id=item_message_id, interpretation=_ITEM)
     assert item and item.pending and item.pending.item_message_id == item_message_id
     assert item.pending.verification_status == "required"
     premature_yes = resolve_follow_up("yes", item.pending, source_message_id=uuid4())
@@ -52,57 +60,26 @@ def test_refund_context_survives_serialization_and_requires_verification():
     assert declined and declined.decision == "declined" and declined.review is None
 
 
-@pytest.mark.parametrize(
-    ("prompt", "answer", "decision", "route"),
-    [
-        (
-            "What's the reason for your refund—change of mind or damaged/defective/incorrect?",
-            "damaged",
-            "refund_reason",
-            None,
-        ),
-        (
-            "Was the item damaged, defective, incorrect, or did you change your mind?",
-            "wrong item",
-            "refund_reason",
-            None,
-        ),
-        (
-            "Would you like me to track your order?",
-            "yes",
-            "order_confirmation",
-            "Where is my order?",
-        ),
-        ("Should I check the order?", "cancel it", "order_confirmation", "Please cancel my order"),
-        ("Would you like me to cancel your order?", "no", "declined", None),
-        (
-            "Which product would you like an alternative for?",
-            "the second one",
-            "product_reference",
-            "the second one",
-        ),
-        (
-            "When would you like it delivered?",
-            "tomorrow",
-            "policy_timing",
-            "Store delivery policy for the requested time: tomorrow",
-        ),
-    ],
-)
-def test_short_follow_ups_use_the_previous_assistant_question(prompt, answer, decision, route):
-    now = datetime.now(UTC)
+@pytest.mark.parametrize("prompt", [
+    "What’s the reason for your refund?",
+    "Could you describe what happened to the item?",
+    "¿Qué le pasó al artículo?",
+])
+def test_follow_up_uses_state_independently_of_assistant_wording(prompt):
+    now, bot_id = datetime.now(UTC), uuid4()
+    turn = {
+        "sender": "assistant", "content": prompt, "created_at": now.isoformat(),
+        PENDING_KEY: json.dumps(refund_start().attached_to(bot_id, now)),
+    }
     result, reason = assess_widget_follow_up(
-        answer,
-        [
-            {"sender": "assistant", "content": prompt, "created_at": now.isoformat()},
-            {"sender": "customer", "content": answer},
-        ],
-        agent_id=uuid4(),
-        source_message_id=uuid4(),
-        now=now,
+        "damaged", [turn], agent_id=bot_id, source_message_id=uuid4(), now=now,
     )
-    assert result and result.decision == decision and result.routed_question == route
+    assert result and result.decision == "refund_reason"
     assert reason == "resolved"
+    turn.pop(PENDING_KEY)
+    assert assess_widget_follow_up(
+        "damaged", [turn], agent_id=bot_id, source_message_id=uuid4(), now=now,
+    )[0] is None
 
 
 @pytest.mark.parametrize(
@@ -134,7 +111,7 @@ def test_pending_question_rejects_wrong_bot_expiration_and_human_takeover():
     assert pending_from_assistant(turn, uuid4(), now) is None
     assert pending_from_assistant(turn, bot_id, now + PENDING_TTL) is None
     assert pending_from_assistant({**turn, "sender": "agent"}, bot_id, now) is None
-    assert infer_assistant_question("Here is the refund policy.") is None
+    assert pending_from_assistant({"sender": "assistant", "content": "Here is the refund policy."}, bot_id, now) is None
 
 
 def test_multi_word_delivery_synonym_is_encoded_as_a_phrase():
@@ -165,8 +142,7 @@ def test_missing_order_reference_starts_with_recovery_and_support(question):
     assert not result.handoff
 
 
-def test_legacy_order_prompt_resolves_exact_short_repro_and_preview():
-    from app.features.ai.application.conversation_orchestration import plan_playground_turn
+def test_persisted_order_slot_resolves_short_reply():
     from app.services.widget_ai import ORDER_VERIFICATION_MESSAGE
 
     now, bot_id = datetime.now(UTC), uuid4()
@@ -176,6 +152,7 @@ def test_legacy_order_prompt_resolves_exact_short_repro_and_preview():
             "sender": "assistant",
             "content": ORDER_VERIFICATION_MESSAGE,
             "created_at": now.isoformat(),
+            PENDING_KEY: json.dumps(order_verification_question().attached_to(bot_id, now)),
         },
     ]
     answer = "sorry i forget number"
@@ -188,9 +165,7 @@ def test_legacy_order_prompt_resolves_exact_short_repro_and_preview():
     )
     assert result and result.pending and result.pending.order_number_unavailable
     assert reason == "resolved"
-    preview = plan_playground_turn(answer, history)
-    assert preview and preview.draft == result.draft
-    assert "Enter the order number" not in preview.draft
+    assert "Enter the order number" not in result.draft
 
 
 def test_missing_order_state_handles_decline_repeated_request_and_correction():
@@ -225,7 +200,7 @@ def test_interrupted_refund_verification_preserves_collected_item_and_reason():
     item_id = uuid4()
     damaged = resolve_follow_up("damaged", refund_start(), source_message_id=uuid4())
     assert damaged and damaged.pending
-    item = resolve_follow_up("Blue mug", damaged.pending, source_message_id=item_id)
+    item = resolve_follow_up("Blue mug", damaged.pending, source_message_id=item_id, interpretation=_ITEM)
     assert item and item.pending
     interrupted = resolve_follow_up("My code expired", item.pending, source_message_id=uuid4())
     assert interrupted and interrupted.pending == item.pending

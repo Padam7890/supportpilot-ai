@@ -3,7 +3,7 @@
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Literal, get_args
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -13,11 +13,14 @@ from app.features.ai.application.order_reference import (
     order_reference_recovered,
     order_reference_unavailable,
 )
-from app.features.ai.application.policy_follow_up import PolicyConversation, asks_delivery_date
+from app.features.ai.application.policy_follow_up import (
+    FollowUpInterpretation,
+    PolicyConversation,
+    RefundReason,
+)
 
 PENDING_KEY = "support_pending_question"
 PENDING_TTL = timedelta(minutes=30)
-RefundReason = Literal["damaged", "defective", "incorrect", "change_of_mind"]
 Stage = Literal[
     "refund_reason",
     "refund_item",
@@ -62,26 +65,9 @@ ACTION_RETRACTION = re.compile(
 NO = re.compile(
     r"(?:no|no thanks|not now|never mind|nevermind|stop this request)[.! ]*", re.IGNORECASE
 )
-TOPIC_SWITCH = re.compile(
-    r"\b(?:new question|unrelated|instead can|forget that|where is my|track my|"
-    r"recommend|compare|shipping policy|return policy|refund policy|payment method|talk to|"
-    r"delivery (?:costs?|charges?|fees?)|shipping (?:costs?|charges?|fees?)|"
-    r"human|cancel (?:it|my order)|how (?:do|can)|what (?:is|are))\b",
-    re.IGNORECASE,
-)
-REASON_PATTERNS: dict[RefundReason, str] = {
-    "damaged": r"damaged|damage|broken|cracked",
-    "defective": r"defective|faulty|doesn.t work|not working",
-    "incorrect": r"incorrect|wrong(?: item| product| size| color| colour)?",
-    "change_of_mind": r"change(?:d)? (?:of |my )?mind|no longer (?:want|need) it",
-}
 ITEM_IDENTIFIER = re.compile(r"^[\w][\w .,'’()&+/-]{1,119}$")
 PRODUCT_ORDINAL = re.compile(
     r"(?:the )?(first|second|third|fourth|[1-4](?:st|nd|rd|th)?)(?: one| option)?[.!]?",
-    re.IGNORECASE,
-)
-TIMING_ANSWER = re.compile(
-    r"(?:today|tomorrow|this weekend|next week|on (?:mon|tues|wednes|thurs|fri|satur|sun)day)[.!]?",
     re.IGNORECASE,
 )
 
@@ -132,66 +118,10 @@ def refund_start() -> PendingQuestion:
     )
 
 
-def infer_assistant_question(text: str) -> PendingQuestion | None:
-    """Recognize narrow legacy prompts. Inferred state can only ask or route."""
-    from app.services import widget_ai
-
-    folded = text[-800:].casefold()
-    preview_handoff_states = {
-        ORDER_REFERENCE_HELP + ORDER_HANDOFF_OFFER: "offered",
-        ORDER_HANDOFF_DECLINED: "declined",
-    }
-    if text in preview_handoff_states:
-        return order_verification_question().model_copy(
-            update={
-                "order_number_unavailable": True,
-                "handoff_status": preview_handoff_states[text],
-                "expected_answer_type": "confirmation"
-                if text.endswith(ORDER_HANDOFF_OFFER)
-                else "order_reference",
-            }
-        )
-    if re.search(r"enter (?:the|your) order number and (?:your )?checkout email", folded):
-        return order_verification_question()
-    if text == widget_ai.ORDER_ACTION_REPLY:
-        return order_verification_question(action="cancel")
-    if (
-        re.search(
-            r"\b(?:reason for (?:your|the) (?:refund|return)|was (?:the|your) item damaged)\b",
-            folded,
-        )
-        and "?" in folded
-    ):
-        return refund_start()
-    if order := re.search(
-        r"(?:would you like me to|should i) (check|track|cancel) (?:your|the) order\?", folded
-    ):
-        return PendingQuestion(
-            active_intent="order",
-            stage="order_confirmation",
-            expected_answer_type="confirmation",
-            order_action="cancel" if order[1] == "cancel" else "track",
-        )
-    if re.search(r"which (?:products?|options?|recommendations?|one)[^?]{0,85}\?", folded):
-        return PendingQuestion(
-            active_intent="shopping", stage="product_selection", expected_answer_type="ordinal"
-        )
-    if asks_delivery_date(text) or re.search(
-        r"(?:when|what day|which day)[^?]{0,80}\b(?:deliver(?:ed|y)?|ship(?:ped)?|arrive)[^?]{0,30}\?",
-        folded,
-    ):
-        return PendingQuestion(
-            active_intent="knowledge", stage="policy_timing", expected_answer_type="time"
-        )
-    return None
-
-
 def pending_from_assistant(
     turn: dict[str, str],
     agent_id: UUID,
     now: datetime,
-    *,
-    allow_legacy: bool = True,
 ) -> PendingQuestion | None:
     if turn.get("sender") != "assistant":
         return None
@@ -206,24 +136,18 @@ def pending_from_assistant(
             ):
                 return None
             return state
-        if not allow_legacy:
-            return None
-        sent = datetime.fromisoformat(turn["created_at"])
-        if sent.tzinfo is None or sent + PENDING_TTL <= now:
-            return None
-    except (ValueError, KeyError):
+    except ValueError:
         return None
-    return infer_assistant_question(turn.get("content", ""))
-
-
-def _refund_reason(answer: str) -> RefundReason | None:
-    answer = re.sub(
-        r"^(?:actually[, ]+)?(?:(?:it|the item) (?:was|is) )?", "", answer, flags=re.IGNORECASE
-    )
-    for reason, pattern in REASON_PATTERNS.items():
-        if re.fullmatch(pattern + r"[.! ]*", answer, re.IGNORECASE):
-            return reason
     return None
+
+
+def read_pending_turn(
+    message: str, transcript: list[dict[str, str]], agent_id: UUID, now: datetime,
+) -> PendingQuestion | None:
+    previous = transcript
+    if previous and previous[-1].get("sender") == "customer" and previous[-1].get("content") == message[:2000]:
+        previous = previous[:-1]
+    return pending_from_assistant(previous[-1], agent_id, now) if previous else None
 
 
 def order_verification_question(*, action: Literal["track", "cancel"] = "track") -> PendingQuestion:
@@ -251,11 +175,6 @@ def resolve_order_support(
     in_order_context = waiting_for_order or (
         state is not None and state.stage == "order_confirmation"
     )
-    # Once a handoff has been requested, subsequent customer turns must not
-    # be trapped in the order-reference workflow. Only a recovered reference
-    # can explicitly resume it; other messages return to normal routing.
-    if state is not None and state.handoff_status == "requested" and not order_reference_recovered(message):
-        return None
     if order_reference_unavailable(message, in_order_context=in_order_context):
         pending = (
             state
@@ -282,6 +201,11 @@ def resolve_order_support(
             draft=ORDER_REFERENCE_HELP + ORDER_HANDOFF_OFFER,
             pending=pending,
         )
+    # Once a handoff has been requested, subsequent customer turns must not
+    # be trapped in the order-reference workflow. Only a recovered reference
+    # can explicitly resume it; other messages return to normal routing.
+    if state is not None and state.handoff_status == "requested" and not order_reference_recovered(message):
+        return None
     if not waiting_for_order or state is None:
         return None
     if order_reference_recovered(message):
@@ -340,29 +264,13 @@ def resolve_order_support(
             draft=ORDER_HANDOFF_DECLINED,
             pending=pending,
         )
-    if (
-        _is_new_subject(message)
-        or widget_ai.PURCHASE_INTENT.search(message)
-        or (
-            state.active_intent != "refund"
-            and (widget_ai.REFUND_ACTION.search(message) or widget_ai.RETURN_ACTION.search(message))
-        )
-        or (
-            TOPIC_SWITCH.search(message)
-            and (
-                not widget_ai.widget_request_needs_order_verification(message)
-                or widget_ai.POLICY_QUESTION.search(message)
-            )
-        )
-    ):
+    if widget_ai.POLICY_QUESTION.search(message):
         return None
     if state.active_intent == "order" and widget_ai.CANCELLATION_REQUEST.search(message):
         state = state.model_copy(update={"order_action": "cancel"})
     if classify_conversational_intent(message) is None and (
         widget_ai.widget_request_needs_order_verification(message)
         or widget_ai.CLARIFICATION_REQUEST.fullmatch(message)
-        or len(message.split()) <= 5
-        and not TOPIC_SWITCH.search(message)
     ):
         if state.handoff_status == "requested":
             return FollowUp(
@@ -385,6 +293,7 @@ def resolve_follow_up(
     state: PendingQuestion,
     *,
     source_message_id: UUID | None,
+    interpretation: FollowUpInterpretation | None = None,
 ) -> FollowUp | None:
     answer = " ".join(message.strip().split())
     if ACTION_RETRACTION.search(answer):
@@ -409,11 +318,12 @@ def resolve_follow_up(
             "order_confirmation",
             routed_question=("Please cancel my order" if cancel else "Where is my order?"),
         )
-    if TOPIC_SWITCH.search(answer):
-        return None
     if state.active_intent == "refund":
-        reason = _refund_reason(answer)
-        if reason and state.stage != "refund_review":
+        slot_answer = interpretation is not None and interpretation.relation == "answer_to_question"
+        reason = interpretation.refund_reason if slot_answer and interpretation.goal == "refund_reason" else None
+        if state.stage == "refund_reason" and reason is None:
+            reason = next((value for value in get_args(RefundReason) if value.replace("_", " ") == answer.casefold().rstrip(".!")), None)
+        if reason and state.stage in {"refund_reason", "refund_item"}:
             updated = state.model_copy(
                 update={
                     "stage": "refund_item",
@@ -436,6 +346,7 @@ def resolve_follow_up(
             state.stage == "refund_item"
             and state.refund_reason
             and source_message_id
+            and slot_answer and interpretation.goal == "refund_item"
             and (
                 ITEM_IDENTIFIER.fullmatch(answer)
                 and not re.search(r"\b\d{5,}\b", answer)
@@ -458,11 +369,6 @@ def resolve_follow_up(
             return FollowUp("refund_verification", draft=VERIFY_REFUND, pending=state)
     if state.stage == "product_selection" and PRODUCT_ORDINAL.fullmatch(answer):
         return FollowUp("product_reference", routed_question=answer)
-    if state.stage == "policy_timing" and TIMING_ANSWER.fullmatch(answer):
-        return FollowUp(
-            "policy_timing",
-            routed_question=f"Store delivery policy for the requested time: {answer}",
-        )
     return None
 
 
@@ -481,47 +387,13 @@ def assess_widget_follow_up(
     if ACTION_RETRACTION.search(question.strip()):
         return FollowUp("declined", draft="Understood. I won’t proceed with that request. What else can I help with?"), "retracted"
 
-    previous = transcript
+    state = read_pending_turn(question, transcript, agent_id, now)
     if (
-        previous
-        and previous[-1].get("sender") == "customer"
-        and (previous[-1].get("content", "") == question[:2000])
+        state is not None
+        and (allow_refund_workflow or state.active_intent == "order")
+        and (resolved := resolve_follow_up(question, state, source_message_id=source_message_id))
     ):
-        previous = previous[:-1]
-    if previous:
-        # A pending prompt may be followed by one or more customer messages.
-        # Do not revive an older prompt after a newer assistant response.
-        latest_assistant = next(
-            (turn for turn in reversed(previous[-12:]) if turn.get("sender") == "assistant"),
-            None,
-        )
-        state = pending_from_assistant(latest_assistant, agent_id, now) if latest_assistant else None
-        if state is not None and (allow_refund_workflow or state.active_intent == "order"):
-            if resolved := resolve_follow_up(question, state, source_message_id=source_message_id):
-                return resolved, "resolved"
-            if (
-                not TOPIC_SWITCH.search(question)
-                and not _is_new_subject(question)
-                and classify_conversational_intent(question) is None
-                and state.stage
-                in {
-                    "refund_reason",
-                    "refund_item",
-                    "refund_verification",
-                    "refund_review",
-                }
-            ):
-                prompts = {
-                    "refund_reason": REASON_PROMPT,
-                    "refund_item": "Which product and quantity are you asking to return?",
-                    "refund_verification": VERIFY_REFUND,
-                    "refund_review": "Would you like me to send the verified request to the store team for review?",
-                }
-                # An ambiguous short answer stays in the workflow, but is not treated as a valid slot.
-                if len(question.split()) <= 5:
-                    return FollowUp(
-                        "targeted_clarification", draft=prompts[state.stage], pending=state
-                    ), "ambiguous"
+        return resolved, "resolved"
     if order_follow_up := resolve_order_support(" ".join(question.strip().split())):
         return order_follow_up, "started"
     if (
@@ -537,15 +409,3 @@ def assess_widget_follow_up(
     ):
         return FollowUp("refund_start", draft=REASON_PROMPT, pending=refund_start()), "started"
     return None, "no_matching_pending_question"
-
-
-_NEW_SUBJECT = re.compile(
-    r"\\b(?:exchange|delivery|shipping|tracking|order|payment|product|"
-    r"recommend|warranty|contact|hours|store|price|stock|phone|mobile|"
-    r"smartphone|available|availability|catalog|item|laptop)\\b", re.IGNORECASE
-)
-
-
-def _is_new_subject(message: str) -> bool:
-    """Do not force an unrelated explicit request into a pending refund slot."""
-    return bool(_NEW_SUBJECT.search(message))
