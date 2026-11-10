@@ -266,6 +266,10 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 decision=follow_up.decision if follow_up else None,
             )
             if follow_up is not None:
+                # Mark the stage before awaiting so thrown retrieval errors are
+                # classified correctly without changing their retryable type.
+                if follow_up.review is not None:
+                    failure_stage = "knowledge_retrieval"
                 completion = await complete_widget_follow_up(
                     organization_id,
                     execution_id,
