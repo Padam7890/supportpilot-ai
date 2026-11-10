@@ -15,7 +15,7 @@
 ## Remaining Phase 1 decomposition work
 - Move widget-specific turn orchestration out of the worker into an application service with explicit dependencies.
 - Move playground turn orchestration to the same application boundary.
-- Extract durable execution state transitions and failure handling behind typed interfaces.
+- Extract failure classification, retry scheduling and terminal failure persistence behind typed interfaces. Lease claiming and deterministic completion now live in `application/execution_lifecycle.py`.
 - Consolidate overlapping deterministic conversation rules without changing security-sensitive precedence.
 - Validate imports, compile all backend modules and inspect CI results before merging.
 
@@ -28,3 +28,12 @@ pytest -q tests/test_stream_context_policy.py tests/test_intent_router.py tests/
 ```
 
 No passing execution result has been verified through the GitHub connector. Keep this pull request draft until checks are complete.
+
+## Additional implementation (continuation)
+
+- Moved tenant-scoped execution claiming, exhausted-lease failure transitions and deterministic completion into `features/ai/application/execution_lifecycle.py`.
+- Preserved imports in `services/ai_worker.py` so existing worker call sites continue using the same function names and signatures.
+- Removed unused worker lease-policy and SQL expression imports after extraction.
+- Kept all existing row locks, tenant filters, status checks, field clearing and commit behavior intact.
+
+**Important:** Phase 1 is still open: the main execution function remains large, and worker failure handling and widget/playground orchestration are not yet fully extracted. Do not treat this PR as ready to merge without review and verification.
