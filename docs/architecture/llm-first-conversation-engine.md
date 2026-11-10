@@ -84,3 +84,10 @@ Enable only in a controlled development environment after reviewing model costs 
 - Invalid plans fall back to legacy routing. Unexpected provider errors use the worker's existing failure lifecycle. Output with numeric claims or over 500 characters is rejected by the pilot.
 - **Do not enable for general customer traffic yet.** Semantic claim validation, tenant-specific bot tool permissions, end-to-end integration tests, streaming, and non-greeting migration remain pending. Flag-off behavior is unchanged.
 - Tests and CI/CD have not been executed.
+
+## Increment: pilot safety corrections
+
+- Corrected an accidentally escaped multiline comment that had prevented the first-contact transcript guard from executing. The pilot now actually rejects previous substantive conversation turns.
+- Corrected the numeric-claim regular expression and added regression scenarios for both guards.
+- **No scope expansion:** live agent use remains first-contact greetings only, flag off by default. Strong semantic grounding, tool permission snapshots, end-to-end tests and safe wider migration are prerequisites to expanding traffic.
+- Tests and CI/CD have not been executed.
