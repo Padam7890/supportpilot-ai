@@ -69,8 +69,12 @@ async def try_complete_widget_agent_pilot(
     except (ValueError, PermissionError, LookupError):
         # Model-plan validation failures fall back to the existing widget path.
         return False
-    if (result.tool_names or not result.answer.strip()
-        or len(result.answer) > 500 or re.search(r"\\d", result.answer)):
+    if (
+        result.tool_names
+        or not result.answer.strip()
+        or len(result.answer) > 500
+        or re.search(r"\d", result.answer)
+    ):
         # Greeting pilot must not publish quantitative store claims.
         return False
     await finish_widget_reply(
