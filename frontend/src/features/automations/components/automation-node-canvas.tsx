@@ -120,7 +120,7 @@ function issueClass(issues: Set<string>, node: CanvasNode) {
     ? "trigger"
     : node.kind === "branch"
       ? `branch-${node.branchId}`
-      : `${node.kind}-${node.index}`;
+      : node.kind === "else_action" ? "else_action" : `${node.kind}-${node.index}`;
   return issues.has(key) ? "border-red-300 ring-1 ring-red-200" : "";
 }
 
@@ -477,7 +477,7 @@ export function AutomationNodeCanvas({
 
     function actionInsertIndex(): number {
       if (from.kind === "trigger" || from.kind === "condition") return 0;
-      return from.index + 1;
+      return from.kind === "else_action" ? draft.actions.length : from.index + 1;
     }
 
     return (
