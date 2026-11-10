@@ -100,7 +100,7 @@ PRIVATE_ACCOUNT_REQUEST = re.compile(
     re.IGNORECASE,
 )
 PRODUCT_QUESTION = re.compile(
-    r"\b(?:product|item|size|colour|color|material|fabric|ingredient|in stock|available|price)\b",
+    r"\b(?:product|item|phone|mobile|smartphone|laptop|size|colour|color|material|fabric|ingredient|in stock|available|price)\b",
     re.IGNORECASE,
 )
 POLICY_QUESTION = re.compile(
