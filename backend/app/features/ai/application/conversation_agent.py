@@ -71,6 +71,8 @@ async def run_conversation_agent(
         adapters=adapters,
     ) if requests else []
     evidence = compose_response_evidence(results)
+    if requests and not evidence.answerable:
+        raise ValueError("No verified tool evidence available for requested store facts")
     composed = await composer(agent_input, evidence)
     if evidence.answerable:
         # Conservative numeric and citation checks; not semantic entailment.
