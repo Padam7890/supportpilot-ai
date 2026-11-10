@@ -133,14 +133,15 @@ async def generate_guarded_draft(
     )
     generated = str(result.get("draft", ""))[:12000]
     # Validate the same bounded excerpts actually supplied to the composer.
-    # Integration-backed generation keeps its existing specialized guard.
+    # Integration context must not disable knowledge claim validation.
+    # The specialized integration path remains responsible for authorization.
     grounding = (
         check_grounded_claims(
             generated, grounding_sources, require_citations=True,
         )
         if use_canonical_composer and grounding_sources
         else check_generated_answer(
-            generated, context if not integration_context else []
+            generated, context
         )
     )
     if grounding.accepted:
