@@ -21,6 +21,11 @@ export const listKnowledgeDocuments = (knowledgeBaseId?: string, offset = 0) => 
 export const getKnowledgeDocument = (id: string) => api<KnowledgeDocument>(`/knowledge/documents/${encodeURIComponent(id)}`);
 export const getKnowledgeSourcePreview = (id: string) =>
   api<KnowledgeSourcePreview>(`/knowledge/documents/${encodeURIComponent(id)}/source-preview`);
+
+export function knowledgePdfUrl(id: string, download = false) {
+  return `/api/knowledge/documents/${encodeURIComponent(id)}/pdf${download ? "?download=true" : ""}`;
+}
+
 export const moveKnowledgeDocument = (id: string, knowledgeBaseId: string) =>
   api<KnowledgeDocument>(`/knowledge/documents/${encodeURIComponent(id)}/knowledge-base`, {
     method: "PUT",

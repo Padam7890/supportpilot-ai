@@ -3,6 +3,7 @@ from collections import defaultdict
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import PurePath
+from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
@@ -29,10 +30,10 @@ from app.models import (
 from app.schemas.errors import COMMON_ERROR_RESPONSES
 from app.schemas.knowledge import (
     DocumentEmbeddingBackfillOut,
+    DocumentEmbeddingDiagnosticsOut,
     DocumentEmbeddingJobOut,
     IngestionJobOut,
     KnowledgeDocumentMove,
-    DocumentEmbeddingDiagnosticsOut,
     KnowledgeDocumentOut,
     KnowledgeDocumentPage,
     KnowledgeSearchPage,
@@ -425,6 +426,66 @@ async def get_document(
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found")
     return await document_out(db, document)
+
+
+@router.head("/{document_id}/pdf", include_in_schema=False)
+@router.get(
+    "/{document_id}/pdf",
+    response_class=Response,
+    responses={
+        200: {"content": {"application/pdf": {"schema": {"type": "string", "format": "binary"}}}},
+        410: {
+            "description": "Original PDF is no longer retained",
+            "content": {"application/problem+json": {"schema": {"$ref": "#/components/schemas/ProblemDetails"}}},
+        },
+    },
+)
+async def get_document_pdf(
+    document_id: UUID,
+    request: Request,
+    download: bool = False,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Response:
+    """Serve the original retained PDF with the same access as document details."""
+    source = KnowledgeDocumentSource
+    document = KnowledgeDocument
+    metadata_only = request.method == "HEAD"
+    content_column = func.substring(source.content, 1, 5) if metadata_only else source.content
+    row = (await db.execute(
+        select(document.name, document.content_type, content_column)
+        .outerjoin(
+            source,
+            (source.organization_id == document.organization_id) & (source.document_id == document.id),
+        )
+        .where(
+            document.id == document_id,
+            document.organization_id == user.organization_id,
+            document.deleted_at.is_(None),
+        )
+    )).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    name, content_type, content = row
+    if content_type != "application/pdf":
+        raise HTTPException(status_code=415, detail="This document is not a PDF")
+    if content is None:
+        raise HTTPException(status_code=410, detail="The retained source file is no longer available")
+    if not content.startswith(b"%PDF-"):
+        raise HTTPException(status_code=422, detail="The retained source is not a valid PDF")
+
+    disposition = "attachment" if download else "inline"
+    return Response(
+        content=b"" if metadata_only else content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"{disposition}; filename*=UTF-8''{quote(name, safe='')}",
+            "Content-Security-Policy": "default-src 'none'; frame-ancestors 'self'",
+            "X-Frame-Options": "SAMEORIGIN",
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, no-store",
+        },
+    )
 
 
 @router.get("/{document_id}/source-preview", response_model=KnowledgeSourcePreviewOut)
