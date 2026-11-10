@@ -1,7 +1,7 @@
-"""Opt-in conversation orchestration with injected model decision and tools.
+"""Read-only conversation orchestration with injected planner and tools.
 
-No live worker integration here. Model-selected actions are constrained to
-read-only tools; authorization is always enforced by the tool executor.
+Model-selected actions require server-authorized tool execution. The widget
+currently invokes this agent for a limited first-contact pilot.
 """
 
 from collections.abc import Awaitable, Callable, Mapping
@@ -89,7 +89,7 @@ async def run_conversation_agent(
         checked = check_grounded_claims(
             composed.text,
             [{"excerpt": item["content"]} for item in evidence.context],
-            require_citations=False,
+            require_citations=True,
         )
         if not checked.accepted:
             raise ValueError(f"Generated answer failed grounding: {checked.reason}")
