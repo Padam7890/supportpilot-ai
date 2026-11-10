@@ -30,6 +30,7 @@ async def test_read_only_agent_uses_authorized_evidence() -> None:
     result = await run_conversation_agent(
         _INPUT, planner=planner,
         adapters={ToolName.CATALOG_SEARCH: adapter}, composer=composer,
+        allowed_tools=frozenset({ToolName.CATALOG_SEARCH}),
     )
     assert result.source_ids == ["product-a"]
     adapter.assert_awaited_once()
@@ -61,6 +62,7 @@ async def test_missing_store_evidence_prevents_generation() -> None:
                 name=ToolName.CATALOG_SEARCH, status="not_found",
             ))},
             composer=composer,
+            allowed_tools=frozenset({ToolName.CATALOG_SEARCH}),
         )
     composer.assert_not_awaited()
 
@@ -83,6 +85,7 @@ async def test_numeric_claim_without_evidence_is_blocked() -> None:
                 facts=["Delivery time varies."],
             ))},
             composer=composer,
+            allowed_tools=frozenset({ToolName.KNOWLEDGE_SEARCH}),
         )
 
 
