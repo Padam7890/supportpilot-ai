@@ -72,7 +72,11 @@ def _merge_to_token_budget(
         if carry_overlap and overlap_tokens > 0 and body:
             overlap_text = body
             while overlap_text and estimate_tokens(overlap_text) > overlap_tokens:
-                overlap_text = overlap_text[overlap_text.find(" ") + 1 :]
+                boundary = overlap_text.find(" ")
+                if boundary < 0:
+                    overlap_text = ""
+                    break
+                overlap_text = overlap_text[boundary + 1 :]
             buffer = [overlap_text] if overlap_text else []
             buffer_tokens = estimate_tokens(overlap_text) if overlap_text else 0
         else:
