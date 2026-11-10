@@ -1,75 +1,82 @@
-"""Minimize server-verified Shopify order context before model composition.
+"""Minimize server-authorized Shopify results for deterministic reply drafts."""
 
-This module does NOT verify identity or fetch Shopify data. Callers must supply
-context obtained from the existing authorized order-verification workflow.
-Never pass raw decrypted payloads, contact details, addresses or tokens to an LLM.
-"""
+from typing import Annotated
 
-from collections.abc import Mapping
-from dataclasses import dataclass
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
-from app.features.ai.application.conversation_response_evidence import ResponseEvidence
+from app.features.ai.application.conversation_response_evidence import EvidenceItem, ResponseEvidence
+from app.schemas.shopify import ShopifyOrderOut
 
-_ALLOWED_SCALARS = frozenset({
-    "order_name", "order_number", "financial_status", "fulfillment_status",
-    "display_fulfillment_status", "cancelled_at", "processed_at",
-    "currency", "total_price", "total_amount", "return_status",
-    "tracking_company", "tracking_number",
-})
+OrderText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
 
 
-@dataclass(frozen=True)
-class VerifiedOrderEvidence:
-    evidence: ResponseEvidence
-    accepted_fields: tuple[str, ...]
+class OrderTrackingFact(BaseModel):
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    company: OrderText | None = None
+    number: OrderText | None = None
+
+    @field_validator("company", "number")
+    @classmethod
+    def exclude_private_or_unsafe_text(cls, value: str | None) -> str | None:
+        if value is not None and any(character in value for character in "\r\n<>@"):
+            return None
+        return value
 
 
-def build_verified_order_evidence(
-    context: Mapping[str, object] | None,
-    *,
-    identity_verified: bool,
-) -> VerifiedOrderEvidence:
-    """Fail closed; caller owns verification and execution-scoped authorization."""
-    if not identity_verified or not isinstance(context, Mapping):
-        raise PermissionError("Verified customer identity is required")
-    facts: list[str] = []
-    accepted: list[str] = []
-    for field in sorted(_ALLOWED_SCALARS):
-        value = context.get(field)
-        if isinstance(value, bool) or not isinstance(value, (str, int, float)):
-            continue
-        value_text = str(value).strip()
-        if not value_text or len(value_text) > 160:
-            continue
-        # Avoid multiline prompt injection or arbitrary provider payloads.
-        if any(char in value_text for char in "\r\n<>"):
-            continue
-        facts.append(f"{field}: {value_text}")
-        accepted.append(field)
-    # ShopifyOrderOut uses nested tracking entries. Flatten a bounded subset
-    # without exposing URLs, email addresses, addresses or raw provider payloads.
-    tracking = context.get("tracking")
-    if isinstance(tracking, list):
-        for index, entry in enumerate(tracking[:3], start=1):
-            if not isinstance(entry, Mapping):
-                continue
-            for field in ("company", "number"):
-                value = entry.get(field)
-                if not isinstance(value, str):
-                    continue
-                value = value.strip()
-                if not value or len(value) > 100 or any(c in value for c in "\r\n<>"):
-                    continue
-                facts.append(f"tracking_{index}_{field}: {value}")
-                accepted.append(f"tracking_{index}_{field}")
-    if not facts:
-        raise ValueError("No approved verified order fields available")
-    return VerifiedOrderEvidence(
-        evidence=ResponseEvidence(
-            context=[{"source": "verified_shopify_order", "content": fact} for fact in facts],
-            source_ids=[],
-            answerable=True,
-            unavailable=False,
-        ),
-        accepted_fields=tuple(accepted),
-    )
+class AuthorizedOrderSnapshot(BaseModel):
+    """Only instantiate from the server lookup or the encrypted execution field."""
+
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    order_number: str = Field(min_length=1, max_length=100, pattern=r"^[^\r\n<>@]+$")
+    financial_status: str | None = Field(default=None, pattern=r"^[a-zA-Z_ -]{1,40}$")
+    fulfillment_status: str | None = Field(default=None, pattern=r"^[a-zA-Z_ -]{1,40}$")
+    return_status: str | None = Field(default=None, pattern=r"^[a-zA-Z_ -]{1,40}$")
+    total_amount: str | None = Field(default=None, pattern=r"^[0-9]{1,20}(\.[0-9]{1,8})?$")
+    currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
+    cancelled_at: str | None = Field(default=None, max_length=40, pattern=r"^[0-9TtZz:+. -]+$")
+    tracking: list[OrderTrackingFact] = Field(default_factory=list, max_length=3)
+
+    @classmethod
+    def from_authorized_lookup(cls, order: ShopifyOrderOut) -> "AuthorizedOrderSnapshot":
+        return cls(
+            order_number=order.order_number,
+            financial_status=order.financial_status,
+            fulfillment_status=order.fulfillment_status,
+            return_status=order.return_status,
+            total_amount=order.total_amount,
+            currency=order.currency,
+            cancelled_at=order.cancelled_at.isoformat() if order.cancelled_at else None,
+            tracking=[
+                OrderTrackingFact(company=item.company, number=item.number)
+                for item in order.tracking[:3]
+            ],
+        )
+
+    @field_validator("tracking", mode="before")
+    @classmethod
+    def bound_legacy_tracking(cls, value: object) -> object:
+        return value[:3] if isinstance(value, list) else value
+
+    def as_evidence(self) -> ResponseEvidence:
+        facts = [f"I checked your verified order {self.order_number}."]
+        if self.cancelled_at:
+            facts.append("Shopify shows this order was cancelled.")
+        for label, status in (
+            ("Payment", self.financial_status),
+            ("Fulfillment", self.fulfillment_status if not self.cancelled_at else None),
+            ("Return", self.return_status),
+        ):
+            if status:
+                facts.append(f"{label} status: {status.replace('_', ' ').lower()}.")
+        if self.total_amount and self.currency:
+            facts.append(f"Order total: {self.total_amount} {self.currency}.")
+        for entry in self.tracking:
+            details = [value for value in (entry.company, entry.number) if value]
+            if details:
+                facts.append(f"Tracking details: {' · '.join(details)}.")
+        return ResponseEvidence(
+            (EvidenceItem("verified_order", " ".join(facts), self.order_number),),
+            "verified",
+        )

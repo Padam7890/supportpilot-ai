@@ -12,6 +12,7 @@ from app.features.ai.application.catalog_search import (
     catalog_has_active_products,
     load_candidates,
 )
+from app.features.ai.application.conversation_response_evidence import EvidenceItem, ResponseEvidence
 from app.features.ai.domain.ranking import build_recommendation_result
 from app.features.ai.domain.shopping_state import (
     MAX_REJECTIONS_BEFORE_HANDOFF_OFFER,
@@ -213,17 +214,21 @@ def render_recommendation_reply(output: RecommendationToolOutput) -> str:
     if result.response_type != "recommendations" or not result.products:
         return result.explanation
     lines = [result.explanation]
-    for index, product in enumerate(result.products, start=1):
-        line = f"{index}. {product.title}"
+    facts = []
+    for product in result.products:
+        title = product.title
         if product.variant_title and product.variant_title.casefold() not in {
             "default",
             "default title",
         }:
-            line += f" ({product.variant_title})"
-        line += f" — {product.price} {product.currency}"
+            title += f" ({product.variant_title})"
+        line = f"{title} — {product.price} {product.currency}"
         if product.brand:
             line += f" · {product.brand}"
-        lines.append(line)
+        facts.append(EvidenceItem("catalog", line, f"{product.product_id}:{product.variant_id}"))
+    evidence = ResponseEvidence(tuple(facts), "verified")
+    for index, (fact, product) in enumerate(zip(evidence.items, result.products, strict=True), start=1):
+        lines.append(f"{index}. {fact.content}")
         if product.reasons:
             lines.append("   " + "; ".join(product.reasons[:3]) + ".")
         if product.limitations:
@@ -237,10 +242,18 @@ def render_comparison_reply(result: ProductComparisonResult) -> str:
     if result.response_type == "clarification":
         return result.explanation
     lines = [result.explanation]
-    for index, item in enumerate(result.products, start=1):
-        lines.append(
-            f"{index}. {item.title} — {item.price} {item.currency}; availability: {item.availability}."
-        )
+    evidence = ResponseEvidence(
+        tuple(
+            EvidenceItem(
+                "catalog", f"{item.title} — {item.price} {item.currency}; availability: {item.availability}.",
+                f"{item.product_id}:{item.variant_id}",
+            )
+            for item in result.products
+        ),
+        "verified" if result.products else "missing",
+    )
+    for index, (fact, item) in enumerate(zip(evidence.items, result.products, strict=True), start=1):
+        lines.append(f"{index}. {fact.content}")
         if item.verified_attributes:
             lines.append(
                 "   Verified details: "

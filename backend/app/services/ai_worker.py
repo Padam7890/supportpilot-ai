@@ -33,8 +33,7 @@ from app.features.ai.application.generated_reply_persistence import (
 )
 from app.features.ai.application.guarded_generation import generate_guarded_draft
 from app.features.ai.application.intent_extraction import extract_intent
-from app.features.ai.application.intent_routing.deterministic import assess_deterministic_route
-from app.features.ai.application.intent_routing.schemas import Intent
+from app.features.ai.application.intent_routing import resolve_customer_routing
 from app.features.ai.application.knowledge_inventory import is_knowledge_inventory_question
 from app.features.ai.application.missing_evidence_policy import plan_missing_evidence_reply
 from app.features.ai.application.playground_execution import complete_playground_knowledge_inventory
@@ -45,7 +44,6 @@ from app.features.ai.application.stream_context_policy import (
 from app.features.ai.application.stream_context_policy import (
     stream_conversation_context as _stream_conversation_context,
 )
-from app.features.ai.application.widget_agent_pilot import try_complete_widget_agent_pilot
 from app.features.ai.application.widget_failure_fallback import plan_widget_failure_fallback
 from app.features.ai.application.widget_follow_up_execution import complete_widget_follow_up
 from app.features.ai.application.widget_orders import _question_order_number
@@ -117,7 +115,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
     retrieval_match_count: int | None = None
     failure_stage = "context_and_retrieval"
     try:
-        loaded = await load_execution_context(organization_id, execution_id)
+        loaded = await load_execution_context(organization_id, execution_id, include_knowledge=False)
         if loaded is None:
             _log_ai_execution_event(
                 "ai_execution_skipped",
@@ -258,6 +256,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
         routed_question = execution.question if execution.kind == "widget_reply" else question
         follow_up_query = None
         generic_clarification = None
+        requires_store_evidence = True
         if execution.kind == "widget_reply":
             if await widget_reply_is_stale(organization_id, execution_id):
                 return
@@ -292,16 +291,6 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 routed_question = follow_up.routed_question
                 if follow_up.decision == "policy_timing":
                     follow_up_query = routed_question
-            if follow_up is None and await try_complete_widget_agent_pilot(
-                organization_id=organization_id,
-                execution_id=execution_id,
-                ai_agent_id=execution.ai_agent_id,
-                message=routed_question,
-                transcript=transcript,
-                delivery_mode=execution.delivery_mode,
-                allowed_tools_snapshot=execution.ai_agent_tools_snapshot,
-            ):
-                return
             route_result = await resolve_widget_turn(
                 routed_question,
                 transcript,
@@ -311,6 +300,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 ),
             )
             turn = route_result.turn
+            requires_store_evidence = route_result.requires_evidence
             intent_router_outcome = route_result.outcome
             if route_result.model_router_invoked:
                 _log_ai_execution_event(
@@ -360,6 +350,38 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                     citations=[], outcomes=router_outcomes, usage={}, model_name=None,
                 )
                 return
+        if execution.kind == "playground" and is_knowledge_inventory_question(question):
+            await complete_playground_knowledge_inventory(
+                organization_id,
+                execution_id,
+                ai_agent_id=execution.ai_agent_id,
+            )
+            return
+        if execution.kind == "playground":
+            playground_routing = await route_playground_conversation(
+                organization_id,
+                execution_id,
+                question=question,
+                transcript=transcript,
+            )
+            if playground_routing.completed:
+                return
+            intent_router_outcome = playground_routing.outcome
+            requires_store_evidence = playground_routing.requires_evidence
+            _log_ai_execution_event(
+                "intent_router_resolved",
+                execution_id=str(execution_id),
+                correlation_id=correlation_id,
+                channel="playground",
+                **{k: (intent_router_outcome or {}).get(k) for k in ("mode", "primary_intent", "metrics")},
+            )
+        if execution.kind == "reply_draft" and not integration_context:
+            routing = await resolve_customer_routing(
+                question, transcript, channel="reply_draft", for_generation=True,
+            )
+            requires_store_evidence = routing.requires_evidence
+            intent_router_outcome = routing.tool_outcome()
+        if requires_store_evidence and not integration_context:
             failure_stage = "knowledge_retrieval"
             loaded = await load_execution_context(
                 organization_id,
@@ -385,40 +407,9 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 ai_agent_id=str(ai_agent_id) if ai_agent_id else None,
                 retrieval_match_count=retrieval_match_count,
             )
-        if execution.kind == "playground" and is_knowledge_inventory_question(question):
-            await complete_playground_knowledge_inventory(
-                organization_id,
-                execution_id,
-                ai_agent_id=execution.ai_agent_id,
-            )
-            return
-        if execution.kind == "playground":
-            playground_routing = await route_playground_conversation(
-                organization_id,
-                execution_id,
-                question=question,
-                transcript=transcript,
-            )
-            if playground_routing.completed:
-                return
-            intent_router_outcome = playground_routing.outcome
-            _log_ai_execution_event(
-                "intent_router_resolved",
-                execution_id=str(execution_id),
-                correlation_id=correlation_id,
-                channel="playground",
-                **{k: (intent_router_outcome or {}).get(k) for k in ("mode", "primary_intent", "metrics")},
-            )
-        route = assess_deterministic_route(execution.question, [])
-        requires_store_evidence = (
-            route.requires_tools
-            or route.requires_knowledge
-            or route.intent in {Intent.PRODUCT, Intent.ORDER, Intent.REFUND}
-        )
-        if not context and not integration_context and (
-            execution.kind not in {"widget_reply", "playground", "reply_draft"}
-            or requires_store_evidence
-        ):
+        elif intent_router_outcome:
+            outcomes = [intent_router_outcome, *outcomes]
+        if requires_store_evidence and not context and not integration_context:
             missing = plan_missing_evidence_reply(
                 execution_kind=execution.kind,
                 question=execution.question if execution.kind == "widget_reply" else question,
@@ -447,8 +438,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 raise error
         failure_stage = "provider_generation"
         guarded = await generate_guarded_draft(
-            organization_id=organization_id,
-            execution_id=execution_id,
+            execution_id=str(execution_id),
             execution_kind=execution.kind,
             question=question,
             instructions=execution.instructions,
@@ -457,15 +447,12 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             integration_context=integration_context,
             citations=citations,
             outcomes=outcomes,
-            auto_reply=(
-                execution.kind == "widget_reply" and execution.delivery_mode == "auto_reply"
-            ),
+            requires_evidence=requires_store_evidence,
             correlation_id=correlation_id,
         )
         generated_draft = guarded.text
         citations = guarded.citations
         outcomes = guarded.outcomes
-        stream_source_ids = None
         if execution.kind == "widget_reply":
             failure_stage = "reply_persistence"
             draft = generated_draft
@@ -484,7 +471,6 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 usage=guarded.usage,
                 model_name=guarded.model_name,
                 pending_question=infer_assistant_question(draft),
-                stream_source_ids=stream_source_ids,
             )
             return
         failure_stage = "result_persistence"

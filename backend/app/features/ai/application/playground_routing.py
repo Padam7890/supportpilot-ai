@@ -12,6 +12,7 @@ from app.features.ai.application.intent_routing import resolve_customer_routing
 class PlaygroundRoutingResult:
     completed: bool
     outcome: dict[str, object] | None = None
+    requires_evidence: bool = True
 
 
 async def route_playground_conversation(
@@ -34,6 +35,8 @@ async def route_playground_conversation(
         )
         return PlaygroundRoutingResult(completed=True)
     routing = await resolve_customer_routing(
-        question, transcript or [], channel="playground"
+        question, transcript or [], channel="playground", for_generation=True
     )
-    return PlaygroundRoutingResult(completed=False, outcome=routing.tool_outcome())
+    return PlaygroundRoutingResult(
+        completed=False, outcome=routing.tool_outcome(), requires_evidence=routing.requires_evidence,
+    )

@@ -19,7 +19,6 @@ from app.models import (
     AIAgent,
     AIExecution,
     Conversation,
-    Customer,
     Message,
     Ticket,
 )
@@ -84,16 +83,6 @@ async def load_execution_context(
                     Ticket.organization_id == organization_id,
                 )
             )
-            customer = (
-                await db.scalar(
-                    select(Customer).where(
-                        Customer.id == ticket.customer_id,
-                        Customer.organization_id == organization_id,
-                    )
-                )
-                if ticket
-                else None
-            )
             message_query = select(Message).where(
                 Message.organization_id == organization_id,
                 Message.conversation_id == conversation.id,
@@ -141,7 +130,7 @@ async def load_execution_context(
             if execution.kind == "widget_reply":
                 # The typed name/email collected by the widget is not identity proof,
                 # so it is deliberately excluded from the prompt.
-                question = f"Customer message: {execution.question[:2000]}"
+                question = execution.question[:2000]
                 # Resolve underspecified follow-ups against one preceding customer
                 # turn only; previous assistant text is never retrieval evidence.
                 understanding = understand_conversation_turn(
@@ -174,10 +163,7 @@ async def load_execution_context(
                     await db.commit()
                     await set_tenant_context(db, organization_id)
             else:
-                question = (
-                    f"Draft a reply to the latest customer message. Ticket: {ticket.subject if ticket else 'Support request'}. "
-                    f"Customer: {customer.name if customer else 'Customer'}. Latest message: {newest_customer_message[:2000]}"
-                )
+                question = newest_customer_message[:2000] or question
         if execution.kind == "playground" and execution.playground_history:
             understanding = understand_conversation_turn(
                 question,

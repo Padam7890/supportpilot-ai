@@ -1,9 +1,18 @@
 """Build bounded, role-normalized context without treating history as evidence."""
 
+import re
+
 from app.features.ai.application.conversation_agent_contracts import (
     AgentInput,
     ConversationTurn,
 )
+
+_EMAIL = re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
+_VERIFIED_ORDER_PREFIXES = ("i checked your verified order ", "i verified order ", "i verified your order ")
+
+
+def _model_text(value: str) -> str:
+    return _EMAIL.sub("[email removed]", value.strip())[:1200]
 
 
 def build_agent_input(
@@ -29,8 +38,10 @@ def build_agent_input(
         content = item.get("content")
         if not isinstance(content, str) or not content.strip():
             continue
-        turns.append(ConversationTurn(sender=role, content=content.strip()[:1200]))
-    normalized_message = message.strip()[:1200]
+        if role == "assistant" and content.strip().casefold().startswith(_VERIFIED_ORDER_PREFIXES):
+            continue
+        turns.append(ConversationTurn(sender=role, content=_model_text(content)))
+    normalized_message = _model_text(message)
     if (
         turns
         and turns[-1].sender == "customer"

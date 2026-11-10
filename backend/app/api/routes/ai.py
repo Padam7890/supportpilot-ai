@@ -1,4 +1,3 @@
-import json
 import logging
 from datetime import UTC, datetime
 from uuid import UUID
@@ -11,6 +10,7 @@ from app.api.deps import get_current_user, require_roles
 from app.core.config import settings
 from app.core.observability import current_correlation_id
 from app.db.session import get_db
+from app.features.ai.application.conversation_verified_order_evidence import AuthorizedOrderSnapshot
 from app.features.ai.application.defaults import get_default_agent
 from app.features.ai.application.retrieval import build_retrieval_terms, is_contextual_follow_up
 from app.features.ai.application.retrieval_search import search_agent_knowledge
@@ -277,24 +277,9 @@ async def create_reply_draft(
             cursor=None,
         )
         order = verified.matched_order
-        safe_order_facts = {
-            "order_number": order.order_number,
-            "created_at": order.created_at.isoformat(),
-            "financial_status": order.financial_status,
-            "fulfillment_status": order.fulfillment_status,
-            "total_amount": order.total_amount,
-            "currency": order.currency,
-            "tracking": [
-                {
-                    "company": tracking.company,
-                    "status": "tracking_available" if tracking.number else "pending",
-                }
-                for tracking in order.tracking
-            ],
-        }
         try:
             encrypted_context = encrypt_credential(
-                json.dumps(safe_order_facts, separators=(",", ":"))
+                AuthorizedOrderSnapshot.from_authorized_lookup(order).model_dump_json()
             )
         except RuntimeError as exc:
             raise HTTPException(

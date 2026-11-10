@@ -1,25 +1,22 @@
-"""Shared guarded generation for Playground and Widget.
+"""Compose and verify one complete reply before persistence or delivery."""
 
-Never publish unvalidated model deltas. A generated answer must pass the
-existing grounding policy before it can be persisted or delivered.
-"""
-
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
-from uuid import UUID
 
-from app.features.ai.application.claim_grounding import (
-    check_generated_answer,
-    check_grounded_claims,
-)
 from app.features.ai.application.conversation_context_builder import build_agent_input
 from app.features.ai.application.conversation_response_composer import compose_natural_answer
-from app.features.ai.application.conversation_response_evidence import ResponseEvidence
+from app.features.ai.application.conversation_response_evidence import knowledge_evidence
+from app.features.ai.application.conversation_verified_order_evidence import AuthorizedOrderSnapshot
 from app.features.ai.application.generation_metrics import log_generation_metrics
-from app.features.ai.application.intent_routing.deterministic import assess_deterministic_route
-from app.features.ai.application.intent_routing.schemas import Intent
-from app.features.ai.workflows.grounded_reply import create_grounded_draft
+from app.features.ai.application.semantic_claim_verifier import verify_candidate
+
+_SOURCE_MARKER = re.compile(r"\[(?:source|doc)\s*:?\s*(\d+)\]", re.IGNORECASE)
+_SAFE_FALLBACK = (
+    "I couldn't verify the details in the available sources. "
+    "Please contact our support team to confirm."
+)
 
 
 @dataclass(frozen=True)
@@ -27,151 +24,78 @@ class GuardedDraft:
     text: str
     accepted: bool
     grounding_reason: str | None
-    citations: list
-    outcomes: list
-    usage: dict
+    citations: list[dict[str, Any]]
+    outcomes: list[dict[str, Any]]
+    usage: dict[str, int]
     model_name: str | None
 
 
 async def generate_guarded_draft(
     *,
-    organization_id: UUID,
-    execution_id: UUID,
+    execution_id: str,
     execution_kind: str,
     question: str,
     instructions: str | None,
     transcript: list[dict[str, str]],
-    context: list[dict[str, str | int]],
-    integration_context: dict[str, Any] | None,
-    citations: list,
-    outcomes: list,
-    auto_reply: bool,
+    context: list[dict[str, Any]],
+    integration_context: dict[str, Any],
+    citations: list[dict[str, Any]],
+    outcomes: list[dict[str, Any]],
+    requires_evidence: bool,
     correlation_id: str | None,
 ) -> GuardedDraft:
     started = time.monotonic()
-    # All non-integration turns use the canonical natural-answer composer.
-    # Provider-specific commerce generation remains isolated until authorized
-    # Shopify facts can be supplied as typed, verified evidence.
-    use_canonical_composer = not integration_context and execution_kind in {
-        "widget_reply", "playground", "reply_draft",
-    }
-    grounding_sources: list[dict[str, str]] = []
-    if use_canonical_composer:
-        evidence_items = [
-            {
-                "source": "knowledge_search",
-                "content": str(item.get("excerpt") or item.get("content") or "")[:1200],
-            }
-            for item in context[:6]
-        ]
-        evidence_items = [item for item in evidence_items if item["content"].strip()]
-        grounding_sources = [{"excerpt": item["content"]} for item in evidence_items]
-        if context and not evidence_items:
-            raise ValueError("Retrieved knowledge has no usable excerpts")
-        route = assess_deterministic_route(question, transcript)
-        needs_verified_facts = (
-            route.requires_tools
-            or route.requires_knowledge
-            or route.intent in {Intent.PRODUCT, Intent.ORDER, Intent.REFUND}
-        )
-        if not evidence_items and needs_verified_facts:
-            return GuardedDraft(
-                text=(
-                    "I couldn't verify that store-specific information. "
-                    "Please contact our support team for confirmation."
-                ),
-                accepted=False,
-                grounding_reason="no_verified_evidence",
-                citations=[],
-                outcomes=[
-                    *outcomes,
-                    {"tool": "claim_grounding", "status": "blocked",
-                     "reason": "no_verified_evidence"},
-                ],
-                usage={},
-                model_name=None,
-            )
-        composed = await compose_natural_answer(
-            build_agent_input(
-                question, transcript,
-                channel="widget" if execution_kind == "widget_reply" else "playground",
-            ),
-            ResponseEvidence(
-                context=evidence_items,
-                source_ids=[],
-                answerable=bool(evidence_items),
-                unavailable=not bool(evidence_items),
-            ),
-            instructions=instructions,
-        )
-        result = {
-            "draft": composed.text,
-            "usage": composed.usage,
-            "model_name": composed.model_name,
-        }
-    else:
-        result = await create_grounded_draft(
-            organization_id=organization_id,
-            execution_id=execution_id,
-            question=question,
-            instructions=instructions,
-            conversation_context=[
-                {"sender": turn["sender"], "content": turn["content"]}
-                for turn in transcript
-            ],
-            knowledge_context=context,
-            integration_context=integration_context,
-            auto_reply=auto_reply,
-        )
-    usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
-    raw_model_name = result.get("model_name")
-    model_name = raw_model_name[:120] if isinstance(raw_model_name, str) and raw_model_name else None
-    log_generation_metrics(
-        execution_id=str(execution_id),
-        execution_kind=execution_kind,
-        model_name=result.get("model_name")
-        if isinstance(result.get("model_name"), str) else None,
-        started_monotonic=started,
-        usage=usage,
-        streamed=False,
-        correlation_id=correlation_id,
-    )
-    generated = str(result.get("draft", ""))[:12000]
-    # Validate the same bounded excerpts actually supplied to the composer.
-    # The specialized integration path retains its own authorization boundary.
-    # Knowledge checks cannot validate verified Shopify order fields.
-    grounding = (
-        check_grounded_claims(
-            generated, grounding_sources, require_citations=True,
-        )
-        if use_canonical_composer and grounding_sources
-        else check_generated_answer(
-            generated,
-            context if not integration_context else [],
-        )
-    )
-    if grounding.accepted:
+    # The encrypted snapshot is populated only by the authorized teammate
+    # lookup. Never pass it to the composer or its semantic reviewer.
+    if integration_context:
+        order = AuthorizedOrderSnapshot.model_validate(integration_context).as_evidence()
+        return GuardedDraft(order.items[0].content, True, None, [], outcomes, {}, None)
+
+    evidence = knowledge_evidence(context)
+    if requires_evidence and evidence.status != "verified":
         return GuardedDraft(
-            text=generated, accepted=True, grounding_reason=None,
-            citations=citations, outcomes=outcomes, usage=usage,
-            model_name=model_name,
+            _SAFE_FALLBACK, False, "no_verified_evidence", [],
+            [*outcomes, {"tool": "claim_grounding", "status": "blocked", "reason": "no_verified_evidence"}],
+            {}, None,
         )
-    return GuardedDraft(
-        text=(
-            "I couldn't verify the details in the available knowledge sources. "
-            "Please contact our support team to confirm."
-        ),
-        accepted=False,
-        grounding_reason=grounding.reason,
-        citations=[],
-        outcomes=[
-            *outcomes,
-            {
-                "tool": "claim_grounding",
-                "status": "blocked",
-                "reason": grounding.reason,
-            },
-        ],
-        usage=usage,
-        model_name=model_name,
+    composed = await compose_natural_answer(
+        build_agent_input(question, transcript, channel=execution_kind),
+        evidence,
+        instructions=instructions,
     )
+    verification = await verify_candidate(composed.text, evidence)
+    usage = {
+        key: composed.usage.get(key, 0) + verification.usage.get(key, 0)
+        for key in composed.usage.keys() | verification.usage.keys()
+    }
+    model_name = composed.model_name[:120] if composed.model_name else None
+    log_generation_metrics(
+        execution_id=execution_id, execution_kind=execution_kind, model_name=model_name,
+        started_monotonic=started, usage=usage, streamed=False, correlation_id=correlation_id,
+    )
+    outcomes = [
+        *outcomes,
+        {
+            "tool": "claim_grounding",
+            "status": "completed" if verification.accepted else "blocked",
+            "reason": verification.reason,
+        },
+    ]
+    if not verification.accepted:
+        return GuardedDraft(
+            _SAFE_FALLBACK, False, verification.reason, [], outcomes, usage, model_name,
+        )
+
+    available = {(str(c["document_id"]), c["chunk_index"]): c for c in citations}
+    selected = []
+    for index in verification.source_indices:
+        item = evidence.items[index - 1]
+        citation = available.get((item.source_id, item.chunk_index))
+        if citation is None:
+            return GuardedDraft(
+                _SAFE_FALLBACK, False, "missing_source_provenance", [], outcomes, usage, model_name,
+            )
+        selected.append(citation)
+    remap = {index: position for position, index in enumerate(verification.source_indices, 1)}
+    text = _SOURCE_MARKER.sub(lambda match: f"[source {remap[int(match[1])]}]", composed.text)
+    return GuardedDraft(text, True, None, selected, outcomes, usage, model_name)

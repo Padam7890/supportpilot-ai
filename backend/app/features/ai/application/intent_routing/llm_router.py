@@ -28,7 +28,7 @@ _JSON_FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
 _SYSTEM = (
     "You classify customer support intent only. Reply with JSON matching the schema. "
     "Do not include tool names, URLs, SQL, or policy claims. "
-    "Never authorize refunds, cancellations, or order access."
+    "Use general only for standalone conversation or general information unrelated to this store. Never authorize refunds, cancellations, or order access."
 )
 
 
@@ -57,7 +57,7 @@ def _build_user_prompt(
         f"Deterministic candidates: {candidates}\n"
         f"requires_context={assessment.requires_context}\n"
         f"Recent turns:\n" + ("\n".join(history) if history else "(none)") + "\n"
-        f"Latest message:\n{message[:1200]}\n"
+        f"Latest message:\n{context.message}\n"
         "Return JSON with keys: intents (list of {intent, confidence, requires_knowledge, "
         "requires_tools}), requires_context, should_clarify, reason_code."
     )
@@ -67,6 +67,8 @@ async def invoke_llm_intent_router(
     message: str,
     transcript: list[dict[str, str]],
     assessment: DeterministicRouteAssessment,
+    *,
+    max_attempts: int | None = None,
 ) -> tuple[RoutingDecision | None, dict[str, int], str | None, str | None]:
     """Return a validated routing decision, token usage, model, and failure code."""
     if not is_provider_configured():
@@ -76,7 +78,7 @@ async def invoke_llm_intent_router(
         {"role": "user", "content": _build_user_prompt(message, transcript, assessment)},
     ]
     last_code = "intent_router_failed"
-    for attempt in range(max(1, settings.ai_intent_router_max_attempts)):
+    for attempt in range(max_attempts or settings.ai_intent_router_max_attempts):
         started = time.monotonic()
         try:
             content, usage, model = await generate_completion(

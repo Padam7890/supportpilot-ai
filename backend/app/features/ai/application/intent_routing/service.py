@@ -41,6 +41,36 @@ class CustomerRoutingResolution:
     metrics: IntentRouterMetrics = field(default_factory=IntentRouterMetrics)
     understanding: dict[str, object] = field(default_factory=dict)
 
+    @property
+    def requires_evidence(self) -> bool:
+        assessment = self.deterministic
+        if assessment.requires_tools or assessment.intent in {
+            Intent.ORDER, Intent.REFUND, Intent.PRODUCT,
+        }:
+            return True
+        if assessment.requires_context or assessment.competing:
+            return True
+        # The default knowledge classification means "unknown". Only a
+        # confident, unambiguous GENERAL prediction can relax that fallback.
+        if (
+            assessment.reason_code == "default_knowledge"
+            and self.llm is not None
+            and not self.clarify
+            and not self.multi_intent
+            and not self.llm.requires_context
+            and len(self.llm.intents) == 1
+        ):
+            decision = self.llm.intents[0]
+            return not (
+                decision.intent == Intent.GENERAL
+                and decision.confidence >= settings.ai_intent_router_high_confidence
+                and not decision.requires_knowledge
+                and not decision.requires_tools
+            )
+        return assessment.requires_knowledge or bool(
+            self.llm and any(item.requires_knowledge or item.requires_tools for item in self.llm.intents)
+        )
+
     def tool_outcome(self) -> dict[str, object]:
         det = self.deterministic
         return {
@@ -67,6 +97,7 @@ async def resolve_customer_routing(
     transcript: list[dict[str, str]],
     *,
     channel: str,
+    for_generation: bool = False,
 ) -> CustomerRoutingResolution:
     started = time.monotonic()
     understanding = understand_conversation_turn(message, transcript)
@@ -95,9 +126,11 @@ async def resolve_customer_routing(
     # Standalone negations and context-free references are deterministic;
     # an extra model call cannot authorize an action or invent missing context.
     invoke = ConversationInterpretationPolicy(
-        # The new agent owns model-first behavior. Avoid forcing a second
-        # legacy model classification on every non-agent turn.
-        model_first=False,
+        model_first=(
+            for_generation
+            and settings.ai_conversation_llm_first_enabled
+            and assessment.reason_code == "default_knowledge"
+        ),
     ).should_use_model(
         risk_level=assessment.risk_level,
         negated_action=understanding.negated_action,
@@ -109,7 +142,9 @@ async def resolve_customer_routing(
     if invoke:
         llm_invoked = True
         metrics.llm_router_invocation_count = 1
-        decision, usage, router_model, failure = await invoke_llm_intent_router(message, transcript, assessment)
+        decision, usage, router_model, failure = await invoke_llm_intent_router(
+            message, transcript, assessment, **({"max_attempts": 1} if for_generation else {}),
+        )
         if decision is not None and not assessment.requires_tools and any(
             item.requires_tools or item.intent in {Intent.ORDER, Intent.REFUND}
             for item in decision.intents
@@ -155,8 +190,11 @@ def apply_routing_to_widget_plan(
     message: str,
     transcript: list[dict[str, str]],
     resolution: CustomerRoutingResolution,
+    *,
+    base: CustomerTurnPlan | None = None,
 ) -> CustomerTurnPlan:
-    base = plan_widget_turn(message, transcript)
+    if base is None:
+        base = plan_widget_turn(message, transcript)
     if base.route != "knowledge":
         return base
 

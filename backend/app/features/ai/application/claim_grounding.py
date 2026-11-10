@@ -12,7 +12,9 @@ from dataclasses import dataclass
 
 _CITATION = re.compile(r"\[(?:source|doc)\s*:?\s*(\d+)\]", re.IGNORECASE)
 _NUMBER = re.compile(
-    r"(?<![\w])\d+(?:,\d{3})*(?:\.\d+)?(?:\s*%|\s*(?:days?|hours?|weeks?|months?|years?))?",
+    r"(?<!\w)(?:[$€£₹]\s*)?\d+(?:,\d{3})*(?:\.\d+)?"
+    r"(?:\s*%|\s*(?:days?|hours?|weeks?|months?|years?|usd|eur|gbp|cad|aud|npr|inr|"
+    r"mm|cm|kg|mg|km|ml|gb|tb|mah|hz)\b)?",
     re.IGNORECASE,
 )
 _THOUSANDS_SEPARATOR = re.compile(r"(?<=\d),(?=\d{3}(?:\D|$))")

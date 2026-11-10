@@ -790,13 +790,13 @@ async def test_widget_human_takeover_during_generation_prevents_late_ai_reply(cl
     async def delayed_generation(**_kwargs):
         started_generation.set()
         await finish_generation.wait()
-        return {
-            "draft": "You can return this within thirty days.",
-            "usage": {"total_tokens": 4},
-            "model_name": "test-model",
-        }
+        from app.features.ai.application.guarded_generation import GuardedDraft
 
-    monkeypatch.setattr(ai_worker, "create_grounded_draft", delayed_generation)
+        return GuardedDraft(
+            "You can return this within thirty days.", True, None, [], [], {"total_tokens": 4}, "test-model",
+        )
+
+    monkeypatch.setattr(ai_worker, "generate_guarded_draft", delayed_generation)
     monkeypatch.setattr(ai_worker, "provider_configuration_error", lambda: None)
     origin = "https://store-concurrent-takeover.example"
     started = await client.post(
@@ -892,7 +892,7 @@ async def test_widget_auto_reply_answers_standalone_greeting_without_knowledge_o
     async def unexpected_model_call(*args, **kwargs):
         raise AssertionError("standalone greeting should not call the model")
 
-    monkeypatch.setattr("app.services.ai_worker.create_grounded_draft", unexpected_model_call)
+    monkeypatch.setattr("app.services.ai_worker.generate_guarded_draft", unexpected_model_call)
     origin = "https://store-greeting-ai.example"
     started = await client.post(
         f"/api/v1/widget/{public_id}/messages",
