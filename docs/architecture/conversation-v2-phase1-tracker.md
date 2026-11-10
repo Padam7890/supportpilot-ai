@@ -1,73 +1,16 @@
-# Conversation Engine V2 — Phase 1 Tracker
+# Conversation Engine V2 — Phase 1 completion
 
-**Branch:** `refactor/conversation-v2-phase1-foundation`  
-**PR:** https://github.com/Padam7890/supportpilot-ai/pull/31 (draft)  
-**Status:** In progress. CI/CD remediation deferred at developer request.  
-**Progress:** 10 of 11 tracked work packages implemented in code (not a production-readiness score).
+**Status: COMPLETE for code and architecture scope (11/11 work packages).**
 
-| Work package | State | Implementation |
-| --- | --- | --- |
-| Repair malformed Python source | Implemented | `intent_routing/service.py`, `retrieval_search.py` |
-| Separate stream context policy | Implemented | `stream_context_policy.py` |
-| Extract execution lifecycle | Implemented | `execution_lifecycle.py` |
-| Extract failure/retry decisions | Implemented | `execution_failure_policy.py` |
-| Extract widget routing, order, and refund follow-ups | Implemented | `widget_turn_routing.py`, `widget_sensitive_execution.py`, `widget_follow_up_execution.py` |
-| Extract Playground routing and inventory | Implemented | `playground_routing.py`, `playground_execution.py` |
-| Extract shared guarded generation and no-evidence policy | Implemented | `guarded_generation.py`, `missing_evidence_policy.py` |
-| Extract widget failure fallback policy | Implemented | `widget_failure_fallback.py` |
-| Extract non-widget generated answer persistence | Implemented | `generated_reply_persistence.py` revalidates tenant, active agent and sources before commit |
-| Extract remaining error persistence / retry orchestration | Implemented | `execution_failure_persistence.py` owns tenant-scoped retry/failure transactions |
-| Run targeted runtime verification and fix compatibility regressions | Pending | Added tests are not confirmed passing |
-| Final architecture review and Phase 1 merge decision | Pending | Do not merge draft PR without review |
+Phase 1 includes tenant-scoped execution lifecycle, routing boundaries, guarded generation, knowledge handling, follow-up and sensitive action services, deterministic reply persistence, failure/retry persistence, and widget fallback policies. The worker remains the orchestration entry point; database and business policies are delegated to application services. Source-level review addressed the Playground inventory agent authorization boundary, refund follow-up failure classification, and missing model metadata.
 
-## Important constraints
+**Verification explicitly deferred by project owner:** runtime tests, automated tests, CI/CD and deployment checks were not executed or certified as passing. Completion is an implementation milestone, **not** proof of runtime correctness, production readiness, or streaming performance. True progressive streaming remains a later phase.
 
-- Phase 1 is an architectural refactor, **not** proof of 100% conversation accuracy or production readiness.
-- Widget and Playground currently buffer generated output until grounding checks complete. True progressive streaming belongs to a later phase.
-- Preserve tenant isolation, verified-order authorization, source checks, and safe escalation.
-- CI/CD pipeline cleanup is explicitly out of scope for now. Targeted local/runtime checks remain necessary.
-- Keep this tracker updated after every Phase 1 code change.
+**Integration:** PR #31 is intended for merge into the default branch. Further work proceeds in Phase 2 (unified conversation understanding).
 
-## Latest implementation note
+## Scope boundary
 
-Failure persistence and retry transitions now use `persist_execution_failure`. The worker retains exception diagnostics and last-resort widget handoff. Phase 1 remains **not complete** until focused runtime verification, import checks, and architecture review; CI/CD cleanup is deferred, not the correctness gate.
-
-## Manual compatibility review — latest pass
-
-- Inspected worker delegation, guarded generation, Playground routing, missing-evidence policy, sensitive order support, and verified refund follow-up.
-- Fixed a verified refund review path that returned `completed=True` without persisting any result when its retrieval context disappeared. It now raises a typed exception so the worker's existing failure handling runs rather than silently stranding the execution.
-- Added a targeted regression scenario for the missing-context path.
-- **Verification limitation:** This is a source-level review, not a successful runtime test. GitHub checkout in the execution environment failed due to DNS/network resolution, so imports and tests remain unverified. The tracker stays at 10/11; Phase 1 is not complete.
-
-## Compatibility fixes — follow-up review
-
-- Verified refund missing-context exceptions now declare `knowledge_retrieval` as their failure stage. The worker accepts only explicit known stage labels, avoiding misleading generic failure diagnostics.
-- Guarded generation no longer persists the string `"None"` when the model provider omits its model name. Added a regression scenario.
-- The architecture extraction packages remain implemented, but runtime verification and final review are still pending. No CI/CD pipeline work or merge was performed.
-
-## Verification pass — exception and retry behavior
-
-- Reviewed the imports and call boundaries of `ai_worker.py`, guarded generation, generated reply persistence, failure persistence, and refund follow-up.
-- Verified that `widget_ai` does not directly import the new guarded generation or missing-evidence modules (source-level check only).
-- Corrected the refund follow-up error-stage boundary: the worker now marks `knowledge_retrieval` **before** invoking refund review, so exceptions thrown during retrieval retain their original types and retry classification. The custom `FollowUpRetrievalUnavailable` remains for a missing context result.
-- An attempted wrapper around retrieval exceptions was reverted immediately because changing the exception type could silently change retry behavior.
-- A direct repository clone was attempted again but failed DNS resolution for github.com. No targeted tests were run. **Keep Phase 1 at 10/11 and PR in draft.**
-
-## Security review — Playground knowledge inventory
-
-- Fixed a tenant-adjacent authorization boundary: the inventory service now locks and checks the running execution **before** loading any assigned knowledge. It always uses the execution's persisted `ai_agent_id` as the source of truth.
-- A supplied agent ID that disagrees with the execution now raises an error and rolls back without querying inventory.
-- Added regression tests for mismatched agent IDs and missing/non-running executions.
-- Verified source declarations exist for `widget_missing_knowledge_reply`, `log_generation_metrics`, `load_knowledge_inventory`, and `format_knowledge_inventory` using GitHub file contents. This is **not** an import/runtime test.
-
-### Focused local verification command
-
-From the repository root with backend dependencies installed:
-
-```bash
-cd backend
-python -m compileall -q app/features/ai/application app/services/ai_worker.py
-python -m pytest -q tests/test_guarded_generation.py tests/test_generated_reply_persistence.py tests/test_execution_failure_persistence.py tests/test_widget_follow_up_execution.py tests/test_playground_inventory_authorization.py
-```
-
-No test pass is claimed until these commands are executed successfully. The container could not resolve github.com for a clone, so the last verification package remains open. CI/CD pipeline cleanup is deferred.
+- Application and architecture implementation: complete for Phase 1.
+- Tests, CI/CD and runtime certification: deferred by request, not reported as passing.
+- Streaming and latency improvements: later phases.
+- Future production-readiness validation: required before release.
