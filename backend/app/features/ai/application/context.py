@@ -132,7 +132,10 @@ async def load_execution_context(
                 ),
                 "",
             )
-            retrieval_text = f"{ticket.subject if ticket else ''} {newest_customer_message}"
+            # A widget topic switch must not inherit the ticket subject from an older turn.
+            # Retrieve against the customer question; topic resolution below handles
+            # genuinely underspecified follow-ups separately.
+            retrieval_text = newest_customer_message if execution.kind == "widget_reply" else f"{ticket.subject if ticket else ''} {newest_customer_message}"
             if execution.kind == "widget_reply":
                 # The typed name/email collected by the widget is not identity proof,
                 # so it is deliberately excluded from the prompt.
