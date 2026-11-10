@@ -1,0 +1,29 @@
+# Conversation Engine V2 — Phase 2: Unified Understanding
+
+**Status:** In progress. Phase 1 is merged; Phase 2 changes are isolated on a new branch.
+
+## Goal
+
+Interpret customer turns consistently across widget and Playground without changing working order authorization, refund verification, or knowledge grounding. Prioritize existing behavior and introduce improvements in small, reviewable increments.
+
+## Work packages
+
+| Package | Status |
+| --- | --- |
+| 1. Repair multi-clause detection and protect existing routing | Implemented |
+| 2. Normalize and classify corrections, negations, and topic switches | Pending |
+| 3. Resolve contextual follow-ups with bounded topic history | Pending |
+| 4. Represent multiple intents without executing multiple actions | Pending |
+| 5. Improve ambiguous references and clarification decisions | Pending |
+| 6. Support English, Nepali, and mixed messages safely | Pending |
+| 7. Integrate understanding consistently into widget and Playground | Pending |
+| 8. Review latency, routing costs, and safe fallback paths | Pending |
+| 9. Final code-level consolidation | Pending |
+
+## First change
+
+Fixed the clause separator regex: it previously matched literal backslash-s text instead of whitespace. A message such as "shipping policy and refund policy" can now be split into distinct subjects for advisory multi-intent classification. Added targeted regression scenarios.
+
+**Safety invariant:** Classification is advisory. No inferred intent may bypass order verification, trigger refunds/cancellations, or turn conversation history into trusted evidence.
+
+**Verification:** Tests and CI/CD are deferred by owner request. No runtime pass is claimed.
