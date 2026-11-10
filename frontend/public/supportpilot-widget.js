@@ -239,9 +239,17 @@
   }
 
   function normalizeAssistantLineBreaks(content) {
-    // Model output and previously stored messages may contain one or two
-    // layers of escaped newline separators. Never interpret HTML here.
-    return String(content || "").replace(/\\\\\\\\n/g, "\\n").replace(/\\\\n/g, "\\n").replace(/\\r\\n/g, "\\n");
+    // Normalize literal escaped newlines from both new and stored AI messages.
+    // Handle multiple encoding layers without evaluating HTML or other escapes.
+    let text = String(content ?? "");
+    for (let pass = 0; pass < 3; pass++) {
+      const next = text
+        .split(String.raw`\\r\\n`).join("\n")
+        .split(String.raw`\\n`).join("\n");
+      if (next === text) break;
+      text = next;
+    }
+    return text;
   }
 
   function renderAssistantMessage(bubble, content, partial = false) {
