@@ -106,3 +106,10 @@ Enable only in a controlled development environment after reviewing model costs 
 - The widget worker passes `execution.ai_agent_tools_snapshot` into the pilot. Missing snapshots grant no tools rather than silently trusting model requests or changing live bot permissions.
 - Added permission-mapping regression scenarios. **No broader rollout:** the widget pilot remains first-contact greetings only and explicitly rejects tool-based responses. Future knowledge/catalog rollout must verify the actual persisted bot capability names and current authorization semantics.
 - Tests and CI/CD have not been executed.
+
+## Increment: default guarded pilot and legacy-model de-duplication
+
+- `AI_CONVERSATION_LLM_FIRST_ENABLED` now defaults to **true**; setting it to `false` remains an immediate rollback switch. **Only standalone first-contact greetings** enter the new live agent. Commerce, RAG, catalog and follow-up workflows still use their existing guarded execution paths.
+- Removed the old flag-driven forced model-first behavior in `intent_routing/service.py`, preventing a redundant legacy intent-model call for every low-risk non-agent turn. The existing confidence-based legacy router remains available as fallback, so this is not yet a complete removal of the old routing stack.
+- Extracted the pilot's ad-hoc response checks into `conversation_greeting_policy.py`; the new policy rejects numbers, URLs, email addresses and common unverified store assertions. This is not semantic grounding and is not sufficient for broader customer traffic.
+- Added focused output-policy tests. **No tests or CI/CD were run**. Before deployment, review environment overrides, provider costs and the pilot's routing/persistence behavior.
