@@ -149,3 +149,43 @@ async def test_pilot_rejects_numeric_output_without_persistence() -> None:
         )
     assert not completed
     persist.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_pilot_does_not_persist_reply_if_new_message_arrives_during_generation() -> None:
+    from uuid import uuid4
+
+    with (
+        patch(
+            "app.features.ai.application.widget_agent_pilot.settings.ai_conversation_llm_first_enabled",
+            True,
+        ),
+        patch(
+            "app.features.ai.application.widget_agent_pilot.widget_reply_is_stale",
+            new_callable=AsyncMock,
+            side_effect=[False, True],
+        ) as stale,
+        patch(
+            "app.features.ai.application.widget_agent_pilot.run_read_only_agent_turn",
+            new_callable=AsyncMock,
+            return_value=AgentRunResult(
+                answer="Hello! How can I help?",
+                source_ids=[], tool_names=[], usage={}, model_name="test",
+            ),
+        ),
+        patch(
+            "app.features.ai.application.widget_agent_pilot.finish_widget_reply",
+            new_callable=AsyncMock,
+        ) as persist,
+    ):
+        completed = await try_complete_widget_agent_pilot(
+            organization_id=uuid4(),
+            execution_id=uuid4(),
+            ai_agent_id=uuid4(),
+            message="Hello",
+            transcript=[],
+            delivery_mode="auto_reply",
+        )
+    assert completed
+    assert stale.await_count == 2
+    persist.assert_not_awaited()
