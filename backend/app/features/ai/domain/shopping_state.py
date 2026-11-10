@@ -281,7 +281,7 @@ async def analyze_shopping_turn(
     brands: list[str],
     allowed_tools: list[str] | None = None,
 ) -> tuple[ShoppingTurnAnalysis, dict[str, int], str | None]:
-    from app.services.ai_execution import generate_completion, is_provider_configured
+    from app.features.ai.infrastructure.llm_gateway import generate_completion, is_provider_configured
 
     deterministic = fallback_turn_analysis(message, state, categories=categories, brands=brands)
     if deterministic.action != "none":
