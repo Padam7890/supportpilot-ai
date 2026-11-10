@@ -131,8 +131,10 @@ async def generate_guarded_draft(
                 _SAFE_FALLBACK, False, "missing_source_provenance", [], outcomes, usage, model_name,
             )
         selected.append(citation)
-    remap = {index: position for position, index in enumerate(verification.source_indices, 1)}
-    text = CITATION_PATTERN.sub(lambda match: f"[source {remap[int(match[1])]}]", composed.text)
+    # Keep verified provenance in structured citations, not customer-visible text.
+    # Strip only after verification and provenance checks have succeeded.
+    text = CITATION_PATTERN.sub("", composed.text)
+    text = "\\n".join(line.rstrip() for line in text.splitlines()).strip()
     if order_text:
         text = f"{order_text}\n\n{text}"
     return GuardedDraft(text, True, None, selected, outcomes, usage, model_name)
