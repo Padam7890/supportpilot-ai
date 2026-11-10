@@ -73,7 +73,9 @@ async def resolve_customer_routing(
     resolution = CustomerRoutingResolution(
         deterministic=assessment, mode="deterministic",
         multi_intent=assessment.competing,
-    )\n    if assessment.competing:\n        metrics.multi_intent_count = 1
+    )
+    if assessment.competing:
+        metrics.multi_intent_count = 1
     invoke = should_invoke_llm_router(assessment, message)
     llm_invoked = False
 
@@ -108,7 +110,10 @@ async def resolve_customer_routing(
         else:
             metrics.llm_router_failure_count = 1
             resolution.failure_code = failure
-            resolution.clarify = (\n                assessment.confidence < settings.ai_intent_router_low_confidence\n                or assessment.competing and assessment.risk_level != "high"\n            )
+            resolution.clarify = (
+                assessment.confidence < settings.ai_intent_router_low_confidence
+                or assessment.competing and assessment.risk_level != "high"
+            )
             resolution.mode = "deterministic_fallback"
 
     metrics.routing_latency_ms = round((time.monotonic() - started) * 1000)
