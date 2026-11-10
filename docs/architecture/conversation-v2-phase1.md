@@ -61,3 +61,11 @@ No passing execution result has been verified through the GitHub connector. Keep
 - Supports missing agent selection (`UUID | None`) and retains existing row locks and execution state guards.
 - Worker is reduced further; full playground conversation orchestration and sensitive widget flows are still pending.
 - No local Python compilation or test run was executed in this connector-only editing session.
+
+## Sensitive widget route extraction
+
+- Added `application/widget_sensitive_execution.py` for verified order lookup, cancellation review messaging, and verification prompts.
+- The service explicitly rejects non-sensitive routes and does not execute order mutations, refunds, or cancellations.
+- Existing verified Shopify order lookup and reply persistence are reused, retaining tenant/conversation identifiers.
+- Added focused scenarios for unverified cancellation and invalid route dispatch.
+- Refund follow-up review and shopping paths remain in the worker. Integration and compilation are not yet verified.
