@@ -2,7 +2,6 @@
 
 import json
 import logging
-import re
 import time
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
