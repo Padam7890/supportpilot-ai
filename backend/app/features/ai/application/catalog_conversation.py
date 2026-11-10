@@ -39,6 +39,10 @@ async def answer_catalog_follow_up(
     connection_id: UUID, message: str,
 ) -> str | None:
     """Re-query authorized catalog; never trust stale cached price or product facts."""
+    # Only explicitly contextual product requests may reuse catalog memory.
+    # A new policy/support question must continue to the knowledge route.
+    if not is_catalog_follow_up(message):
+        return None
     state = conversation.shopping_context or {}
     browse = state.get(_CONTEXT_KEY)
     if not isinstance(browse, dict) or browse.get("connection_id") != str(connection_id):
@@ -94,8 +98,6 @@ async def answer_catalog_follow_up(
             + (f"Description: {description[:700]}. " if description else "")
             + (f"Product page: {product.canonical_url}" if product.canonical_url else "")
         ).strip()
-    if not is_catalog_follow_up(message):
-        return None
     currencies = {variant.currency for _, variant in products}
     if len(currencies) != 1:
         return "These products use different currencies, so I can't rank their prices directly. Which product would you like to explore?"
