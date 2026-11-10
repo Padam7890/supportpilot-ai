@@ -30,3 +30,11 @@ def test_unstructured_text_uses_canonical_chunking():
 
 def test_blank_document_produces_no_chunks():
     assert make_chunks(" \n \t ") == []
+
+
+def test_single_long_word_does_not_hang_overlap_processing():
+    # A segment without spaces must not leave the overlap trimming loop stuck.
+    text = "x" * 600
+    chunks = make_chunks(text, max_tokens=80, overlap_tokens=16)
+    assert chunks
+    assert all(content for content, _, _ in chunks)
