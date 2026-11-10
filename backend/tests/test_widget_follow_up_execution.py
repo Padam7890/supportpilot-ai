@@ -41,3 +41,37 @@ async def test_unhandled_follow_up_returns_to_normal_router() -> None:
         delivery_status="sent",
     )
     assert result.completed is False
+
+
+@pytest.mark.asyncio
+async def test_verified_refund_missing_context_raises_instead_of_leaving_job_running() -> None:
+    from app.features.ai.application.widget_follow_up_execution import (
+        FollowUpRetrievalUnavailable,
+    )
+
+    review = PendingQuestion(
+        active_intent="refund", stage="refund_verification",
+        expected_answer_type="otp", refund_reason="damaged",
+        verification_id=uuid4(), item_message_id=uuid4(),
+    )
+    with (
+        patch(
+            "app.features.ai.application.widget_follow_up_execution.refund_verification_is_active",
+            new_callable=AsyncMock, return_value=True,
+        ),
+        patch(
+            "app.features.ai.application.widget_follow_up_execution.load_execution_context",
+            new_callable=AsyncMock, return_value=None,
+        ),
+        patch(
+            "app.features.ai.application.widget_follow_up_execution.finish_widget_reply",
+            new_callable=AsyncMock,
+        ) as finish,
+    ):
+        with pytest.raises(FollowUpRetrievalUnavailable):
+            await complete_widget_follow_up(
+                uuid4(), uuid4(), uuid4(),
+                follow_up=FollowUp(decision="refund_review", review=review),
+                delivery_status="sent",
+            )
+    finish.assert_not_awaited()
