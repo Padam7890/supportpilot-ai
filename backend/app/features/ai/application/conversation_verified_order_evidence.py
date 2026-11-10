@@ -13,7 +13,8 @@ from app.features.ai.application.conversation_response_evidence import ResponseE
 _ALLOWED_SCALARS = frozenset({
     "order_name", "order_number", "financial_status", "fulfillment_status",
     "display_fulfillment_status", "cancelled_at", "processed_at",
-    "currency", "total_price", "tracking_company", "tracking_number",
+    "currency", "total_price", "total_amount", "return_status",
+    "tracking_company", "tracking_number",
     "tracking_url",
 })
 
