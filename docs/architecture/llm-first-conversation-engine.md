@@ -60,3 +60,11 @@ Enable only in a controlled development environment after reviewing model costs 
 - Added focused scenarios for unrelated catalog fallback and composer inputs.
 - **Not live:** generated text must pass the existing grounding/claim validation and persistence controls before any customer delivery. The composer is not wired into the worker and is not production-ready. Tool selection and verification remain pending.
 - Tests and CI/CD have not been executed.
+
+## Increment: standalone LLM agent orchestration
+
+- Added `conversation_agent_planner.py` for validated structured model planning of read-only knowledge and catalog requests.
+- Added `conversation_agent.py` to orchestrate planning, pre-authorized tool execution, bounded evidence, LLM composition and numeric/citation grounding checks. No verified evidence for a requested tool means no answer is generated.
+- Added isolated regression scenarios for authorized tool execution, rejected handoff, absent evidence and unsupported numeric claims.
+- **Important limits:** this is not yet connected to the live widget/Playground worker or durable execution/persistence. Grounding currently performs lexical/numeric checks, not semantic entailment; unverified nonnumeric claims require stronger validation before rollout. Sensitive order/refund/handoff actions remain outside this agent. Planner and composer currently require two model calls when tools are used.
+- Tests and CI/CD have not been executed.
