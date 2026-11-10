@@ -10,7 +10,7 @@ from uuid import UUID
 
 from app.features.ai.application.conversation_memory import derive_topic_memory
 from app.features.ai.application.follow_up import PendingQuestion, pending_from_assistant
-from app.features.ai.application.policy_follow_up import PolicyConversation
+from app.features.ai.application.policy_follow_up import FollowUpInterpretation, PolicyConversation
 from app.features.ai.application.query_resolution import resolve_retrieval_query
 from app.features.ai.application.retrieval import build_retrieval_terms, is_contextual_follow_up
 
@@ -38,6 +38,7 @@ def understand_conversation_turn(
     *,
     agent_id: UUID | None = None,
     now: datetime | None = None,
+    interpretation: FollowUpInterpretation | None = None,
 ) -> ConversationUnderstanding:
     """Resolve only context-dependent short turns; explicit new topics stand alone."""
     from app.features.ai.application.intent_routing.deterministic import assess_deterministic_route
@@ -52,16 +53,29 @@ def understand_conversation_turn(
         prior_turns = prior_turns[:-1]
     # Explicit cancellation or correction must not inherit the prior topic.
     # The caller still decides whether a pending commerce action is cancelled.
-    correction = _is_correction(normalized)
-    negated_action = _is_negated_action(normalized)
+    correction = (
+        interpretation.relation == "correction"
+        if interpretation is not None else _is_correction(normalized)
+    )
+    negated_action = (
+        interpretation.confirmation == "retract"
+        if interpretation is not None else _is_negated_action(normalized)
+    )
     # Prefer the latest explicit subject over acknowledgements and pronouns.
     memory = derive_topic_memory(prior_turns)
     previous_customer = memory.topic_anchor or ""
-    contextual = (is_contextual_follow_up(normalized) or _is_short_prepositional_follow_up(normalized)) and not correction
+    contextual = (
+        interpretation.relation in {"follow_up", "answer_to_question", "correction"}
+        if interpretation is not None
+        else (is_contextual_follow_up(normalized) or _is_short_prepositional_follow_up(normalized)) and not correction
+    )
     # A follow-up that names its own subject ("what about shipping?") already
     # forms a usable query. Do not blend an earlier, unrelated question into it.
-    topic_switch = _has_explicit_topic(normalized) or correction
-    retrieval_query = resolve_retrieval_query(
+    topic_switch = (
+        interpretation.relation == "new_topic"
+        if interpretation is not None else _has_explicit_topic(normalized) or correction
+    )
+    retrieval_query = interpretation.retrieval_query if interpretation and interpretation.retrieval_query else resolve_retrieval_query(
         normalized,
         topic_anchor="" if correction else previous_customer,
         active_topic=None if correction else memory.active_topic,
@@ -90,7 +104,10 @@ def understand_conversation_turn(
         correction=correction,
         negated_action=negated_action,
         candidate_intents=tuple(intent.value for intent in recent_intents.candidate_intents),
-        needs_clarification=bool(contextual and not topic_switch and not previous_customer),
+        needs_clarification=(
+            interpretation.relation == "unclear"
+            if interpretation is not None else bool(contextual and not topic_switch and not previous_customer)
+        ),
     )
 
 

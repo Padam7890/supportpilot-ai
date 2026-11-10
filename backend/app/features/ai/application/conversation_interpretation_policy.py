@@ -20,8 +20,15 @@ class ConversationInterpretationPolicy:
         negated_action: bool,
         needs_clarification: bool,
         legacy_router_would_invoke: bool,
+        semantic_signal: bool = False,
     ) -> bool:
-        if negated_action or needs_clarification:
+        # A deterministic negation signal is only a reason to ask the shared
+        # interpreter; it is never itself the final semantic decision.
+        if negated_action:
+            return True
+        if semantic_signal:
+            return True
+        if needs_clarification:
             return False
         if self.model_first and risk_level != "high":
             return True

@@ -15,6 +15,7 @@ from app.features.ai.application.intent_routing import (
     CustomerRoutingResolution,
     resolve_customer_routing,
 )
+from app.features.ai.application.policy_follow_up import FollowUpInterpretation
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,7 @@ class PlaygroundRoutingResult:
     completed: bool
     outcome: dict[str, object] | None = None
     requires_evidence: bool = True
+    interpretation: FollowUpInterpretation | None = None
 
 
 async def route_playground_conversation(
@@ -33,7 +35,12 @@ async def route_playground_conversation(
     routing: CustomerRoutingResolution | None = None,
 ) -> PlaygroundRoutingResult:
     """Finish deterministic preview turns; classify other turns for retrieval."""
-    plan = plan_playground_turn(question, transcript)
+    if routing is None:
+        routing = await resolve_customer_routing(
+            question, transcript or [], channel="playground", for_generation=True,
+        )
+    interpretation = routing.llm.follow_up if routing.llm else None
+    plan = plan_playground_turn(question, transcript, interpretation=interpretation)
     if plan is not None and plan.route == "inventory":
         async with SessionLocal() as db:
             await set_tenant_context(db, organization_id)
@@ -65,10 +72,7 @@ async def route_playground_conversation(
             result_count=0,
         )
         return PlaygroundRoutingResult(completed=True)
-    if routing is None:
-        routing = await resolve_customer_routing(
-            question, transcript or [], channel="playground", for_generation=True,
-        )
     return PlaygroundRoutingResult(
         completed=False, outcome=routing.tool_outcome(), requires_evidence=routing.requires_evidence,
+        interpretation=routing.llm.follow_up if routing.llm else None,
     )

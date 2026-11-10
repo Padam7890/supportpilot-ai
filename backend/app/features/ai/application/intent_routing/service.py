@@ -153,6 +153,11 @@ async def resolve_customer_routing(
         risk_level=assessment.risk_level,
         negated_action=understanding.negated_action,
         needs_clarification=understanding.needs_clarification and not interpret_follow_up,
+        semantic_signal=(
+            understanding.correction
+            or understanding.contextual_follow_up
+            or interpret_follow_up
+        ),
         legacy_router_would_invoke=(
             interpret_follow_up or should_invoke_llm_router(assessment, message)
         ),
@@ -166,6 +171,12 @@ async def resolve_customer_routing(
             message, transcript, assessment,
             **({"max_attempts": 1, "channel": channel} if for_generation else {}),
             **({"follow_up_topic": follow_up_topic} if interpret_follow_up else {}),
+            "require_follow_up": (
+                interpret_follow_up
+                or understanding.negated_action
+                or understanding.correction
+                or understanding.contextual_follow_up
+            ),
         )
         if decision is not None and not assessment.requires_tools and any(
             item.requires_tools or (
@@ -311,22 +322,32 @@ async def resolve_refund_slot(
     source_message_id: UUID | None,
     now: datetime,
 ) -> tuple[FollowUp | None, CustomerRoutingResolution | None]:
+    """Interpret one turn against the active persisted question and reuse its decision.
+
+    The model may identify meaning and extracted text, but every extracted value is
+    still checked by deterministic parsers and the existing authorized workflows.
+    """
     state = read_pending_turn(message, transcript, agent_id, now)
-    if state is None or state.stage not in {"refund_reason", "refund_item"}:
+    if state is None:
         return None, None
     assessment = assess_deterministic_route(message, transcript)
-    if (
-        assessment.requires_tools or assessment.intent in {Intent.HANDOFF, Intent.GREETING}
-        or assessment.reason_code == "policy_question"
-    ):
+    if assessment.intent == Intent.GREETING or assessment.reason_code == "policy_question":
         return None, None
     routing = await resolve_customer_routing(
         message, transcript, channel="widget", for_generation=True, interpret_follow_up=True,
-        follow_up_topic=f"Refund request. Pending answer type: {state.expected_answer_type}.",
+        follow_up_topic=(
+            f"Active intent: {state.active_intent}. Workflow stage: {state.stage}. "
+            f"Expected answer type: {state.expected_answer_type}. "
+            f"Requested action: {state.order_action or 'none'}."
+        ),
     )
     interpretation = routing.llm.follow_up if routing.llm is not None else None
     if interpretation is None or interpretation.confidence < settings.ai_intent_router_high_confidence or routing.multi_intent:
         return None, routing
+    if state.active_intent == "order":
+        return resolve_order_support(
+            message, state, source_message_id=source_message_id, interpretation=interpretation,
+        ), routing
     return resolve_follow_up(
         message, state, source_message_id=source_message_id, interpretation=interpretation,
     ), routing

@@ -49,11 +49,18 @@ RefundReason = Literal["damaged", "defective", "incorrect", "change_of_mind"]
 class FollowUpInterpretation(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    relation: Literal["new_topic", "follow_up", "answer_to_question", "unclear"]
+    relation: Literal["new_topic", "follow_up", "answer_to_question", "correction", "unclear"]
     goal: Literal["delivery_date", "replacement", "refund", "next_step", "policy_question", "refund_reason", "refund_item", "none"]
+    confirmation: Literal["affirm", "deny", "retract", "unclear", "not_applicable"] = "not_applicable"
+    action: Literal["cancel", "refund", "return", "exchange", "replace", "track", "information", "none"] = "none"
+    action_target: Literal["order", "refund_request", "item", "none"] = "none"
+    topic: str | None = Field(default=None, max_length=160)
+    retrieval_query: str | None = Field(default=None, max_length=240)
     refund_reason: RefundReason | None = None
     date_text: str | None = Field(default=None, max_length=40)
     quantity_text: str | None = Field(default=None, max_length=40)
+    item_text: str | None = Field(default=None, max_length=120)
+    order_reference_text: str | None = Field(default=None, max_length=100)
     confidence: float = Field(ge=0, le=1)
 
 

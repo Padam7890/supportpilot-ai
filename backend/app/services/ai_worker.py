@@ -50,7 +50,10 @@ from app.features.ai.application.intent_routing import (
     resolve_contextual_policy_turn,
     resolve_customer_routing,
 )
-from app.features.ai.application.intent_routing.service import resolve_refund_slot
+from app.features.ai.application.intent_routing.service import (
+    resolve_customer_routing,
+    resolve_refund_slot,
+)
 from app.features.ai.application.knowledge_inventory import is_knowledge_inventory_question
 from app.features.ai.application.missing_evidence_policy import plan_missing_evidence_reply
 from app.features.ai.application.playground_execution import complete_playground_knowledge_inventory
@@ -277,6 +280,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
         follow_up_query = None
         policy_follow_up = None
         contextual_routing = None
+        semantic_interpretation = None
         if execution.kind == "widget_reply":
             if await widget_reply_is_stale(organization_id, execution_id):
                 return
@@ -294,6 +298,9 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             )
         if contextual_routing is not None:
             intent_router_outcome = contextual_routing.tool_outcome()
+            semantic_interpretation = (
+                contextual_routing.llm.follow_up if contextual_routing.llm else None
+            )
         generic_clarification = None
         requires_store_evidence = True
         if execution.kind == "widget_reply" and policy_follow_up is None:
@@ -304,21 +311,42 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             if is_catalog_discovery_request(execution.question):
                 follow_up, follow_up_reason = None, "catalog_browse_override"
             else:
-                follow_up, follow_up_reason = assess_widget_follow_up(
-                    execution.question, transcript, agent_id=execution.ai_agent_id,
-                    source_message_id=getattr(execution, "source_message_id", None), now=now,
-                    allow_refund_workflow=execution.delivery_mode == "auto_reply",
-                )
+                follow_up = None
+                if execution.delivery_mode == "auto_reply" and contextual_routing is None:
+                    follow_up, contextual_routing = await resolve_refund_slot(
+                        execution.question, transcript, agent_id=execution.ai_agent_id,
+                        source_message_id=getattr(execution, "source_message_id", None), now=now,
+                    )
+                    if contextual_routing is not None:
+                        semantic_interpretation = (
+                            contextual_routing.llm.follow_up
+                            if contextual_routing.llm else None
+                        )
+                follow_up_reason = "semantic_pending_question" if follow_up else "no_matching_pending_question"
+                if follow_up is None:
+                    if contextual_routing is None:
+                        contextual_routing = await resolve_customer_routing(
+                            execution.question, transcript, channel="widget", for_generation=True,
+                        )
+                        semantic_interpretation = (
+                            contextual_routing.llm.follow_up
+                            if contextual_routing.llm else None
+                        )
+                    follow_up, follow_up_reason = assess_widget_follow_up(
+                        execution.question, transcript, agent_id=execution.ai_agent_id,
+                        source_message_id=getattr(execution, "source_message_id", None), now=now,
+                        allow_refund_workflow=execution.delivery_mode == "auto_reply",
+                        interpretation=semantic_interpretation,
+                        negation_uncertain=bool(
+                            contextual_routing.understanding.get("negated_action") is True
+                            and semantic_interpretation is None
+                        ),
+                    )
             if (
                 follow_up is None and contextual_routing is None
                 and follow_up_reason != "catalog_browse_override" and execution.delivery_mode == "auto_reply"
             ):
-                follow_up, contextual_routing = await resolve_refund_slot(
-                    execution.question, transcript, agent_id=execution.ai_agent_id,
-                    source_message_id=getattr(execution, "source_message_id", None), now=now,
-                )
-                if follow_up is not None:
-                    follow_up_reason = "semantic_slot_resolved"
+                follow_up, follow_up_reason = None, "no_pending_question"
             _log_ai_execution_event(
                 "widget_follow_up_routing", execution_id=str(execution_id),
                 correlation_id=correlation_id, reason=follow_up_reason,
@@ -342,14 +370,20 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                     return
             if follow_up is not None and follow_up.routed_question:
                 routed_question = follow_up.routed_question
-            understanding = understand_conversation_turn(execution.question, transcript)
+            understanding = understand_conversation_turn(
+                execution.question, transcript, interpretation=semantic_interpretation,
+            )
             contextual = (
                 follow_up is None and understanding.contextual_follow_up
                 and not understanding.topic_switch and not understanding.needs_clarification
                 and understanding.retrieval_query != understanding.message
             )
             if contextual:
-                follow_up_query = understanding.retrieval_query
+                follow_up_query = (
+                    semantic_interpretation.retrieval_query
+                    if semantic_interpretation and semantic_interpretation.retrieval_query
+                    else understanding.retrieval_query
+                )
             route_result = await resolve_widget_turn(
                 routed_question,
                 transcript,
@@ -369,6 +403,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             )
             requires_store_evidence = route_result.requires_evidence
             intent_router_outcome = route_result.outcome
+            semantic_interpretation = route_result.interpretation or semantic_interpretation
             if route_result.model_router_invoked:
                 _log_ai_execution_event(
                     "intent_router_resolved",
@@ -522,6 +557,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 return
             intent_router_outcome = playground_routing.outcome
             requires_store_evidence = playground_routing.requires_evidence
+            semantic_interpretation = playground_routing.interpretation or semantic_interpretation
             _log_ai_execution_event(
                 "intent_router_resolved",
                 execution_id=str(execution_id),
@@ -551,6 +587,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 execution_id,
                 include_knowledge=True,
                 **({"follow_up_query": follow_up_query} if follow_up_query else {}),
+                **({"interpretation": semantic_interpretation} if semantic_interpretation else {}),
             )
             if loaded is None:
                 return
