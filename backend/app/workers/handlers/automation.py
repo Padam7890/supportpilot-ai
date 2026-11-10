@@ -260,6 +260,7 @@ class AutomationExecutionHandler(JobHandler):
                             db,
                             organization_id=job.organization_id,
                             execution_id=execution.id,
+                            correlation_id=execution.correlation_id,
                             conversation_id=conversation.id,
                             message_content=message.content,
                             capabilities=caps,
@@ -408,6 +409,7 @@ async def _apply_actions(
     *,
     organization_id: UUID,
     execution_id: UUID,
+    correlation_id: UUID | None,
     conversation_id: UUID,
     message_content: str,
     capabilities: frozenset[str],
@@ -854,7 +856,7 @@ async def _apply_actions(
                 message=message_content,
                 execution_id=execution_id,
                 action_index=index,
-                correlation_id=execution.correlation_id,
+                correlation_id=correlation_id,
             )
             if outcome == "applied":
                 note_lines = [f"[Commerce approval] {action.summary}", detail]
