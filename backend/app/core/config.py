@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     ai_retrieval_min_rrf_score: float = Field(default=0.0, ge=0, le=0.2)
     ai_retrieval_rerank_enabled: bool = True
     ai_intent_router_enabled: bool = False
+    ai_conversation_llm_first_enabled: bool = False
     ai_intent_router_high_confidence: float = Field(default=0.90, ge=0.5, le=1.0)
     ai_intent_router_low_confidence: float = Field(default=0.65, ge=0.0, le=1.0)
     ai_intent_router_max_attempts: int = Field(default=2, ge=1, le=3)
