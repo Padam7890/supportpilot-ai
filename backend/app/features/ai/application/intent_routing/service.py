@@ -89,7 +89,15 @@ async def resolve_customer_routing(
     )
     if resolution.multi_intent:
         metrics.multi_intent_count = 1
-    invoke = should_invoke_llm_router(assessment, message)
+    if understanding.needs_clarification:
+        resolution.clarify = True
+    # Standalone negations and context-free references are deterministic;
+    # an extra model call cannot authorize an action or invent missing context.
+    invoke = (
+        not understanding.negated_action
+        and not understanding.needs_clarification
+        and should_invoke_llm_router(assessment, message)
+    )
     llm_invoked = False
 
     if invoke:
@@ -167,7 +175,8 @@ def apply_routing_to_widget_plan(
     if resolution.llm is not None:
         should_clarify = should_clarify or resolution.llm.should_clarify
     if should_clarify and (
-        resolution.llm is not None
+        resolution.understanding.get("needs_clarification") is True
+        or resolution.llm is not None
         or resolution.deterministic.confidence < settings.ai_intent_router_low_confidence
     ):
         return CustomerTurnPlan(
