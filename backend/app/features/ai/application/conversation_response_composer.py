@@ -25,7 +25,11 @@ _SYSTEM = (
     "For general conversation, respond normally without inventing store facts. "
     "When evidence is provided, cite supporting excerpts with [source 1], "
     "[source 2], etc., next to each supported store claim and before the sentence ends. "
-    "Never cite a source not shown in the evidence. Use at most six short sentences or bullet points."
+    "Never cite a source not shown in the evidence. Use at most three short factual "
+    "sentences and one optional follow-up question. Each sentence asserting a store "
+    "policy MUST include a citation in that same sentence, formatted exactly "
+    "as [source 1] before the final period. Never put all citations only at "
+    "the end of the response. Avoid unsupported introductory policy summaries."
 )
 
 
