@@ -8,6 +8,7 @@ from typing import Literal
 
 from app.features.ai.application.catalog_discovery import is_catalog_discovery_request
 from app.features.ai.application.conversation_understanding import understand_conversation_turn
+from app.features.ai.application.policy_follow_up import FollowUpInterpretation
 from app.features.ai.application.conversational_intents import (
     classify_conversational_intent,
     playground_conversational_reply,
@@ -56,8 +57,11 @@ def _negated_action_plan() -> CustomerTurnPlan:
 
 def plan_playground_turn(
     question: str, transcript: list[dict[str, str]] | None = None,
+    *, interpretation: FollowUpInterpretation | None = None,
 ) -> CustomerTurnPlan | None:
-    understanding = understand_conversation_turn(question, transcript or [])
+    understanding = understand_conversation_turn(
+        question, transcript or [], interpretation=interpretation,
+    )
     if understanding.negated_action:
         return _negated_action_plan()
     order_follow_up = resolve_order_support(" ".join(question.strip().split()))
@@ -95,8 +99,11 @@ def plan_playground_turn(
 def plan_widget_turn(
     message: str,
     transcript: list[dict[str, str]],
+    *, interpretation: FollowUpInterpretation | None = None,
 ) -> CustomerTurnPlan:
-    understanding = understand_conversation_turn(message, transcript)
+    understanding = understand_conversation_turn(
+        message, transcript, interpretation=interpretation,
+    )
     if understanding.negated_action:
         return _negated_action_plan()
     if is_catalog_discovery_request(message):

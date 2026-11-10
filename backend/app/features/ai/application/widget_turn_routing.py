@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 
+from app.features.ai.application.policy_follow_up import FollowUpInterpretation
 from app.features.ai.application.conversation_orchestration import (
     CustomerTurnPlan,
     plan_widget_turn,
@@ -19,6 +20,7 @@ class WidgetRouteResult:
     outcome: dict[str, object]
     model_router_invoked: bool
     requires_evidence: bool = True
+    interpretation: FollowUpInterpretation | None = None
 
 
 async def resolve_widget_turn(
@@ -30,22 +32,30 @@ async def resolve_widget_turn(
     routing: CustomerRoutingResolution | None = None,
 ) -> WidgetRouteResult:
     """Preserve follow-up precedence before optional LLM intent classification."""
-    base = plan_widget_turn(message, transcript)
+    if routing is None:
+        routing = await resolve_customer_routing(
+            message, transcript, channel="widget", for_generation=True, allow_model=allow_model,
+        )
+    interpretation = routing.llm.follow_up if routing.llm else None
+    base = plan_widget_turn(message, transcript, interpretation=interpretation)
     if follow_up_decision is not None:
         return WidgetRouteResult(
             turn=base,
             outcome={"tool": "widget_follow_up", "status": follow_up_decision},
-            model_router_invoked=False,
+            model_router_invoked=routing.metrics.llm_router_invocation_count > 0,
+            interpretation=interpretation,
         )
     if base.route != "knowledge":
-        return WidgetRouteResult(base, {"tool": base.tool_name, "status": "completed"}, False)
-    if routing is None:
-        routing = await resolve_customer_routing(
-            message, transcript, channel="widget", for_generation=True, allow_model=allow_model,
+        return WidgetRouteResult(
+            base, {"tool": base.tool_name, "status": "completed"},
+            routing.metrics.llm_router_invocation_count > 0,
+            requires_evidence=False,
+            interpretation=interpretation,
         )
     return WidgetRouteResult(
         turn=apply_routing_to_widget_plan(message, transcript, routing, base=base),
         outcome=routing.tool_outcome(),
         model_router_invoked=routing.metrics.llm_router_invocation_count > 0,
         requires_evidence=routing.requires_evidence,
+        interpretation=routing.llm.follow_up if routing.llm else None,
     )

@@ -13,6 +13,7 @@ from app.features.ai.application.conversational_intents import (
     should_skip_knowledge_retrieval,
 )
 from app.features.ai.application.follow_up import PENDING_KEY
+from app.features.ai.application.policy_follow_up import FollowUpInterpretation
 from app.features.ai.application.retrieval_search import search_agent_knowledge
 from app.features.ai.application.widget_stream_context import STREAM_SOURCE_IDS_KEY
 from app.models import (
@@ -32,7 +33,8 @@ class KnowledgeRetrievalUnavailable(RuntimeError):
 
 async def load_execution_context(
     organization_id: UUID, execution_id: UUID, *, include_knowledge: bool | None = None,
-    follow_up_query: str | None = None
+    follow_up_query: str | None = None,
+    interpretation: FollowUpInterpretation | None = None,
 ) -> (
     tuple[
         AIExecution,
@@ -146,6 +148,7 @@ async def load_execution_context(
                     execution.question,
                     conversation_context,
                     agent_id=execution.ai_agent_id,
+                    interpretation=interpretation,
                 )
                 # A delayed/retried execution must not overwrite a newer topic.
                 latest_customer_id = await db.scalar(
@@ -178,6 +181,7 @@ async def load_execution_context(
                 question,
                 conversation_context,
                 agent_id=execution.ai_agent_id,
+                interpretation=interpretation,
             )
             retrieval_text = understanding.retrieval_query
         search_text = (follow_up_query or retrieval_text)[:2000]
