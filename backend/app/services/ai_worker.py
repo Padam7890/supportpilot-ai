@@ -43,10 +43,8 @@ from app.features.ai.application.follow_up import (
     order_verification_question,
 )
 from app.features.ai.application.intent_extraction import extract_intent
-from app.features.ai.application.intent_routing import (
-    apply_routing_to_widget_plan,
-    resolve_customer_routing,
-)
+from app.features.ai.application.intent_routing import resolve_customer_routing
+from app.features.ai.application.widget_turn_routing import resolve_widget_turn
 from app.features.ai.application.knowledge_inventory import (
     format_knowledge_inventory,
     is_knowledge_inventory_question,
@@ -322,20 +320,23 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 routed_question = follow_up.routed_question
                 if follow_up.decision == "policy_timing":
                     follow_up_query = routed_question
-                turn = plan_widget_turn(routed_question, transcript)
-                intent_router_outcome = {"tool": "widget_follow_up", "status": follow_up.decision}
-            else:
-                routing = await resolve_customer_routing(
-                    routed_question, transcript, channel="widget"
-                )
-                intent_router_outcome = routing.tool_outcome()
+            route_result = await resolve_widget_turn(
+                routed_question,
+                transcript,
+                follow_up_decision=(
+                    follow_up.decision
+                    if follow_up is not None and follow_up.routed_question else None
+                ),
+            )
+            turn = route_result.turn
+            intent_router_outcome = route_result.outcome
+            if route_result.model_router_invoked:
                 _log_ai_execution_event(
                     "intent_router_resolved",
                     execution_id=str(execution_id),
                     correlation_id=correlation_id,
                     **{k: intent_router_outcome.get(k) for k in ("mode", "primary_intent", "metrics")},
                 )
-                turn = apply_routing_to_widget_plan(routed_question, transcript, routing)
             router_outcomes = [intent_router_outcome] if intent_router_outcome else []
             if turn.route == "clarification" and turn.tool_name == "intent_router_clarification":
                 generic_clarification = turn.draft
