@@ -10,6 +10,9 @@ from sqlalchemy import select
 
 from app.core.observability import current_correlation_id
 from app.db.session import SessionLocal, set_tenant_context
+from app.features.ai.application.catalog_discovery import (
+    list_verified_products, render_product_listing, resolve_catalog_connection,
+)
 from app.features.ai.application.catalog_search import (
     catalog_has_active_products,
     load_candidates,
@@ -310,6 +313,42 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                     **{k: intent_router_outcome.get(k) for k in ("mode", "primary_intent", "metrics")},
                 )
             router_outcomes = [intent_router_outcome] if intent_router_outcome else []
+            if turn.route == "inventory":
+                async with SessionLocal() as db:
+                    await set_tenant_context(db, organization_id)
+                    from app.models import Conversation
+                    conversation = await db.scalar(
+                        select(Conversation).where(
+                            Conversation.id == execution.conversation_id,
+                            Conversation.organization_id == organization_id,
+                        )
+                    ) if execution.conversation_id else None
+                    connection_id = await resolve_catalog_connection(
+                        db, organization_id,
+                        bound_connection_id=(
+                            conversation.integration_connection_id if conversation else None
+                        ),
+                    )
+                    products = (
+                        await list_verified_products(
+                            db, organization_id, connection_id=connection_id,
+                        )
+                        if connection_id is not None else []
+                    )
+                draft = (
+                    render_product_listing(products) if connection_id is not None
+                    else "I can't identify a single connected store for this chat. Please contact the store team."
+                )
+                await finish_widget_reply(
+                    organization_id, execution_id, draft=draft,
+                    reply_status=delivery_status,
+                    safe_summary="Product listing resolved from an authorized connected catalog.",
+                    citations=[],
+                    outcomes=[{"tool": "catalog_discovery", "status": "completed",
+                               "result_count": len(products)}],
+                    usage={}, model_name=None,
+                )
+                return
             if turn.route == "clarification" and turn.tool_name == "intent_router_clarification":
                 generic_clarification = turn.draft
             elif turn.route in {"direct", "purchase", "clarification"}:
