@@ -61,8 +61,10 @@ async def resolve_conversational_query(
         'with keys relation, standalone_question, confidence. relation must be '
         '"follow_up", "new_topic", or "unclear". Rewrite as a standalone QUESTION '
         "preserving the customer's intent and entities. Use previous assistant "
-        "questions to interpret short answers, including dates, quantities, names, "
-        "and yes/no answers. If the assistant asked for a delivery date and the "
+        "questions to interpret short answers and selected options, including dates, quantities, names, "
+        "yes/no answers, and choices such as replacement versus refund. Treat the "
+        "latest customer answer as a selection of the assistant offered options, "
+        "not as an unrelated question. If the assistant asked for a delivery date and the "
         "customer supplies one, retain the supplied date verbatim and ask what "
         "the verified store policy says about the reporting deadline; do not "
         "assert eligibility or compute deadlines without evidence. Never invent product, policy, "
