@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -12,6 +13,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from app.features.ai.application.claim_grounding import CITATION_PATTERN, check_grounded_claims
 from app.features.ai.application.conversation_response_evidence import ResponseEvidence
 from app.features.ai.infrastructure.llm_gateway import generate_completion
+
+logger = logging.getLogger(__name__)
 
 ReviewModel = Callable[..., Awaitable[tuple[str, dict[str, int], str | None]]]
 ReviewReason = Literal[
@@ -102,14 +105,16 @@ async def verify_candidate(
     ]
     try:
         async with asyncio.timeout(_REVIEW_TIMEOUT_SECONDS):
-            raw, usage, _ = await review_model(messages, max_tokens=520)
+            raw, usage, _ = await review_model(messages, max_tokens=750)
     except TimeoutError:
         return SemanticVerification(False, "review_timeout")
     try:
         review = CandidateReview.model_validate_json(raw)
-    except ValidationError:
+    except (ValidationError, ValueError) as exc:
+        logger.warning("semantic_review_invalid format=%s response_chars=%d", type(exc).__name__, len(raw))
         return SemanticVerification(False, "invalid_review", usage=usage)
     if [result.index for result in review.spans] != list(range(1, len(spans) + 1)):
+        logger.warning("semantic_review_invalid format=span_index_mismatch expected=%d actual=%d", len(spans), len(review.spans))
         return SemanticVerification(False, "invalid_review", usage=usage)
 
     used: set[int] = set()
