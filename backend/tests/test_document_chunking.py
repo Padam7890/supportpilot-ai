@@ -20,3 +20,13 @@ def test_make_chunks_respects_token_budget():
     chunks = make_chunks(f"# Policy\n\n{body}", max_tokens=80, overlap_tokens=10)
     assert len(chunks) > 1
     assert all(len(content) > 0 for content, _, _ in chunks)
+
+
+def test_unstructured_text_uses_canonical_chunking():
+    text = "Simple product information without headings or paragraph breaks."
+    chunks = make_chunks(text, max_tokens=100, overlap_tokens=8)
+    assert chunks == [(text, None, None)]
+
+
+def test_blank_document_produces_no_chunks():
+    assert make_chunks(" \n \t ") == []
