@@ -148,7 +148,8 @@ async def _embedding_readiness(
                     *common_filters,
                     DocumentEmbedding.embedding_model == settings.ai_embedding_model,
                     DocumentEmbedding.embedding_version == settings.ai_embedding_version,
-                    DocumentEmbedding.dimensions == settings.ai_embedding_dimensions,\n                    DocumentEmbedding.content_hash == DocumentChunk.content_hash,
+                    DocumentEmbedding.dimensions == settings.ai_embedding_dimensions,
+                    DocumentEmbedding.content_hash == DocumentChunk.content_hash,
                     DocumentEmbedding.content_hash == DocumentChunk.content_hash,
                 )
             )
