@@ -49,12 +49,6 @@ def understand_conversation_turn(
         and prior_turns[-1].get("content", "").strip() == normalized
     ):
         prior_turns = prior_turns[:-1]
-    recent_customer_turns = [
-        item.get("content", "").strip()
-        for item in reversed(prior_turns[-12:])
-        if item.get("sender") in {"customer", "user"}
-        and item.get("content", "").strip()
-    ]
     # Explicit cancellation or correction must not inherit the prior topic.
     # The caller still decides whether a pending commerce action is cancelled.
     correction = _is_correction(normalized)
@@ -74,8 +68,7 @@ def understand_conversation_turn(
         explicit_topic=topic_switch,
     )
     recent_intents = assess_deterministic_route(normalized, [])
-    unique_intents = set(recent_intents.candidate_intents)
-    multi_intent = (len(unique_intents) > 1 and recent_intents.competing) or _has_distinct_clauses(normalized)
+    multi_intent = recent_intents.competing or _has_distinct_clauses(normalized)
     pending = None
     if agent_id is not None:
         # Skip non-assistant turns; only a delivered assistant prompt can
