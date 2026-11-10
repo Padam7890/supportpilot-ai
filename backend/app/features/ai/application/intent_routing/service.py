@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass, field
 
 from app.features.ai.application.conversation_understanding import understand_conversation_turn
+from app.features.ai.application.conversation_interpretation_policy import ConversationInterpretationPolicy
 from app.features.ai.application.conversation_orchestration import (
     CustomerTurnPlan,
     plan_widget_turn,
@@ -93,13 +94,13 @@ async def resolve_customer_routing(
         resolution.clarify = True
     # Standalone negations and context-free references are deterministic;
     # an extra model call cannot authorize an action or invent missing context.
-    invoke = (
-        not understanding.negated_action
-        and not understanding.needs_clarification
-        and (
-            (settings.ai_conversation_llm_first_enabled and assessment.risk_level != "high")
-            or should_invoke_llm_router(assessment, message)
-        )
+    invoke = ConversationInterpretationPolicy(
+        model_first=settings.ai_conversation_llm_first_enabled,
+    ).should_use_model(
+        risk_level=assessment.risk_level,
+        negated_action=understanding.negated_action,
+        needs_clarification=understanding.needs_clarification,
+        legacy_router_would_invoke=should_invoke_llm_router(assessment, message),
     )
     llm_invoked = False
 
