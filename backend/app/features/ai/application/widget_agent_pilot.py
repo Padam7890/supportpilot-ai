@@ -21,7 +21,7 @@ def eligible_for_widget_agent_pilot(
 ) -> bool:
     if not settings.ai_conversation_llm_first_enabled:
         return False
-    understanding = understand_conversation_turn(message, transcript)
+    # Pilot only on first-contact greetings; previous turns may contain private\n    # or store-specific context not yet covered by semantic grounding.\n    if any(turn.get("sender") in {"customer", "user", "assistant"}\n           and turn.get("content", "").strip() != message.strip()\n           for turn in transcript):\n        return False\n    understanding = understand_conversation_turn(message, transcript)
     if (
         understanding.negated_action
         or understanding.needs_clarification
