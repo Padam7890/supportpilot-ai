@@ -17,6 +17,10 @@ from app.features.ai.application.catalog_search import (
     load_candidates,
 )
 from app.features.ai.application.context import load_execution_context
+from app.features.ai.application.execution_failure_policy import (
+    assess_execution_failure,
+    decide_execution_retry,
+)
 from app.features.ai.application.execution_lifecycle import (
     claim_ai_execution,
     fail_exhausted_ai_leases,
@@ -60,9 +64,6 @@ from app.features.ai.application.widget_replies import (
     widget_reply_is_stale,
 )
 from app.features.ai.domain.failure_codes import (
-    is_retryable_ai_failure,
-)
-from app.features.ai.domain.failure_codes import (
     safe_ai_failure_code as _safe_ai_failure_code,
 )
 from app.features.ai.domain.ranking import build_recommendation_result
@@ -87,7 +88,6 @@ from app.services.widget_ai import (
     widget_missing_knowledge_reply,
     widget_request_needs_order_verification,
 )
-from app.workers.domain.retry_policy import retry_delay_seconds
 
 logger = logging.getLogger(__name__)
 __all__ = ["_question_order_number", "_safe_ai_failure_code"]
@@ -674,16 +674,11 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             row.completed_at = now
             await db.commit()
     except Exception as exc:  # noqa: BLE001 - record failures safely and keep the worker alive
-        failure_code = _safe_ai_failure_code(exc)
-        if failure_stage == "knowledge_retrieval" and failure_code == "ai_execution_failed":
-            failure_code = "knowledge_retrieval_failed"
-        status_match = re.fullmatch(r"provider_http_(\d{3})", failure_code)
-        provider_http_status = (
-            exc.http_status if isinstance(exc, AIProviderError) and exc.http_status is not None
-            else int(status_match.group(1)) if status_match else None
-        )
-        provider_reason = exc.provider_reason if isinstance(exc, AIProviderError) else None
-        retryable = is_retryable_ai_failure(exc)
+        failure = assess_execution_failure(exc, failure_stage)
+        failure_code = failure.code
+        provider_http_status = failure.http_status
+        provider_reason = failure.provider_reason
+        retryable = failure.retryable
         _log_ai_execution_event(
             "ai_execution_failed",
             execution_id=str(execution_id),
@@ -717,7 +712,13 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 await db.rollback()
                 return
             attempt_count = row.attempt_count
-            exhausted = not retryable or attempt_count >= row.max_attempts
+            decision = decide_execution_retry(
+                retryable=retryable,
+                attempt_count=attempt_count,
+                max_attempts=row.max_attempts,
+                execution_kind=row.kind,
+            )
+            exhausted = decision.exhausted
             _log_ai_execution_event(
                 "ai_execution_retry_decision",
                 execution_id=str(execution_id),
@@ -730,11 +731,9 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 retry_count=max(0, attempt_count - 1),
                 max_attempts=row.max_attempts,
                 elapsed_ms=round((time.monotonic() - started_at) * 1000),
-                decision="retry_scheduled" if not exhausted else (
-                    "retry_exhausted" if retryable else "not_retryable"
-                ),
+                decision=decision.reason,
             )
-            if exhausted and row.kind == "widget_reply":
+            if decision.widget_needs_fallback:
                 widget_needs_fallback = True
                 await db.rollback()
             else:
@@ -751,9 +750,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                     else None
                 )
                 if not exhausted:
-                    row.next_attempt_at = now + timedelta(
-                        seconds=retry_delay_seconds(attempt_count, base_seconds=5, cap_seconds=60)
-                    )
+                    row.next_attempt_at = now + timedelta(seconds=decision.delay_seconds)
                 row.completed_at = now if exhausted else None
                 await db.commit()
         if widget_needs_fallback:
