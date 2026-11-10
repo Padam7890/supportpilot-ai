@@ -35,22 +35,18 @@ from app.features.ai.application.conversation_orchestration import (
     playground_missing_knowledge_reply,
 )
 from app.features.ai.application.follow_up import (
-    VERIFY_REFUND,
     assess_widget_follow_up,
     infer_assistant_question,
-    order_verification_question,
 )
 from app.features.ai.application.intent_extraction import extract_intent
 from app.features.ai.application.intent_routing import resolve_customer_routing
 from app.features.ai.application.widget_turn_routing import resolve_widget_turn
 from app.features.ai.application.widget_sensitive_execution import complete_sensitive_widget_turn
+from app.features.ai.application.widget_follow_up_execution import complete_widget_follow_up
 from app.features.ai.application.knowledge_inventory import is_knowledge_inventory_question
 from app.features.ai.application.playground_execution import complete_playground_knowledge_inventory
 from app.features.ai.application.retrieval_search import citations_remain_authorized
-from app.features.ai.application.widget_orders import (
-    _question_order_number,
-    refund_verification_is_active,
-)
+from app.features.ai.application.widget_orders import _question_order_number
 from app.features.ai.application.widget_replies import (
     finish_widget_reply,
     process_widget_shopping_execution,
@@ -263,50 +259,18 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 correlation_id=correlation_id, reason=follow_up_reason,
                 decision=follow_up.decision if follow_up else None,
             )
-            if follow_up is not None and (follow_up.draft or follow_up.review):
-                draft, next_question, reply_status = follow_up.draft, follow_up.pending, delivery_status
-                review_citations = []
-                safe_summary = "The shopper continued a support workflow."
-                if follow_up.handoff:
-                    reply_status = "escalated"
-                    safe_summary = "The shopper requested support because their order reference was unavailable."
-                if review := follow_up.review:
-                    failure_stage = "refund_verification"
-                    if (
-                        review.verification_id and review.item_message_id and review.refund_reason
-                        and await refund_verification_is_active(
-                            organization_id, execution.conversation_id, review.verification_id
-                        )
-                    ):
-                        failure_stage = "knowledge_retrieval"
-                        policy = await load_execution_context(
-                            organization_id, execution_id, include_knowledge=True,
-                            follow_up_query=f"refund return eligibility policy {review.refund_reason.replace('_', ' ')}",
-                        )
-                        if policy is None:
-                            return
-                        review_citations = policy[4]
-                        draft = "I’ll send your verified refund request to the store team to check eligibility. No refund has been issued."
-                        reply_status = "escalated"
-                        safe_summary = "The shopper verified their order and requested staff review for refund eligibility."
-                    else:
-                        draft = VERIFY_REFUND
-                        next_question = review.model_copy(update={
-                            "stage": "refund_verification", "expected_answer_type": "otp",
-                            "verification_status": "required", "verification_id": None,
-                        })
-                await finish_widget_reply(
-                    organization_id, execution_id, draft=draft or "",
-                    reply_status=reply_status,
-                    safe_summary=safe_summary,
-                    citations=review_citations,
-                    outcomes=[{
-                        "tool": "widget_follow_up", "status": follow_up.decision,
-                        "result_count": len(review_citations),
-                    }],
-                    usage={}, model_name=None, pending_question=next_question,
+            if follow_up is not None:
+                completion = await complete_widget_follow_up(
+                    organization_id,
+                    execution_id,
+                    execution.conversation_id,
+                    follow_up=follow_up,
+                    delivery_status=delivery_status,
                 )
-                return
+                if completion.failure_stage is not None:
+                    failure_stage = completion.failure_stage
+                if completion.completed:
+                    return
             if follow_up is not None and follow_up.routed_question:
                 routed_question = follow_up.routed_question
                 if follow_up.decision == "policy_timing":
