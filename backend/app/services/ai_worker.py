@@ -29,21 +29,18 @@ from app.features.ai.application.stream_context_policy import (
     stream_conversation_context as _stream_conversation_context,
 )
 from app.features.ai.application.claim_grounding import check_generated_answer
-from app.features.ai.application.conversation_orchestration import (
-    plan_playground_turn,
-    playground_missing_knowledge_reply,
-)
+from app.features.ai.application.conversation_orchestration import playground_missing_knowledge_reply
 from app.features.ai.application.follow_up import (
     assess_widget_follow_up,
     infer_assistant_question,
 )
 from app.features.ai.application.intent_extraction import extract_intent
-from app.features.ai.application.intent_routing import resolve_customer_routing
 from app.features.ai.application.widget_turn_routing import resolve_widget_turn
 from app.features.ai.application.widget_sensitive_execution import complete_sensitive_widget_turn
 from app.features.ai.application.widget_follow_up_execution import complete_widget_follow_up
 from app.features.ai.application.knowledge_inventory import is_knowledge_inventory_question
 from app.features.ai.application.playground_execution import complete_playground_knowledge_inventory
+from app.features.ai.application.playground_routing import route_playground_conversation
 from app.features.ai.application.retrieval_search import citations_remain_authorized
 from app.features.ai.application.widget_orders import _question_order_number
 from app.features.ai.application.widget_replies import (
@@ -375,27 +372,21 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             )
             return
         if execution.kind == "playground":
-            playground_plan = plan_playground_turn(question, transcript)
-            if playground_plan is not None:
-                await finish_deterministic_ai_execution(
-                    organization_id,
-                    execution_id,
-                    draft=playground_plan.draft or "",
-                    safe_summary=playground_plan.safe_summary or "",
-                    tool_name=playground_plan.tool_name,
-                    result_count=0,
-                )
-                return
-            routing = await resolve_customer_routing(
-                question, transcript or [], channel="playground"
+            playground_routing = await route_playground_conversation(
+                organization_id,
+                execution_id,
+                question=question,
+                transcript=transcript,
             )
-            intent_router_outcome = routing.tool_outcome()
+            if playground_routing.completed:
+                return
+            intent_router_outcome = playground_routing.outcome
             _log_ai_execution_event(
                 "intent_router_resolved",
                 execution_id=str(execution_id),
                 correlation_id=correlation_id,
                 channel="playground",
-                **{k: intent_router_outcome.get(k) for k in ("mode", "primary_intent", "metrics")},
+                **{k: (intent_router_outcome or {}).get(k) for k in ("mode", "primary_intent", "metrics")},
             )
         if not context and not integration_context:
             if execution.kind == "widget_reply":
