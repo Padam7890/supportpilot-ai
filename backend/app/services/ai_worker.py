@@ -3,12 +3,11 @@
 import json
 import logging
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
 
-from app.core.config import settings
 from app.core.observability import current_correlation_id
 from app.db.session import SessionLocal, set_tenant_context
 from app.features.ai.application.catalog_search import (
@@ -75,7 +74,17 @@ from app.services.widget_ai import (
 )
 
 logger = logging.getLogger(__name__)
-__all__ = ["_question_order_number", "_safe_ai_failure_code"]
+__all__ = [
+    "_question_order_number",
+    "_safe_ai_failure_code",
+    "_can_stream_transcript",
+    "_stream_conversation_context",
+    "claim_ai_execution",
+    "fail_exhausted_ai_leases",
+    "finish_deterministic_ai_execution",
+    "finish_no_knowledge_execution",
+    "process_ai_execution",
+]
 
 
 async def finish_no_knowledge_execution(
