@@ -50,8 +50,7 @@ async def generate_guarded_draft(
     if (
         context
         and not integration_context
-        and not instructions
-        and execution_kind in {"widget_reply", "playground"}
+        and execution_kind in {"widget_reply", "playground", "reply_draft"}
     ):
         evidence_items = [
             {
@@ -74,6 +73,7 @@ async def generate_guarded_draft(
                 answerable=True,
                 unavailable=False,
             ),
+            instructions=instructions,
         )
         result = {
             "draft": composed.text,
