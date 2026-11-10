@@ -530,9 +530,9 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             )
             row.citations = citations
             row.tool_outcomes = outcomes
-            raw_usage = result.get("usage", {})
+            raw_usage = guarded.usage
             row.usage = raw_usage if isinstance(raw_usage, dict) else {}
-            row.model_name = str(result.get("model_name", ""))[:120] or None
+            row.model_name = guarded.model_name
             row.error_code = None
             row.completed_at = now
             await db.commit()
