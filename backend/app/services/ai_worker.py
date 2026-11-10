@@ -465,6 +465,11 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             completed_at=now,
         )
     except Exception as exc:  # noqa: BLE001 - record failures safely and keep the worker alive
+        # Application errors may carry a precise, allowlisted failure stage.
+        # Never trust arbitrary exception text as a diagnostic stage.
+        declared_stage = getattr(exc, "failure_stage", None)
+        if declared_stage in {"knowledge_retrieval", "refund_verification"}:
+            failure_stage = declared_stage
         failure = assess_execution_failure(exc, failure_stage)
         failure_code = failure.code
         provider_http_status = failure.http_status
