@@ -95,7 +95,7 @@ async def resolve_customer_routing(
     # Standalone negations and context-free references are deterministic;
     # an extra model call cannot authorize an action or invent missing context.
     invoke = ConversationInterpretationPolicy(
-        model_first=settings.ai_conversation_llm_first_enabled,
+        # The new agent owns model-first behavior. Do not also force a\n        # second, legacy model classification on every non-agent turn.\n        model_first=False,
     ).should_use_model(
         risk_level=assessment.risk_level,
         negated_action=understanding.negated_action,
