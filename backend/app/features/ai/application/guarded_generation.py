@@ -5,13 +5,13 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from app.features.ai.application.claim_grounding import CITATION_PATTERN
+from app.features.ai.application.claim_grounding import CITATION_PATTERN, check_grounded_claims
 from app.features.ai.application.conversation_context_builder import build_agent_input
 from app.features.ai.application.conversation_response_composer import compose_natural_answer
 from app.features.ai.application.conversation_response_evidence import knowledge_evidence
 from app.features.ai.application.conversation_verified_order_evidence import AuthorizedOrderSnapshot
 from app.features.ai.application.generation_metrics import log_generation_metrics
-from app.features.ai.application.semantic_claim_verifier import verify_candidate
+from app.features.ai.application.semantic_claim_verifier import verify_candidate, SemanticVerification
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +98,34 @@ async def generate_guarded_draft(
             execution_id, attempt + 1, verification.accepted,
             verification.reason, len(evidence.items),
         )
+        if not verification.accepted and verification.reason == "missing_citations" and len(evidence.items) == 1:
+            # Citation-only repair: attach the sole source to each uncited
+            # factual span. Never treat this as proof of entailment: the
+            # complete candidate is reviewed again, including semantic checks.
+            from app.features.ai.application.semantic_claim_verifier import _SPAN_BREAK
+            segments = [part.strip() for part in _SPAN_BREAK.split(composed.text) if part.strip()]
+            repaired = []
+            for segment in segments:
+                if CITATION_PATTERN.search(segment):
+                    repaired.append(segment)
+                elif segment.endswith(("?", "？")):
+                    repaired.append(segment)
+                else:
+                    repaired.append(segment + " [source 1]")
+            candidate = "\\n".join(repaired)
+            source = [{"index": 1, "excerpt": evidence.items[0].content}]
+            lexical = check_grounded_claims(candidate, source, require_citations=True)
+            if lexical.accepted:
+                repaired_verification = await verify_candidate(candidate, evidence)
+                for key, value in repaired_verification.usage.items():
+                    usage[key] = usage.get(key, 0) + value
+                logger.info(
+                    "rag_grounding_debug execution_id=%s stage=citation_repair accepted=%s reason=%s",
+                    execution_id, repaired_verification.accepted, repaired_verification.reason,
+                )
+                if repaired_verification.accepted:
+                    composed = type(composed)(text=candidate, usage=composed.usage, model_name=composed.model_name)
+                    verification = repaired_verification
         if verification.accepted:
             break
         # Sensitive or contradictory claims should not be retried as routine
