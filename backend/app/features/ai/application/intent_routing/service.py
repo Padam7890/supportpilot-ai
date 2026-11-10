@@ -4,12 +4,21 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
+from uuid import UUID
 
-from app.features.ai.application.conversation_understanding import understand_conversation_turn
-from app.features.ai.application.conversation_interpretation_policy import ConversationInterpretationPolicy
+from app.core.config import settings
+from app.features.ai.application.catalog_discovery import is_catalog_discovery_request
+from app.features.ai.application.conversation_interpretation_policy import (
+    ConversationInterpretationPolicy,
+)
 from app.features.ai.application.conversation_orchestration import (
     CustomerTurnPlan,
     plan_widget_turn,
+)
+from app.features.ai.application.conversation_understanding import (
+    read_policy_conversation,
+    understand_conversation_turn,
 )
 from app.features.ai.application.intent_routing.deterministic import assess_deterministic_route
 from app.features.ai.application.intent_routing.llm_router import invoke_llm_intent_router
@@ -20,8 +29,12 @@ from app.features.ai.application.intent_routing.metrics import (
     record_aggregate,
 )
 from app.features.ai.application.intent_routing.policy import should_invoke_llm_router
-from app.features.ai.application.intent_routing.schemas import Intent, RoutingDecision, DeterministicRouteAssessment
-from app.core.config import settings
+from app.features.ai.application.intent_routing.schemas import (
+    DeterministicRouteAssessment,
+    Intent,
+    RoutingDecision,
+)
+from app.features.ai.application.policy_follow_up import PolicyFollowUp, resolve_policy_follow_up
 from app.services import widget_ai
 
 CLARIFICATION_PROMPT = (
@@ -100,6 +113,8 @@ async def resolve_customer_routing(
     channel: str,
     for_generation: bool = False,
     allow_model: bool = True,
+    interpret_follow_up: bool = False,
+    follow_up_topic: str | None = None,
 ) -> CustomerRoutingResolution:
     started = time.monotonic()
     understanding = understand_conversation_turn(message, transcript)
@@ -137,7 +152,9 @@ async def resolve_customer_routing(
         risk_level=assessment.risk_level,
         negated_action=understanding.negated_action,
         needs_clarification=understanding.needs_clarification,
-        legacy_router_would_invoke=should_invoke_llm_router(assessment, message),
+        legacy_router_would_invoke=(
+            interpret_follow_up or should_invoke_llm_router(assessment, message)
+        ),
     )
     llm_invoked = False
 
@@ -145,10 +162,15 @@ async def resolve_customer_routing(
         llm_invoked = True
         metrics.llm_router_invocation_count = 1
         decision, usage, router_model, failure = await invoke_llm_intent_router(
-            message, transcript, assessment, **({"max_attempts": 1, "channel": channel} if for_generation else {}),
+            message, transcript, assessment,
+            **({"max_attempts": 1, "channel": channel} if for_generation else {}),
+            **({"follow_up_topic": follow_up_topic} if interpret_follow_up else {}),
         )
         if decision is not None and not assessment.requires_tools and any(
-            item.requires_tools or item.intent in {Intent.ORDER, Intent.REFUND}
+            item.requires_tools or (
+                item.intent in {Intent.ORDER, Intent.REFUND}
+                and not (interpret_follow_up and decision.follow_up is not None)
+            )
             for item in decision.intents
         ) and assessment.intent not in {Intent.ORDER, Intent.REFUND}:
             # Model-suggested commerce actions cannot upgrade a deterministic
@@ -232,3 +254,50 @@ def apply_routing_to_widget_plan(
             tool_name="intent_router_clarification",
         )
     return base
+
+
+async def resolve_contextual_policy_turn(
+    message: str,
+    transcript: list[dict[str, str]],
+    *,
+    channel: str,
+    agent_id: UUID,
+    now: datetime,
+) -> tuple[PolicyFollowUp | None, CustomerRoutingResolution | None]:
+    """Resolve context first and return any router result for reuse by normal routing."""
+    state = read_policy_conversation(
+        message, transcript, agent_id=agent_id, now=now, preview=channel == "playground",
+    )
+    if state is None:
+        return None, None
+    assessment = assess_deterministic_route(message, transcript)
+    if assessment.requires_tools or assessment.intent in {Intent.HANDOFF, Intent.GREETING}:
+        return None, None
+    source_time = now
+    if transcript and transcript[-1].get("sender") == "customer":
+        try:
+            submitted = datetime.fromisoformat(transcript[-1].get("created_at", ""))
+        except ValueError:
+            submitted = now
+        if submitted.tzinfo is not None and submitted <= now:
+            source_time = submitted
+    if fast := resolve_policy_follow_up(message, state, source_time):
+        return fast, None
+    if (
+        assessment.reason_code == "policy_question" and not assessment.requires_context
+        or widget_ai.PURCHASE_INTENT.search(message)
+        or is_catalog_discovery_request(message)
+    ):
+        return None, None
+    routing = await resolve_customer_routing(
+        message, transcript, channel=channel, for_generation=True, interpret_follow_up=True,
+        follow_up_topic=state.topic,
+    )
+    interpretation = routing.llm.follow_up if routing.llm is not None else None
+    if (
+        interpretation is None
+        or interpretation.confidence < settings.ai_intent_router_high_confidence
+        or routing.multi_intent
+    ):
+        return None, routing
+    return resolve_policy_follow_up(message, state, source_time, interpretation=interpretation), routing

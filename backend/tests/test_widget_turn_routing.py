@@ -43,6 +43,6 @@ async def test_normal_turn_uses_intent_router() -> None:
         return_value=CustomerTurnPlan(route="knowledge"),
     ):
         result = await resolve_widget_turn("What is your return policy?", [])
-    router.assert_awaited_once_with("What is your return policy?", [], channel="widget", for_generation=True)
+    router.assert_awaited_once_with("What is your return policy?", [], channel="widget", for_generation=True, allow_model=True)
     assert result.model_router_invoked is True
     assert result.outcome["tool"] == "intent_router"

@@ -8,7 +8,7 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -29,6 +29,22 @@ class _ExecutionTokenBudget:
     calls: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    usage: dict[str, int] = field(default_factory=dict)
+
+    def log_fields(self) -> dict[str, int]:
+        return {
+            "model_call_count": self.calls,
+            "model_calls_remaining": MAX_EXECUTION_CALLS - self.calls,
+            "estimated_prompt_tokens": self.prompt_tokens,
+            "prompt_tokens_remaining": MAX_EXECUTION_PROMPT_TOKENS - self.prompt_tokens,
+            "reserved_completion_tokens": self.completion_tokens,
+            "completion_tokens_remaining": MAX_EXECUTION_COMPLETION_TOKENS - self.completion_tokens,
+            **{f"reported_{key}": value for key, value in self.usage.items()},
+        }
+
+    def record_usage(self, usage: dict[str, int]) -> None:
+        for key, value in usage.items():
+            self.usage[key] = self.usage.get(key, 0) + value
 
     def reserve(self, messages: list[dict[str, str]], max_tokens: int) -> None:
         estimated_prompt_tokens = sum((len(message["content"]) + 3) // 4 for message in messages)
@@ -67,11 +83,17 @@ class AIProviderError(RuntimeError):
 @contextmanager
 def execution_token_budget():
     """Bound aggregate model calls for one durable AI execution."""
-    token = _current_execution_budget.set(_ExecutionTokenBudget())
+    budget = _ExecutionTokenBudget()
+    token = _current_execution_budget.set(budget)
     try:
-        yield
+        yield budget
     finally:
         _current_execution_budget.reset(token)
+
+
+def reported_execution_usage() -> dict[str, int]:
+    budget = _current_execution_budget.get()
+    return dict(budget.usage) if budget else {}
 
 
 class _CompletionContent(BaseModel):
@@ -171,12 +193,11 @@ def _prepare_request(messages: list[dict[str, str]], max_tokens: int) -> tuple[s
         for message in messages
     ):
         raise ValueError("AI messages do not match the bounded provider contract")
+    if error := provider_configuration_error():
+        raise error
     budget = _current_execution_budget.get()
     if budget is not None:
         budget.reserve(messages, max_tokens)
-
-    if error := provider_configuration_error():
-        raise error
     base_url = (settings.ai_provider_base_url or "").strip().rstrip("/")
     headers = {"content-type": "application/json"}
     if key := _provider_key():
@@ -232,6 +253,8 @@ async def generate_completion(
             raise TypeError("invalid response root")
         choices = body.get("choices")
         first_choice = choices[0] if isinstance(choices, list) and choices else None
+        if isinstance(first_choice, dict) and first_choice.get("finish_reason") not in {None, "stop"}:
+            raise ValueError("provider completion did not finish")
         message = first_choice.get("message") if isinstance(first_choice, dict) else None
         validated = _CompletionContent.model_validate(
             {"content": message.get("content") if isinstance(message, dict) else None}
@@ -247,6 +270,8 @@ async def generate_completion(
         ) from exc
 
     usage = _safe_usage(body.get("usage"))
+    if budget := _current_execution_budget.get():
+        budget.record_usage(usage)
     logger.info(
         "ai_provider_request_completed provider=openai_compatible model=%s elapsed_ms=%d prompt_tokens=%d completion_tokens=%d total_tokens=%d",
         settings.ai_model,

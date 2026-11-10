@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Literal
+from uuid import UUID
 
-from app.features.ai.application.follow_up import PendingQuestion, pending_from_assistant
 from app.features.ai.application.conversation_memory import derive_topic_memory
+from app.features.ai.application.follow_up import PendingQuestion, pending_from_assistant
+from app.features.ai.application.policy_follow_up import PolicyConversation, asks_delivery_date
 from app.features.ai.application.query_resolution import resolve_retrieval_query
 from app.features.ai.application.retrieval import build_retrieval_terms, is_contextual_follow_up
 
@@ -33,12 +36,10 @@ def understand_conversation_turn(
     message: str,
     transcript: list[dict[str, str]],
     *,
-    agent_id=None,
-    now=None,
+    agent_id: UUID | None = None,
+    now: datetime | None = None,
 ) -> ConversationUnderstanding:
     """Resolve only context-dependent short turns; explicit new topics stand alone."""
-    from datetime import UTC, datetime
-
     from app.features.ai.application.intent_routing.deterministic import assess_deterministic_route
 
     normalized = " ".join(message.split())[:1000]
@@ -190,3 +191,59 @@ def _is_negated_action(message: str) -> bool:
     if len(clauses) > 1:
         return False
     return len(_ACTION_VERB.findall(message)) <= 1
+
+
+def read_policy_conversation(
+    message: str,
+    transcript: list[dict[str, str]],
+    *,
+    agent_id: UUID,
+    now: datetime,
+    preview: bool = False,
+) -> PolicyConversation | None:
+    """Read current state from the latest delivered turn, or project preview context."""
+    previous = transcript[-12:]
+    if (
+        previous and previous[-1].get("sender") in {"customer", "user"}
+        and previous[-1].get("content", "").strip() == message[:2000].strip()
+    ):
+        previous = previous[:-1]
+    if len(previous) < 2 or previous[-1].get("sender") != "assistant":
+        return None
+    assistant = previous[-1]
+    if not preview:
+        pending = pending_from_assistant(assistant, agent_id, now)
+        if pending is not None and pending.policy_context is not None:
+            return pending.policy_context
+        if pending is None and not pending_from_recent_question(assistant, now):
+            return None
+        if pending is not None and pending.stage != "policy_timing":
+            return None
+    content = assistant.get("content", "")
+    anchor = previous[-2]
+    if anchor.get("sender") not in {"customer", "user"} or "?" not in content[-400:]:
+        return None
+    topic = anchor.get("content", "").strip()[:240]
+    return policy_conversation(topic, content)
+
+
+def policy_conversation(topic: str, assistant_text: str) -> PolicyConversation | None:
+    question = assistant_text.rsplit("?", 1)[0].strip().splitlines()[-1:] if "?" in assistant_text else []
+    if not topic or not question:
+        return None
+    if asks_delivery_date(assistant_text):
+        # Keep both slots in a compound question for semantic interpretation.
+        question = [assistant_text[-239:].rstrip("?")]
+    return PolicyConversation(topic=topic[:240], assistant_question=f"{question[0][-239:]}?")
+
+
+def pending_from_recent_question(turn: dict[str, str], now: datetime) -> bool:
+    from app.features.ai.application.follow_up import PENDING_KEY, PENDING_TTL
+
+    if PENDING_KEY in turn:
+        return False
+    try:
+        created = datetime.fromisoformat(turn["created_at"])
+    except (ValueError, KeyError):
+        return False
+    return bool(created.tzinfo and now - PENDING_TTL < created <= now)

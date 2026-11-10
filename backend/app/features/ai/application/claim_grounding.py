@@ -13,7 +13,7 @@ from dataclasses import dataclass
 CITATION_PATTERN = re.compile(r"\[(?:source|doc)\s*:?\s*(\d+)\]", re.IGNORECASE)
 _NUMBER = re.compile(
     r"(?<!\w)(?:[$€£₹]\s*)?\d+(?:,\d{3})*(?:\.\d+)?"
-    r"(?:\s*%|\s*(?:days?|hours?|weeks?|months?|years?|usd|eur|gbp|cad|aud|npr|inr|"
+    r"(?:\s*%|\s*(?:(?:calendar |business )?days?|hours?|weeks?|months?|years?|usd|eur|gbp|cad|aud|npr|inr|"
     r"mm|cm|kg|mg|km|ml|gb|tb|mah|hz)\b)?",
     re.IGNORECASE,
 )
@@ -59,7 +59,7 @@ def check_grounded_claims(
     # Normalize 1,000 to 1000 while preserving decimal precision.
     def numeric_claims(value: str) -> set[str]:
         return {
-            _THOUSANDS_SEPARATOR.sub("", item.casefold()).strip()
+            " ".join(_THOUSANDS_SEPARATOR.sub("", item.casefold()).split())
             for item in _NUMBER.findall(value)
         }
 

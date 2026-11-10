@@ -32,14 +32,14 @@ def _arguments() -> dict:
 
 
 @pytest.mark.anyio
-async def test_verified_reply_remaps_citations_and_counts_review_usage(monkeypatch):
+async def test_verified_reply_keeps_structured_provenance_and_counts_review_usage(monkeypatch):
     compose = AsyncMock(return_value=ComposedAnswer("Returns within 14 days [source 2].", {"total_tokens": 5}, None))
     verify = AsyncMock(return_value=SemanticVerification(True, "verified", (2,), {"total_tokens": 4}))
     monkeypatch.setattr("app.features.ai.application.guarded_generation.compose_natural_answer", compose)
     monkeypatch.setattr("app.features.ai.application.guarded_generation.verify_candidate", verify)
     result = await generate_guarded_draft(**_arguments())
     assert result.accepted
-    assert result.text == "Returns within 14 days [source 1]."
+    assert result.text == "Returns within 14 days."
     assert result.citations == [{"document_id": "returns", "chunk_index": 2}]
     assert result.usage == {"total_tokens": 9}
     assert result.model_name is None
@@ -91,3 +91,48 @@ async def test_order_snapshot_is_rendered_without_model_calls():
     assert result.accepted
     assert "#42" in result.text and "paid" in result.text
     assert "private@example.test" not in result.text
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("candidate", [
+    "Returns within 14 days.",
+    "Returns within 14 days [source 2].",
+    r"Returns within 14 days.\n",
+    "Returns within 14 days [source 2]. ",
+])
+@pytest.mark.parametrize("review_kind", ["entailed", "unsupported", "malformed", "timeout", "budget"])
+async def test_guarded_execution_is_bounded_across_model_outcomes(monkeypatch, candidate, review_kind):
+    import json
+
+    from app.features.ai.application import semantic_claim_verifier
+    from app.features.ai.infrastructure.llm_gateway import AIProviderError
+
+    compose = AsyncMock(return_value=ComposedAnswer(candidate, {"total_tokens": 5}, "mock"))
+    review = AsyncMock(return_value=(
+        "{" if review_kind == "malformed" else json.dumps({
+            "spans": [{"index": 1, "verdict": review_kind, "sources": [2]}],
+        }),
+        {"total_tokens": 3}, "mock",
+    ))
+    if review_kind == "timeout":
+        review.side_effect = TimeoutError()
+    elif review_kind == "budget":
+        review.side_effect = AIProviderError("execution_token_budget_exceeded", "Budget exhausted")
+    monkeypatch.setattr("app.features.ai.application.guarded_generation.compose_natural_answer", compose)
+    monkeypatch.setattr(semantic_claim_verifier, "generate_completion", review)
+    result = await generate_guarded_draft(**_arguments())
+    compose.assert_awaited_once()
+    review.assert_awaited_once()
+    if review_kind == "entailed":
+        assert result.accepted
+        assert result.citations == [{"document_id": "returns", "chunk_index": 2}]
+    else:
+        assert not result.accepted
+        assert "14 days" not in result.text
+        assert result.citations == []
+        assert result.grounding_reason == {
+            "unsupported": "unsupported_claim",
+            "malformed": "invalid_review",
+            "timeout": "review_timeout",
+            "budget": "execution_token_budget_exceeded",
+        }[review_kind]

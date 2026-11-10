@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 from datetime import UTC, datetime, timedelta
 from typing import ClassVar
@@ -483,10 +484,12 @@ async def test_widget_ai_mode_can_be_overridden_per_conversation(client):
 class WidgetMockProviderResponse:
     is_error = False
 
-    @staticmethod
-    def json():
+    def __init__(self, content):
+        self.content = content
+
+    def json(self):
         return {
-            "choices": [{"message": {"content": "Our delivery fee is $5."}}],
+            "choices": [{"message": {"content": self.content}}],
             "usage": {"prompt_tokens": 30, "completion_tokens": 8, "total_tokens": 38},
         }
 
@@ -507,7 +510,9 @@ class WidgetMockProviderClient:
         assert url.endswith("/chat/completions")
         assert "authorization" not in headers
         type(self).last_payload = json
-        return WidgetMockProviderResponse()
+        if json["messages"][0]["content"].startswith("Audit the candidate"):
+            return WidgetMockProviderResponse('{"spans":[{"index":1,"verdict":"entailed","sources":[1]}]}')
+        return WidgetMockProviderResponse("Our delivery fee is five dollars.")
 
 
 @pytest.mark.anyio
@@ -566,7 +571,7 @@ async def test_widget_draft_only_saves_grounded_result_without_sending(client, m
     )
     assert status_response.status_code == 200
     assert status_response.json()["status"] == "draft_ready"
-    assert status_response.json()["draft"] == "Our delivery fee is $5."
+    assert status_response.json()["draft"] == "Our delivery fee is five dollars."
     assert status_response.json()["citations"]
     history = await client.get(
         f"/api/v1/widget/conversations/{started.json()['conversation_id']}",
@@ -1502,3 +1507,145 @@ async def test_widget_forgotten_order_number_pauses_verification_and_offers_hand
     await send("Actually, I found it")
     resumed = await last_reply()
     assert resumed["verification_paused"] is False and resumed["verification_required"] is True
+
+
+@pytest.mark.anyio
+async def test_widget_policy_conversation_retrieves_fresh_evidence_per_turn(client, monkeypatch, caplog):
+    """Real API, persistence and retrieval with a scripted HTTP model provider."""
+    import logging
+
+    from app.features.ai.application.follow_up import PENDING_KEY, PendingQuestion
+    from tests.rag_fixtures import hash_chunk_text, hash_document_text
+
+    origin = "https://policy-conversation.example"
+    auth, organization_id, public_id = await setup_widget(
+        client, f"policy-follow-up-{uuid4().hex[:8]}", origin,
+        ai_enabled=True, ai_reply_mode="auto_reply",
+    )
+    policy = (
+        "Damaged products: report the issue within seven days of delivery. "
+        "The store team reviews requests for a replacement for damaged products. "
+        "For damaged products, include a photo when contacting the store team."
+    )
+    shipping = "The store offers free standard shipping."
+    document_ids = []
+    async with SessionLocal() as db:
+        await set_tenant_context(db, organization_id)
+        base = await db.scalar(select(KnowledgeBase).where(
+            KnowledgeBase.organization_id == organization_id, KnowledgeBase.is_default.is_(True),
+        ))
+        for name, content in (("damaged-product-policy.txt", policy), ("shipping-policy.txt", shipping)):
+            document = KnowledgeDocument(
+                organization_id=organization_id, name=name, content_type="text/plain",
+                size_bytes=len(content), status="ready", uploaded_by_user_id=UUID(auth["user"]["id"]),
+                knowledge_base_id=base.id, content_revision=hash_document_text(content),
+            )
+            db.add(document)
+            await db.flush()
+            document_ids.append(str(document.id))
+            db.add(DocumentChunk(
+                organization_id=organization_id, document_id=document.id, chunk_index=0,
+                content=content, content_hash=hash_chunk_text(content),
+            ))
+        await db.commit()
+
+    replies = [
+        ("You are a helpful", "Report damaged products within seven days of delivery [source 1]. What was the delivery date?"),
+        ("Audit the candidate", {"spans": [
+            {"index": 1, "verdict": "entailed", "sources": [1]},
+            {"index": 2, "verdict": "general", "sources": []},
+        ]}),
+        ("Extract the explicit", {"rule": {
+            "source": 1, "quote": "Damaged products: report the issue within seven days of delivery.",
+            "subject": "reporting damaged products", "measure": "seven days", "start_event": "delivery",
+            "conditions": [], "exclusions": [],
+        }}),
+        ("Audit the candidate", {"spans": [{"index": 1, "verdict": "entailed", "sources": [1]}]}),
+    ]
+    for goal, reply in (
+        ("replacement", "The store team reviews replacement requests for damaged products [source 1]."),
+        ("next_step", "Include a photo of the damaged products when you contact the store team [source 1]."),
+    ):
+        replies.extend([
+            ("You classify", {
+                "intents": [{"intent": "knowledge", "confidence": 0.98, "requires_knowledge": True, "requires_tools": False}],
+                "requires_context": True, "reason_code": "contextual_policy",
+                "follow_up": {"relation": "follow_up", "goal": goal, "confidence": 0.99},
+            }),
+            ("You are a helpful", reply),
+            ("Audit the candidate", {"spans": [{"index": 1, "verdict": "entailed", "sources": [1]}]}),
+        ])
+    replies.extend([
+        ("You are a helpful", "The store offers free standard shipping [source 1]."),
+        ("Audit the candidate", {"spans": [{"index": 1, "verdict": "entailed", "sources": [1]}]}),
+    ])
+    calls = []
+
+    class Provider(WidgetMockProviderClient):
+        async def post(self, url, *, headers, json):
+            expected, response = replies[len(calls)]
+            messages = json["messages"]
+            assert messages[0]["content"].startswith(expected), messages[0]["content"][:85]
+            calls.append(messages)
+            return httpx.Response(200, json={
+                "choices": [{"message": {"content": response if isinstance(response, str) else dumps(response)}}],
+                "usage": {"prompt_tokens": 50, "completion_tokens": 20, "total_tokens": 70},
+                "model": "policy-test-model",
+            })
+
+    dumps = json.dumps
+    monkeypatch.setattr(settings, "ai_provider_base_url", "http://127.0.0.1:8012/v1")
+    monkeypatch.setattr(settings, "ai_model", "policy-test-model")
+    monkeypatch.setattr(settings, "ai_provider_api_key", None)
+    monkeypatch.setattr(settings, "ai_embedding_model", None)
+    monkeypatch.setattr(settings, "ai_intent_router_enabled", False)
+    monkeypatch.setattr(settings, "ai_conversation_llm_first_enabled", False)
+    monkeypatch.setattr(httpx, "AsyncClient", Provider)
+    caplog.set_level(logging.INFO, logger="app.services.ai_worker")
+    started = await client.post(
+        f"/api/v1/widget/{public_id}/messages",
+        headers={"Origin": origin, "Idempotency-Key": "policy-start-0001"},
+        json={"content": "My product arrived damaged."},
+    )
+    assert started.status_code == 201, started.text
+    conversation_id = started.json()["conversation_id"]
+    headers = {"Origin": origin, "Authorization": f"Bearer {started.json()['visitor_token']}"}
+    path = f"/api/v1/widget/conversations/{conversation_id}"
+    submitted_date = datetime.now(UTC).date() - timedelta(days=10)
+    for index, (message, phrase, source, model_calls) in enumerate((
+        (None, "What was the delivery date?", 0, 2),
+        (f"{submitted_date:%d %b %Y} is the delivery date.", "estimated deadline around", 0, 2),
+        ("I want a replacement.", "reviews replacement requests", 0, 3),
+        ("What should I do next?", "Include a photo", 0, 3),
+        ("Actually, what is your shipping policy?", "free standard shipping", 1, 2),
+    )):
+        if message:
+            response = await client.post(
+                f"{path}/messages",
+                headers={**headers, "Idempotency-Key": f"policy-follow-up-{index}"},
+                json={"content": message},
+            )
+            assert response.status_code == 200, response.text
+        before = len(calls)
+        execution_id = await claim_ai_execution(organization_id)
+        assert execution_id
+        await process_ai_execution(organization_id, execution_id)
+        await process_ai_execution(organization_id, execution_id)
+        assert len(calls) - before == model_calls
+        history = await client.get(path, headers=headers)
+        assistant = [item for item in history.json()["messages"] if item["sender_type"] == "assistant"]
+        assert len(assistant) == index + 1
+        assert phrase in assistant[-1]["content"]
+        async with SessionLocal() as db:
+            await set_tenant_context(db, organization_id)
+            execution = await db.get(AIExecution, execution_id)
+            assert execution and execution.status == "succeeded" and execution.reply_status == "sent"
+            assert execution.error_code is None
+            assert execution.usage["total_tokens"] >= 140
+            assert [str(c["document_id"]) for c in execution.citations] == [document_ids[source]]
+            if index in {1, 2, 3}:
+                row = await db.scalar(select(Message).where(Message.source_ai_execution_id == execution_id))
+                state = PendingQuestion.model_validate(row.provider_metadata[PENDING_KEY]).policy_context
+                assert state and state.delivery_date.normalized == submitted_date
+    assert len(calls) == 12
+    assert "ai_execution_model_budget" in caplog.text

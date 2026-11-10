@@ -20,12 +20,15 @@ ReviewModel = Callable[..., Awaitable[tuple[str, dict[str, int], str | None]]]
 ReviewReason = Literal[
     "verified", "invalid_candidate", "invalid_review", "review_timeout",
     "unsupported_claim", "contradicted_claim", "ambiguous_claim", "sensitive_claim",
-    "missing_citations", "invalid_citation_index", "unsupported_numeric_claim", "citation_source_mismatch",
+    "invalid_citation_index", "unsupported_numeric_claim", "citation_source_mismatch",
 ]
 _MAX_SPANS = 12
-_REVIEW_BATCH_SIZE = 3
 _REVIEW_TIMEOUT_SECONDS = 12
-_SPAN_BREAK = re.compile(r"\n+|(?<=[.!?।])\s+(?!\[(?:source|doc)\b)", re.IGNORECASE)
+_SPAN_BREAK = re.compile(
+    r"\n+|(?<!\b[A-Z]\.)(?<!\bMr\.)(?<!\bMs\.)(?<!\bDr\.)(?<=\.)\s+"
+    r"(?!\s*\[(?:source|doc)\b)(?!\s*(?:[a-z]|\d))|(?<=[!?।])\s+(?!\[(?:source|doc)\b)"
+)
+_ESCAPED_NEWLINE = re.compile(r"\\r\\n|\\n")
 
 _SENSITIVE_ASSERTION = re.compile(
     r"\byour (?:order|payment|refund)(?:\s+#[\w-]+)?\s+"
@@ -57,11 +60,11 @@ def _parse_review(raw: str) -> CandidateReview:
         text = re.sub(r"^\x60{3}(?:json)?\s*|\s*\x60{3}$", "", text, flags=re.IGNORECASE).strip()
     data = json.loads(text)
     if not isinstance(data, dict) or not isinstance(data.get("spans"), list):
-        raise ValueError("invalid_review_structure")
+        raise TypeError("invalid_review_structure")
     cleaned = []
     for item in data["spans"]:
         if not isinstance(item, dict):
-            raise ValueError("invalid_span_structure")
+            raise TypeError("invalid_span_structure")
         # Reject unknown verdicts and absent fields; do not manufacture approvals.
         if not all(key in item for key in ("index", "verdict", "sources")):
             raise ValueError("missing_review_field")
@@ -75,6 +78,7 @@ class SemanticVerification:
     reason: ReviewReason
     source_indices: tuple[int, ...] = ()
     usage: dict[str, int] = field(default_factory=dict)
+    citations_recovered: int = 0
 
 
 _REVIEW_INSTRUCTIONS = (
@@ -90,7 +94,9 @@ _REVIEW_INSTRUCTIONS = (
     "require explicit semantic support for every store fact, including qualifications, negation, "
     "prices, stock, shipping estimates and policy conditions. Check for conflicting evidence. "
     "Return only JSON: {\"spans\":[{\"index\":1,\"verdict\":\"entailed\",\"sources\":[1]}]}. "
-    "Sources must be empty for general spans and identify the supporting excerpts for entailed spans."
+    "Sources must be empty for general spans and identify the supporting excerpts for entailed spans, "
+    "even when the candidate omitted a citation marker. Never guess a source. When policy_scope "
+    "is present, also check the proposed rule applies to that topic without omitted restrictions."
 )
 
 _REJECTION_REASONS: dict[str, ReviewReason] = {
@@ -105,12 +111,14 @@ async def verify_candidate(
     candidate: str,
     evidence: ResponseEvidence,
     *,
-    review_model: ReviewModel = generate_completion,
+    review_model: ReviewModel | None = None,
+    review_focus: str | None = None,
 ) -> SemanticVerification:
+    candidate = normalize_candidate(candidate)
     if _SENSITIVE_ASSERTION.search(candidate):
         return SemanticVerification(False, "sensitive_claim")
     spans = [span.strip() for span in _SPAN_BREAK.split(candidate) if span.strip()]
-    if not spans or len(spans) > _MAX_SPANS or len(candidate) > 4000:
+    if not spans or len(spans) > _MAX_SPANS or len(candidate) > 4000 or not CITATION_PATTERN.sub("", candidate).strip():
         return SemanticVerification(False, "invalid_candidate")
     sources = [
         {"index": index, "kind": item.kind, "excerpt": item.content}
@@ -119,43 +127,33 @@ async def verify_candidate(
     # Raw private order facts are handled by a deterministic renderer.
     if any(item.kind == "verified_order" for item in evidence.items):
         return SemanticVerification(False, "sensitive_claim")
-    # Review bounded batches to prevent small models from omitting span verdicts.
-    # Each batch is still checked against the complete source set.
-    reviews: list[SpanReview] = []
-    combined_usage: dict[str, int] = {}
-    for offset in range(0, len(spans), _REVIEW_BATCH_SIZE):
-        batch = spans[offset:offset + _REVIEW_BATCH_SIZE]
-        messages = [
-            {"role": "system", "content": _REVIEW_INSTRUCTIONS},
-            {"role": "user", "content": json.dumps({
-                "sources": sources,
-                "span_count": len(batch),
-                "spans": [{"index": index, "text": span}
-                          for index, span in enumerate(batch, 1)],
-            }, ensure_ascii=False)},
-        ]
-        try:
-            async with asyncio.timeout(_REVIEW_TIMEOUT_SECONDS):
-                raw, usage, _ = await review_model(messages, max_tokens=420)
-        except TimeoutError:
-            return SemanticVerification(False, "review_timeout", usage=combined_usage)
-        for key, value in usage.items():
-            if isinstance(value, int):
-                combined_usage[key] = combined_usage.get(key, 0) + value
-        try:
-            review = _parse_review(raw)
-        except (ValidationError, ValueError) as exc:
-            logger.warning("semantic_review_invalid format=%s detail=%s response_chars=%d batch_start=%d",
-                           type(exc).__name__, str(exc).splitlines()[0][:110], len(raw), offset)
-            return SemanticVerification(False, "invalid_review", usage=combined_usage)
-        if [result.index for result in review.spans] != list(range(1, len(batch) + 1)):
-            logger.warning("semantic_review_invalid format=span_index_mismatch expected=%d actual=%d batch_start=%d",
-                           len(batch), len(review.spans), offset)
-            return SemanticVerification(False, "invalid_review", usage=combined_usage)
-        reviews.extend(review.spans)
+    messages = [
+        {"role": "system", "content": _REVIEW_INSTRUCTIONS},
+        {"role": "user", "content": json.dumps({
+            "sources": sources,
+            "span_count": len(spans),
+            **({"policy_scope": review_focus} if review_focus else {}),
+            "spans": [{"index": index, "text": span} for index, span in enumerate(spans, 1)],
+        }, ensure_ascii=False)},
+    ]
+    try:
+        async with asyncio.timeout(_REVIEW_TIMEOUT_SECONDS):
+            raw, usage, _ = await (review_model or generate_completion)(messages, max_tokens=750)
+    except TimeoutError:
+        return SemanticVerification(False, "review_timeout")
+    try:
+        review = _parse_review(raw)
+    except (ValidationError, ValueError, TypeError) as exc:
+        logger.warning("semantic_review_invalid format=%s response_chars=%d", type(exc).__name__, len(raw))
+        return SemanticVerification(False, "invalid_review", usage=usage)
+    reviews = sorted(review.spans, key=lambda result: result.index)
+    if [result.index for result in reviews] != list(range(1, len(spans) + 1)):
+        logger.warning("semantic_review_invalid format=span_index_mismatch expected=%d actual=%d",
+                       len(spans), len(reviews))
+        return SemanticVerification(False, "invalid_review", usage=usage)
 
-    usage = combined_usage
     used: set[int] = set()
+    recovered = 0
     for span, result in zip(spans, reviews, strict=True):
         if result.verdict in _REJECTION_REASONS:
             return SemanticVerification(False, _REJECTION_REASONS[result.verdict], usage=usage)
@@ -165,14 +163,27 @@ async def verify_candidate(
             continue
         if not result.sources or any(not 1 <= index <= len(sources) for index in result.sources):
             return SemanticVerification(False, "invalid_review", usage=usage)
-        # Entailment is separate from exact numeric/unit and citation checks.
-        lexical = check_grounded_claims(span, sources, require_citations=True)
-        if not lexical.accepted:
-            reason = lexical.reason if lexical.reason in {
-                "missing_citations", "invalid_citation_index", "unsupported_numeric_claim"
-            } else "unsupported_claim"
-            return SemanticVerification(False, reason, usage=usage)
-        if set(lexical.cited_source_indices) != set(result.sources):
+        cited = {int(value) for value in CITATION_PATTERN.findall(span)}
+        if any(not 1 <= index <= len(sources) for index in cited):
+            return SemanticVerification(False, "invalid_citation_index", usage=usage)
+        if cited and cited != set(result.sources):
             return SemanticVerification(False, "citation_source_mismatch", usage=usage)
+        # Source attribution can be recovered only from a successful semantic
+        # verdict, then still has to pass the exact numeric/unit gate.
+        checked_span = span
+        if not cited:
+            checked_span += "".join(f" [source {index}]" for index in result.sources)
+            recovered += 1
+        lexical = check_grounded_claims(checked_span, sources, require_citations=True)
+        if not lexical.accepted:
+            reason = (
+                "unsupported_numeric_claim"
+                if lexical.reason == "unsupported_numeric_claim" else "unsupported_claim"
+            )
+            return SemanticVerification(False, reason, usage=usage)
         used.update(result.sources)
-    return SemanticVerification(True, "verified", tuple(sorted(used)), usage)
+    return SemanticVerification(True, "verified", tuple(sorted(used)), usage, recovered)
+
+
+def normalize_candidate(text: str) -> str:
+    return _ESCAPED_NEWLINE.sub("\n", text)
