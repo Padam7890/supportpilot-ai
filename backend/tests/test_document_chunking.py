@@ -34,7 +34,11 @@ def test_blank_document_produces_no_chunks():
 
 def test_single_long_word_does_not_hang_overlap_processing():
     # A segment without spaces must not leave the overlap trimming loop stuck.
-    text = "x" * 600
-    chunks = make_chunks(text, max_tokens=80, overlap_tokens=16)
-    assert chunks
-    assert all(content for content, _, _ in chunks)
+    from app.features.ai.application.document_chunking import TextSegment, _merge_to_token_budget
+
+    chunks = _merge_to_token_budget(
+        [TextSegment("x" * 20), TextSegment("y" * 20)],
+        max_tokens=5,
+        overlap_tokens=1,
+    )
+    assert [chunk.text for chunk in chunks] == ["x" * 20, "y" * 20]
