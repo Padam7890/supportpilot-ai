@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Literal
 
 from app.features.ai.application.conversational_intents import (
@@ -125,7 +126,18 @@ def plan_widget_turn(
             tool_name="widget_purchase_intent",
         )
 
-    sensitive = widget_ai.widget_sensitive_reply(message)
+    # A question about a sensitive subject is not itself a request to execute
+    # a sensitive operation. Let informational questions use grounded retrieval.
+    # This is a speech-act guard, not a list of policy-specific phrases.
+    informational_question = bool(re.match(
+        r"^\\s*(?:what|why|when|where|which|who|how|is|are|does|do|did|"
+        r"should|would|could|can)\\b", message, re.IGNORECASE,
+    )) and not bool(
+        widget_ai.CANCELLATION_REQUEST.search(message)
+        or widget_ai.REFUND_ACTION.search(message)
+        or widget_ai.RETURN_ACTION.search(message)
+    )
+    sensitive = None if informational_question else widget_ai.widget_sensitive_reply(message)
     if sensitive is not None:
         draft, safe_summary = sensitive
         return CustomerTurnPlan(
