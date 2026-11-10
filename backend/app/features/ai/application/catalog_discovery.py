@@ -84,7 +84,7 @@ def render_product_listing(products: list[ProductListing]) -> str:
     for item in products:
         lines.append(f"- {item.title} — {item.price} {item.currency}")
     lines.append("Would you like details about any of these?")
-    return "\n".join(lines)
+    return "\\n".join(lines)
 
 async def resolve_catalog_connection(
     db: AsyncSession, organization_id: UUID, *, bound_connection_id: UUID | None,
