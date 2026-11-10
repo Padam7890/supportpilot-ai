@@ -4,10 +4,10 @@ Only standalone greetings can enter this pilot. Existing deterministic
 commerce, follow-up, catalog and knowledge paths retain precedence.
 """
 
-import re
 from uuid import UUID
 
 from app.core.config import settings
+from app.features.ai.application.conversation_greeting_policy import safe_first_contact_greeting
 from app.features.ai.application.conversation_tool_permissions import map_agent_tool_permissions
 from app.features.ai.application.conversation_agent_runtime import run_read_only_agent_turn
 from app.features.ai.application.conversation_context_builder import build_agent_input
@@ -72,13 +72,7 @@ async def try_complete_widget_agent_pilot(
     except (ValueError, PermissionError, LookupError):
         # Model-plan validation failures fall back to the existing widget path.
         return False
-    if (
-        result.tool_names
-        or not result.answer.strip()
-        or len(result.answer) > 500
-        or re.search(r"\d", result.answer)
-    ):
-        # Greeting pilot must not publish quantitative store claims.
+    if result.tool_names or not safe_first_contact_greeting(result.answer):
         return False
     await finish_widget_reply(
         organization_id,
