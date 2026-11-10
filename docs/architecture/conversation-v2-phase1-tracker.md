@@ -44,3 +44,11 @@ Failure persistence and retry transitions now use `persist_execution_failure`. T
 - Verified refund missing-context exceptions now declare `knowledge_retrieval` as their failure stage. The worker accepts only explicit known stage labels, avoiding misleading generic failure diagnostics.
 - Guarded generation no longer persists the string `"None"` when the model provider omits its model name. Added a regression scenario.
 - The architecture extraction packages remain implemented, but runtime verification and final review are still pending. No CI/CD pipeline work or merge was performed.
+
+## Verification pass — exception and retry behavior
+
+- Reviewed the imports and call boundaries of `ai_worker.py`, guarded generation, generated reply persistence, failure persistence, and refund follow-up.
+- Verified that `widget_ai` does not directly import the new guarded generation or missing-evidence modules (source-level check only).
+- Corrected the refund follow-up error-stage boundary: the worker now marks `knowledge_retrieval` **before** invoking refund review, so exceptions thrown during retrieval retain their original types and retry classification. The custom `FollowUpRetrievalUnavailable` remains for a missing context result.
+- An attempted wrapper around retrieval exceptions was reverted immediately because changing the exception type could silently change retry behavior.
+- A direct repository clone was attempted again but failed DNS resolution for github.com. No targeted tests were run. **Keep Phase 1 at 10/11 and PR in draft.**
