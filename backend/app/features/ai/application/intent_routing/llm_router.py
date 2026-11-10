@@ -10,6 +10,7 @@ import time
 from pydantic import ValidationError
 
 from app.core.config import settings
+from app.features.ai.application.conversation_context_builder import build_agent_input
 from app.features.ai.application.intent_routing.schemas import (
     DeterministicRouteAssessment,
     RoutingDecision,
@@ -45,14 +46,10 @@ def _build_user_prompt(
     transcript: list[dict[str, str]],
     assessment: DeterministicRouteAssessment,
 ) -> str:
-    recent = transcript
-    if recent and recent[-1].get("sender") in {"customer", "user"} and (
-        recent[-1].get("content", "").strip() == message.strip()
-    ):
-        recent = recent[:-1]
+    context = build_agent_input(message, transcript, channel="widget")
     history = [
-        f"{item.get('sender', 'user')}: {str(item.get('content', ''))[:320]}"
-        for item in recent[-6:]
+        f"{turn.sender}: {turn.content[:320]}"
+        for turn in context.history[-6:]
     ]
     candidates = ", ".join(intent.value for intent in assessment.candidate_intents)
     return (
