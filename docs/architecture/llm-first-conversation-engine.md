@@ -12,8 +12,8 @@ Use a language model for open-ended conversation understanding and natural groun
 2. Typed conversation agent input/output and bounded context — contracts and normalized context builder implemented; existing LLM router integrated.
 3. Typed tool registry, argument validation, and authorization — contracts, allowlist, and adapter-based executor implemented; live provider adapters pending.
 4. Topic and unresolved-workflow memory with explicit verified/unverified separation — pending.
-5. LLM response composition from trusted tool results — pending.
-6. Semantic knowledge retrieval and Shopify catalog tool orchestration — tenant-scoped knowledge adapter implemented; catalog adapter and live orchestration pending.
+5. LLM response composition from trusted tool results — standalone composer implemented; output grounding and live integration pending.
+6. Semantic knowledge retrieval and Shopify catalog tool orchestration — tenant-scoped knowledge and catalog adapters implemented; live orchestration pending.
 7. Streaming, latency and usage safeguards — pending.
 8. Gradual removal of obsolete canned replies, rollout and rollback — pending.
 
@@ -52,3 +52,11 @@ Enable only in a controlled development environment after reviewing model costs 
 - Added focused adapter and evidence regression scenarios.
 - **Not yet live:** the worker is not switched to the new tool executor; Shopify catalog adapters and LLM response composition remain pending. This increment does not change production chatbot behavior.
 - Tests/CI/CD not executed.
+
+## Increment: catalog adapter and natural language composer
+
+- Added `conversation_catalog_adapter.py` using existing tenant-filtered catalog candidates. It filters the catalog-wide fallback so unrelated products cannot be presented as matches. Current facts include title, brand, variant and availability; price/currency are intentionally omitted until exact money formatting is verified.
+- Added `conversation_response_composer.py` to build bounded prompts with untrusted-history and tool-evidence boundaries and call the configured LLM gateway for natural replies.
+- Added focused scenarios for unrelated catalog fallback and composer inputs.
+- **Not live:** generated text must pass the existing grounding/claim validation and persistence controls before any customer delivery. The composer is not wired into the worker and is not production-ready. Tool selection and verification remain pending.
+- Tests and CI/CD have not been executed.
