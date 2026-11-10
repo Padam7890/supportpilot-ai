@@ -29,7 +29,13 @@ _SYSTEM = (
     "sentences and one optional follow-up question. Each sentence asserting a store "
     "policy MUST include a citation in that same sentence, formatted exactly "
     "as [source 1] before the final period. Never put all citations only at "
-    "the end of the response. Avoid unsupported introductory policy summaries."
+    "the end of the response. Avoid unsupported introductory policy summaries. "
+    "For multi-part policy answers, put each distinct topic on its own short "
+    "paragraph separated by a blank line. Use a concise opening, then up to "
+    "three readable paragraphs with simple wording, followed by an optional "
+    "question on its own paragraph. Do not combine unrelated policy conditions "
+    "into a single run-on sentence. Do not write literal Markdown headings or "
+    "bullet markers unless explicitly requested."
 )
 
 
