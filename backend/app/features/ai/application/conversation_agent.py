@@ -23,6 +23,8 @@ from app.features.ai.application.conversation_tool_executor import (
     ToolAdapter, ToolExecutionContext, execute_agent_tools,
 )
 from app.features.ai.application.claim_grounding import check_grounded_claims
+from app.features.ai.application.intent_routing.deterministic import assess_deterministic_route
+from app.features.ai.application.intent_routing.schemas import Intent
 
 
 @dataclass(frozen=True)
@@ -48,6 +50,13 @@ async def run_conversation_agent(
 ) -> AgentRunResult:
     """Run a single bounded turn, without granting model-generated permissions."""
     decision = await planner(agent_input)
+    assessment = assess_deterministic_route(agent_input.message, [])
+    if decision.response_mode == "answer" and (
+        assessment.requires_tools
+        or assessment.requires_knowledge
+        or assessment.intent in {Intent.PRODUCT, Intent.ORDER, Intent.REFUND}
+    ):
+        raise ValueError("Store-specific questions require verified tool evidence")
     if decision.response_mode == "handoff":
         raise PermissionError("Handoff must use the existing authorized workflow")
     if decision.response_mode == "tool" and not decision.tool_requests:
