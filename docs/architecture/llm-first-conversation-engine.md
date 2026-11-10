@@ -133,3 +133,10 @@ Enable only in a controlled development environment after reviewing model costs 
 - Knowledge-only `widget_reply`, `playground`, and `reply_draft` executions now use the shared composer even when bot instructions are present.
 - Integration-backed generation continues through `create_grounded_draft`; it cannot be removed safely until verified Shopify/order integration evidence is represented in typed, authorized tool results.
 - Added regression cases for custom instructions, reply drafts, and integration isolation. Tests and CI/CD have not been executed. Grounding remains lexical, not semantic entailment.
+
+## Increment: mandatory evidence citations on migrated RAG
+
+- New knowledge-only RAG composer outputs must cite the provided bounded excerpts with `[source N]`. The composer prompt now uses matching evidence labels.
+- Grounding checks run against **the exact excerpts provided to the model**, not a different or larger retrieval list. Missing citations, invalid citation indices and unsupported numeric claims fail closed to the existing safe fallback.
+- Legacy integration-backed generation is deliberately not switched to this contract yet; it needs typed authorized integration evidence. Added regression cases for missing and invalid citations.
+- This is lexical validation, **not semantic entailment**. Tests and CI/CD have not been executed.
