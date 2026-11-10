@@ -37,7 +37,7 @@ from app.schemas.ai import (
     WidgetAIReplyStatusOut,
 )
 from app.schemas.errors import COMMON_ERROR_RESPONSES
-from app.services.ai_execution import is_provider_configured
+from app.features.ai.infrastructure.llm_gateway import is_provider_configured
 from app.services.shopify_order_lookup import verified_lookup
 
 router = APIRouter(prefix="/ai", tags=["AI assistance"], responses=COMMON_ERROR_RESPONSES)
