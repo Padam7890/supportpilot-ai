@@ -23,6 +23,7 @@ ReviewReason = Literal[
     "missing_citations", "invalid_citation_index", "unsupported_numeric_claim", "citation_source_mismatch",
 ]
 _MAX_SPANS = 12
+_REVIEW_BATCH_SIZE = 3
 _REVIEW_TIMEOUT_SECONDS = 12
 _SPAN_BREAK = re.compile(r"\n+|(?<=[.!?।])\s+(?!\[(?:source|doc)\b)", re.IGNORECASE)
 
@@ -99,28 +100,44 @@ async def verify_candidate(
     # Raw private order facts are handled by a deterministic renderer.
     if any(item.kind == "verified_order" for item in evidence.items):
         return SemanticVerification(False, "sensitive_claim")
-    messages = [
-        {"role": "system", "content": _REVIEW_INSTRUCTIONS},
-        {"role": "user", "content": json.dumps({"sources": sources, "span_count": len(spans), "spans": [
-            {"index": index, "text": span} for index, span in enumerate(spans, 1)
-        ]}, ensure_ascii=False)},
-    ]
-    try:
-        async with asyncio.timeout(_REVIEW_TIMEOUT_SECONDS):
-            raw, usage, _ = await review_model(messages, max_tokens=750)
-    except TimeoutError:
-        return SemanticVerification(False, "review_timeout")
-    try:
-        review = CandidateReview.model_validate_json(raw)
-    except (ValidationError, ValueError) as exc:
-        logger.warning("semantic_review_invalid format=%s response_chars=%d", type(exc).__name__, len(raw))
-        return SemanticVerification(False, "invalid_review", usage=usage)
-    if [result.index for result in review.spans] != list(range(1, len(spans) + 1)):
-        logger.warning("semantic_review_invalid format=span_index_mismatch expected=%d actual=%d", len(spans), len(review.spans))
-        return SemanticVerification(False, "invalid_review", usage=usage)
+    # Review bounded batches to prevent small models from omitting span verdicts.
+    # Each batch is still checked against the complete source set.
+    reviews: list[SpanReview] = []
+    combined_usage: dict[str, int] = {}
+    for offset in range(0, len(spans), _REVIEW_BATCH_SIZE):
+        batch = spans[offset:offset + _REVIEW_BATCH_SIZE]
+        messages = [
+            {"role": "system", "content": _REVIEW_INSTRUCTIONS},
+            {"role": "user", "content": json.dumps({
+                "sources": sources,
+                "span_count": len(batch),
+                "spans": [{"index": index, "text": span}
+                          for index, span in enumerate(batch, 1)],
+            }, ensure_ascii=False)},
+        ]
+        try:
+            async with asyncio.timeout(_REVIEW_TIMEOUT_SECONDS):
+                raw, usage, _ = await review_model(messages, max_tokens=420)
+        except TimeoutError:
+            return SemanticVerification(False, "review_timeout", usage=combined_usage)
+        for key, value in usage.items():
+            if isinstance(value, int):
+                combined_usage[key] = combined_usage.get(key, 0) + value
+        try:
+            review = CandidateReview.model_validate_json(raw)
+        except (ValidationError, ValueError) as exc:
+            logger.warning("semantic_review_invalid format=%s response_chars=%d batch_start=%d",
+                           type(exc).__name__, len(raw), offset)
+            return SemanticVerification(False, "invalid_review", usage=combined_usage)
+        if [result.index for result in review.spans] != list(range(1, len(batch) + 1)):
+            logger.warning("semantic_review_invalid format=span_index_mismatch expected=%d actual=%d batch_start=%d",
+                           len(batch), len(review.spans), offset)
+            return SemanticVerification(False, "invalid_review", usage=combined_usage)
+        reviews.extend(review.spans)
 
+    usage = combined_usage
     used: set[int] = set()
-    for span, result in zip(spans, review.spans, strict=True):
+    for span, result in zip(spans, reviews, strict=True):
         if result.verdict in _REJECTION_REASONS:
             return SemanticVerification(False, _REJECTION_REASONS[result.verdict], usage=usage)
         if result.verdict == "general":
