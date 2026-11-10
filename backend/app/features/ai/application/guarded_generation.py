@@ -11,7 +11,8 @@ from app.features.ai.application.conversation_response_composer import compose_n
 from app.features.ai.application.conversation_response_evidence import knowledge_evidence
 from app.features.ai.application.conversation_verified_order_evidence import AuthorizedOrderSnapshot
 from app.features.ai.application.generation_metrics import log_generation_metrics
-from app.features.ai.application.semantic_claim_verifier import verify_candidate, SemanticVerification
+from app.features.ai.application.semantic_claim_verifier import verify_candidate
+from app.features.ai.infrastructure.llm_gateway import AIProviderError
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +72,7 @@ async def generate_guarded_draft(
     model_name: str | None = None
     verification = None
     composed = None
-    for attempt in range(2):
+    for attempt in range(1):
         # One bounded repair attempt. The retry receives only the same verified
         # evidence, never new sources, order snapshots or model-created facts.
         repair_instruction = (
@@ -88,7 +89,13 @@ async def generate_guarded_draft(
             agent_input, evidence,
             instructions=(instructions or "") + repair_instruction,
         )
-        verification = await verify_candidate(composed.text, evidence)
+        try:
+            verification = await verify_candidate(composed.text, evidence)
+        except AIProviderError as exc:
+            if exc.code != "execution_token_budget_exceeded":
+                raise
+            logger.info("rag_grounding_debug execution_id=%s stage=verification_budget_exhausted", execution_id)
+            return GuardedDraft(_SAFE_FALLBACK, False, "verification_budget_exhausted", [], outcomes, usage, model_name)
         for key in composed.usage.keys() | verification.usage.keys():
             usage[key] = usage.get(key, 0) + composed.usage.get(key, 0) + verification.usage.get(key, 0)
         model_name = composed.model_name[:120] if composed.model_name else model_name
@@ -116,7 +123,13 @@ async def generate_guarded_draft(
             source = [{"index": 1, "excerpt": evidence.items[0].content}]
             lexical = check_grounded_claims(candidate, source, require_citations=True)
             if lexical.accepted:
-                repaired_verification = await verify_candidate(candidate, evidence)
+                try:
+                    repaired_verification = await verify_candidate(candidate, evidence)
+                except AIProviderError as exc:
+                    if exc.code != "execution_token_budget_exceeded":
+                        raise
+                    logger.info("rag_grounding_debug execution_id=%s stage=citation_repair_budget_exhausted", execution_id)
+                    break
                 for key, value in repaired_verification.usage.items():
                     usage[key] = usage.get(key, 0) + value
                 logger.info(
