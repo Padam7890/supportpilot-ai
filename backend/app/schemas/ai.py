@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 
 class AIPlaygroundTurn(BaseModel):
@@ -98,6 +98,19 @@ class AIExecutionOut(BaseModel):
     completed_at: datetime | None
 
     model_config = {"from_attributes": True}
+
+    @field_validator("tool_outcomes", mode="before")
+    @classmethod
+    def public_tool_outcomes(cls, value: object) -> object:
+        # Persisted routing diagnostics can include nested values. The public
+        # execution contract exposes only string and integer outcome fields.
+        if not isinstance(value, list):
+            return value
+        return [
+            {key: item for key, item in outcome.items() if isinstance(item, (str, int))}
+            if isinstance(outcome, dict) else outcome
+            for outcome in value
+        ]
 
 
 class AIExecutionPage(BaseModel):

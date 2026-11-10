@@ -130,7 +130,7 @@ async def reply_events(
     while time.monotonic() < deadline and not await request.is_disconnected():
         frames = []
         terminal = False
-            async with SessionLocal() as db:
+        async with SessionLocal() as db:
             try:
                 widget, conversation, _ = await require_visitor_conversation(
                     request, conversation_id, authorization, db, rate_limit=False

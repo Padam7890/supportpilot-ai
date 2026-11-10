@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-from app.features.ai.application.generation_metrics import (\n    configured_model_prices, estimated_generation_cost_usd,\n)
+from app.features.ai.application.generation_metrics import (
+    configured_model_prices,
+    estimated_generation_cost_usd,
+)
 
 logger = logging.getLogger(__name__)
 

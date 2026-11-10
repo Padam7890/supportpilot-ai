@@ -2,7 +2,7 @@ import re
 from datetime import UTC, date, datetime, time, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import DateTime, Integer, String, Uuid, case, func, literal, select, union_all
+from sqlalchemy import DateTime, Float, Integer, String, Uuid, case, cast, func, literal, null, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_roles
@@ -655,7 +655,8 @@ async def ai_usage(
         )
         for model, rates in price_catalog.items()
     ]
-    per_execution_cost = case(*priced, else_=None) if priced else literal(None)
+    # PostgreSQL needs a concrete input type to resolve SUM when no rates exist.
+    per_execution_cost = case(*priced, else_=None) if priced else cast(null(), Float)
     priced_cost_sum = func.sum(per_execution_cost)
     pricing_eligible = per_execution_cost.is_not(None)
     aggregate = await db.execute(

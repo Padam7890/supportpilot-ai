@@ -430,6 +430,53 @@ async def test_uploaded_document_flows_through_assigned_bot_to_scoped_citation(c
 
 
 @pytest.mark.anyio
+async def test_analytics_without_model_pricing_loads_with_routing_diagnostics(client, monkeypatch):
+    platform = await platform_owner(client)
+    owner = await approved_workspace(client, platform, "ai-no-pricing")
+    organization_id = UUID(owner["user"]["organization_id"])
+    headers = bearer(owner["access_token"])
+    monkeypatch.setattr(settings, "ai_model_prices", {})
+    monkeypatch.setattr(settings, "ai_input_cost_per_million", None)
+    monkeypatch.setattr(settings, "ai_output_cost_per_million", None)
+
+    async with SessionLocal() as db:
+        await set_tenant_context(db, organization_id)
+        bot = await db.scalar(select(AIAgent).where(AIAgent.organization_id == organization_id))
+        assert bot is not None
+        db.add(AIExecution(
+            organization_id=organization_id,
+            ai_agent_id=bot.id,
+            ai_agent_config_version=1,
+            kind="reply_draft",
+            status="succeeded",
+            question="Test question",
+            model_name="unpriced-test-model",
+            usage={"input_tokens": 12, "output_tokens": 8},
+            tool_outcomes=[{
+                "tool": "intent_router",
+                "status": "completed",
+                "deterministic_confidence": 0.55,
+                "candidate_intents": ["knowledge"],
+                "llm_failure_code": None,
+                "metrics": {"routing_latency_ms": 4},
+            }],
+        ))
+        await db.commit()
+
+    usage = await client.get("/api/v1/analytics/ai-usage", headers=headers)
+    assert usage.status_code == 200, usage.text
+    assert usage.json()["total_tokens"] == 20
+    assert usage.json()["estimated_cost_usd"] is None
+    assert usage.json()["bots"][0]["estimated_cost_usd"] is None
+
+    executions = await client.get("/api/v1/ai/executions", headers=headers)
+    assert executions.status_code == 200, executions.text
+    assert executions.json()["items"][0]["tool_outcomes"] == [
+        {"tool": "intent_router", "status": "completed"}
+    ]
+
+
+@pytest.mark.anyio
 async def test_playground_without_assigned_knowledge_completes_without_calling_model(client, monkeypatch):
     platform = await platform_owner(client)
     owner = await approved_workspace(client, platform, "ai-no-assigned-knowledge")
