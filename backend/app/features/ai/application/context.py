@@ -24,6 +24,12 @@ from app.models import (
 )
 
 
+class KnowledgeRetrievalUnavailable(RuntimeError):
+    """Keyword retrieval produced no evidence and semantic retrieval failed."""
+
+    failure_stage = "knowledge_retrieval"
+
+
 async def load_execution_context(
     organization_id: UUID, execution_id: UUID, *, include_knowledge: bool | None = None,
     follow_up_query: str | None = None
@@ -214,7 +220,11 @@ async def load_execution_context(
             else None
         )
         if search_result is None:
-            return execution, question, conversation_context, [], [], [], integration_context
+            return execution, question, conversation_context, [], [], [
+                {"tool": "tenant_knowledge_search", "status": "denied", "result_count": 0},
+            ], integration_context
+        if search_result.retrieval_outcome == "retrieval_error" and not search_result.matches:
+            raise KnowledgeRetrievalUnavailable("Knowledge retrieval could not complete")
         context = [
             {
                 "document_id": str(match.document_id),
