@@ -152,7 +152,7 @@ async def resolve_customer_routing(
     ).should_use_model(
         risk_level=assessment.risk_level,
         negated_action=understanding.negated_action,
-        needs_clarification=understanding.needs_clarification,
+        needs_clarification=understanding.needs_clarification and not interpret_follow_up,
         legacy_router_would_invoke=(
             interpret_follow_up or should_invoke_llm_router(assessment, message)
         ),
@@ -285,8 +285,7 @@ async def resolve_contextual_policy_turn(
     if fast := resolve_policy_follow_up(message, state, source_time):
         return fast, None
     if (
-        assessment.reason_code == "policy_question" and not assessment.requires_context
-        or widget_ai.PURCHASE_INTENT.search(message)
+        widget_ai.PURCHASE_INTENT.search(message)
         or is_catalog_discovery_request(message)
     ):
         return None, None

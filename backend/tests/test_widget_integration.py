@@ -1599,6 +1599,11 @@ async def test_widget_policy_conversation_retrieves_fresh_evidence_per_turn(clie
             ("Audit the candidate", {"spans": [{"index": 1, "verdict": "entailed", "sources": [1]}]}),
         ])
     replies.extend([
+        ("You classify", {
+            "intents": [{"intent": "knowledge", "confidence": 0.99, "requires_knowledge": True, "requires_tools": False}],
+            "reason_code": "topic_switch",
+            "follow_up": {"relation": "new_topic", "goal": "none", "confidence": 0.99},
+        }),
         ("You are a helpful", "The store offers free standard shipping [source 1]."),
         ("Audit the candidate", {"spans": [{"index": 1, "verdict": "entailed", "sources": [1]}]}),
     ])
@@ -1639,7 +1644,7 @@ async def test_widget_policy_conversation_retrieves_fresh_evidence_per_turn(clie
         (f"{submitted_date:%d %b %Y} is the delivery date.", "estimated deadline around", 0, 3),
         ("I want a replacement.", "reviews replacement requests", 0, 3),
         ("What should I do next?", "Include a photo", 0, 3),
-        ("Actually, what is your shipping policy?", "free standard shipping", 1, 2),
+        ("Actually, what is your shipping policy?", "free standard shipping", 1, 3),
     )):
         if message:
             response = await client.post(
@@ -1669,5 +1674,5 @@ async def test_widget_policy_conversation_retrieves_fresh_evidence_per_turn(clie
                 row = await db.scalar(select(Message).where(Message.source_ai_execution_id == execution_id))
                 state = PendingQuestion.model_validate(row.provider_metadata[PENDING_KEY]).policy_context
                 assert state and state.delivery_date.normalized == submitted_date
-    assert len(calls) == 13
+    assert len(calls) == 14
     assert "ai_execution_model_budget" in caplog.text

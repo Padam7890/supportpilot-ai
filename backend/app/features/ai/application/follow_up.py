@@ -175,11 +175,6 @@ def resolve_order_support(
     in_order_context = waiting_for_order or (
         state is not None and state.stage == "order_confirmation"
     )
-    # Once a handoff has been requested, subsequent customer turns must not
-    # be trapped in the order-reference workflow. Only a recovered reference
-    # can explicitly resume it; other messages return to normal routing.
-    if state is not None and state.handoff_status == "requested" and not order_reference_recovered(message):
-        return None
     if order_reference_unavailable(message, in_order_context=in_order_context):
         pending = (
             state
@@ -206,6 +201,11 @@ def resolve_order_support(
             draft=ORDER_REFERENCE_HELP + ORDER_HANDOFF_OFFER,
             pending=pending,
         )
+    # Once a handoff has been requested, subsequent customer turns must not
+    # be trapped in the order-reference workflow. Only a recovered reference
+    # can explicitly resume it; other messages return to normal routing.
+    if state is not None and state.handoff_status == "requested" and not order_reference_recovered(message):
+        return None
     if not waiting_for_order or state is None:
         return None
     if order_reference_recovered(message):
@@ -409,4 +409,3 @@ def assess_widget_follow_up(
     ):
         return FollowUp("refund_start", draft=REASON_PROMPT, pending=refund_start()), "started"
     return None, "no_matching_pending_question"
-
