@@ -92,3 +92,11 @@ GitHub Actions run `42739905056` for the phase branch reported backend Ruff fail
 - Worker now delegates Playground turn selection while retaining shared generation, grounding, and persistence boundaries.
 - Added targeted tests for deterministic preview and model-router fallback.
 - Per developer preference, CI/CD cleanup is deferred during the testing phase; this does not mean runtime checks are passing. Local smoke tests and real conversation scenarios remain important before release.
+
+## Guarded response generation extraction
+
+- Added `application/guarded_generation.py` for shared LLM invocation, usage/latency metrics, and post-generation claim grounding.
+- Widget and Playground now consume a typed `GuardedDraft` instead of directly inspecting the model result.
+- Unsupported claims are replaced with the existing safe fallback and their citations are cleared before persistence.
+- Added accepted/rejected grounding scenarios; these tests have not been executed in the current session.
+- True token-by-token progressive streaming remains a separate phase: the current guarded path intentionally buffers output until grounding checks finish.
