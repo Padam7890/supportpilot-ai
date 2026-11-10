@@ -377,7 +377,8 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             )
         if execution.kind == "reply_draft":
             routing = await resolve_customer_routing(
-                question, transcript, channel="reply_draft", for_generation=not integration_context,
+                question, transcript, channel="reply_draft", for_generation=True,
+                allow_model=not integration_context,
             )
             # An authorized snapshot answers order status deterministically.
             # Independently retrieve policy evidence for mixed support drafts.

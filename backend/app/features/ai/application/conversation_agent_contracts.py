@@ -15,4 +15,3 @@ class AgentInput(BaseModel):
     message: str = Field(min_length=1, max_length=1200)
     history: list[ConversationTurn] = Field(default_factory=list, max_length=12)
     channel: str = Field(pattern=r"^(widget|widget_reply|playground|reply_draft)$")
-

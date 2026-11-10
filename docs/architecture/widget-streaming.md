@@ -1,5 +1,8 @@
 # Storefront chat upgrade audit and streaming rollout
 
+> The sections below record the original streaming rollout. The current worker does not publish or forward provisional provider text. See the [LLM-first conversation engine](llm-first-conversation-engine.md) for the semantic release gate and committed-text playback.
+
+
 ## Phase 0 gap matrix
 
 | Priority | Area and files | Existing behavior and gap | Decision |

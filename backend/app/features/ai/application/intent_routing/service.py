@@ -98,6 +98,7 @@ async def resolve_customer_routing(
     *,
     channel: str,
     for_generation: bool = False,
+    allow_model: bool = True,
 ) -> CustomerRoutingResolution:
     started = time.monotonic()
     understanding = understand_conversation_turn(message, transcript)
@@ -125,7 +126,7 @@ async def resolve_customer_routing(
         resolution.clarify = True
     # Standalone negations and context-free references are deterministic;
     # an extra model call cannot authorize an action or invent missing context.
-    invoke = ConversationInterpretationPolicy(
+    invoke = allow_model and ConversationInterpretationPolicy(
         model_first=(
             for_generation
             and settings.ai_conversation_llm_first_enabled

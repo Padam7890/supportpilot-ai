@@ -1,6 +1,6 @@
 # AI Orchestration Boundaries
 
-This document records the Phase 4 split of AI execution, grounded support replies, RAG context, and recommendations. It is an incremental modular-monolith refactor: database models, migrations, API response schemas, and persisted LangGraph checkpoints remain unchanged.
+For the current generation pipeline and rollout, see [LLM-first conversation engine](llm-first-conversation-engine.md). This document records the earlier Phase 4 split of AI execution, grounded support replies, RAG context, and recommendations. It is an incremental modular-monolith refactor: database models, migrations, API response schemas, and persisted LangGraph checkpoints remain unchanged.
 
 ## Package boundaries
 
@@ -39,8 +39,3 @@ Widget reply delivery is a two-step guard: an early stale-work check avoids unne
 Unit coverage includes invalid provider output, token-budget exhaustion, untrusted retrieved prompt content, malformed/extra tool arguments, and deterministic reply suppression. PostgreSQL integration coverage includes tenant isolation, concurrent active-execution limits, widget workflows, and the in-flight Human takeover race. Database-backed checks require `TEST_DATABASE_URL`; a skipped integration test is not evidence that database behavior passed.
 
 Current text retrieval uses PostgreSQL full-text search over tenant chunks; there is no separate vector/RAG service. The worker still owns orchestration across execution kinds, but context assembly, policy/write paths, catalog extraction/search/ranking, and provider infrastructure now have focused modules. Future work can move each execution-kind orchestration into its own workflow when behavior diverges further; no checkpoint migration is needed for this split.
-
-
-## LLM-first migration update
-
-The widget, playground, and reply-draft paths use the shared natural-answer composer for non-integration generation. Ordinary conversation can proceed without retrieved knowledge; store-specific facts still require evidence. Shopify order verification and commerce authorization remain separate until an explicitly authorized, minimized evidence adapter is connected to the unified response pipeline. Lexical citation checks are not semantic entailment. This branch was updated without running tests or CI at the project owner's request.

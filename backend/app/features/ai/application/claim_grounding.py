@@ -69,4 +69,3 @@ def check_grounded_claims(
     if missing:
         return ClaimCheck(False, "unsupported_numeric_claim", cited, missing)
     return ClaimCheck(True, "lexical_checks_passed", cited)
-
