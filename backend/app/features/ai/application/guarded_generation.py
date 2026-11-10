@@ -9,7 +9,10 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from app.features.ai.application.claim_grounding import check_generated_answer
+from app.features.ai.application.claim_grounding import check_generated_answer, check_grounded_claims
+from app.features.ai.application.conversation_context_builder import build_agent_input
+from app.features.ai.application.conversation_response_composer import compose_natural_answer
+from app.features.ai.application.conversation_response_evidence import ResponseEvidence
 from app.features.ai.application.generation_metrics import log_generation_metrics
 from app.services.ai_execution import create_grounded_draft
 
@@ -41,19 +44,55 @@ async def generate_guarded_draft(
     correlation_id: str | None,
 ) -> GuardedDraft:
     started = time.monotonic()
-    result = await create_grounded_draft(
-        organization_id=organization_id,
-        execution_id=execution_id,
-        question=question,
-        instructions=instructions,
-        conversation_context=[
-            {"sender": turn["sender"], "content": turn["content"]}
-            for turn in transcript
-        ],
-        knowledge_context=context,
-        integration_context=integration_context,
-        auto_reply=auto_reply,
-    )
+    # All non-integration turns use the canonical natural-answer composer.
+    # Provider-specific commerce generation remains isolated until authorized
+    # Shopify facts can be supplied as typed, verified evidence.
+    use_canonical_composer = not integration_context and execution_kind in {
+        "widget_reply", "playground", "reply_draft",
+    }
+    grounding_sources: list[dict[str, str]] = []
+    if use_canonical_composer:
+        evidence_items = [
+            {
+                "source": "knowledge_search",
+                "content": str(item.get("excerpt") or item.get("content") or "")[:1200],
+            }
+            for item in context[:6]
+        ]
+        evidence_items = [item for item in evidence_items if item["content"].strip()]
+        grounding_sources = [{"excerpt": item["content"]} for item in evidence_items]
+        composed = await compose_natural_answer(
+            build_agent_input(
+                question, transcript,
+                channel="widget" if execution_kind == "widget_reply" else "playground",
+            ),
+            ResponseEvidence(
+                context=evidence_items,
+                source_ids=[],
+                answerable=bool(evidence_items),
+                unavailable=not bool(evidence_items),
+            ),
+            instructions=instructions,
+        )
+        result = {
+            "draft": composed.text,
+            "usage": composed.usage,
+            "model_name": composed.model_name,
+        }
+    else:
+        result = await create_grounded_draft(
+            organization_id=organization_id,
+            execution_id=execution_id,
+            question=question,
+            instructions=instructions,
+            conversation_context=[
+                {"sender": turn["sender"], "content": turn["content"]}
+                for turn in transcript
+            ],
+            knowledge_context=context,
+            integration_context=integration_context,
+            auto_reply=auto_reply,
+        )
     usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
     raw_model_name = result.get("model_name")
     model_name = raw_model_name[:120] if isinstance(raw_model_name, str) and raw_model_name else None
@@ -68,8 +107,16 @@ async def generate_guarded_draft(
         correlation_id=correlation_id,
     )
     generated = str(result.get("draft", ""))[:12000]
-    grounding = check_generated_answer(
-        generated, context if not integration_context else []
+    # Validate the same bounded excerpts actually supplied to the composer.
+    # Integration-backed generation keeps its existing specialized guard.
+    grounding = (
+        check_grounded_claims(
+            generated, grounding_sources, require_citations=True,
+        )
+        if use_canonical_composer and grounding_sources
+        else check_generated_answer(
+            generated, context if not integration_context else []
+        )
     )
     if grounding.accepted:
         return GuardedDraft(
