@@ -3,7 +3,7 @@
 import json
 import logging
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
@@ -17,8 +17,8 @@ from app.features.ai.application.catalog_search import (
 from app.features.ai.application.context import load_execution_context
 from app.features.ai.application.execution_failure_policy import (
     assess_execution_failure,
-    decide_execution_retry,
 )
+from app.features.ai.application.execution_failure_persistence import persist_execution_failure
 from app.features.ai.application.execution_lifecycle import (
     claim_ai_execution,
     fail_exhausted_ai_leases,
@@ -487,63 +487,31 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             retrieval_match_count=retrieval_match_count,
             retryable=retryable,
         )
-        widget_needs_fallback = False
-        async with SessionLocal() as db:
-            await set_tenant_context(db, organization_id)
-            row = await db.scalar(
-                select(AIExecution)
-                .where(
-                    AIExecution.id == execution_id,
-                    AIExecution.organization_id == organization_id,
-                    AIExecution.status == "running",
-                )
-                .with_for_update()
-            )
-            if row is None:
-                await db.rollback()
-                return
-            attempt_count = row.attempt_count
-            decision = decide_execution_retry(
-                retryable=retryable,
-                attempt_count=attempt_count,
-                max_attempts=row.max_attempts,
-                execution_kind=row.kind,
-            )
-            exhausted = decision.exhausted
-            _log_ai_execution_event(
-                "ai_execution_retry_decision",
-                execution_id=str(execution_id),
-                correlation_id=correlation_id,
-                failure_stage=failure_stage,
-                error_code=failure_code,
-                provider_http_status=provider_http_status,
-                provider_reason=provider_reason,
-                attempt_count=attempt_count,
-                retry_count=max(0, attempt_count - 1),
-                max_attempts=row.max_attempts,
-                elapsed_ms=round((time.monotonic() - started_at) * 1000),
-                decision=decision.reason,
-            )
-            if decision.widget_needs_fallback:
-                widget_needs_fallback = True
-                await db.rollback()
-            else:
-                row.status = "failed" if exhausted else "queued"
-                if row.kind == "widget_reply":
-                    row.reply_status = "failed" if exhausted else "processing"
-                if exhausted:
-                    row.integration_context_encrypted = None
-                    row.playground_history = None
-                row.error_code = failure_code
-                row.safe_summary = (
-                    "The AI request could not be completed. You can create a new request."
-                    if exhausted
-                    else None
-                )
-                if not exhausted:
-                    row.next_attempt_at = now + timedelta(seconds=decision.delay_seconds)
-                row.completed_at = now if exhausted else None
-                await db.commit()
+        transition = await persist_execution_failure(
+            organization_id,
+            execution_id,
+            retryable=retryable,
+            failure_code=failure_code,
+            now=now,
+        )
+        if not transition.found:
+            return
+        attempt_count = transition.attempt_count
+        _log_ai_execution_event(
+            "ai_execution_retry_decision",
+            execution_id=str(execution_id),
+            correlation_id=correlation_id,
+            failure_stage=failure_stage,
+            error_code=failure_code,
+            provider_http_status=provider_http_status,
+            provider_reason=provider_reason,
+            attempt_count=attempt_count,
+            retry_count=max(0, attempt_count - 1),
+            max_attempts=transition.max_attempts,
+            elapsed_ms=round((time.monotonic() - started_at) * 1000),
+            decision=transition.reason,
+        )
+        widget_needs_fallback = transition.widget_needs_fallback
         if widget_needs_fallback:
             try:
                 provider_failed = (
