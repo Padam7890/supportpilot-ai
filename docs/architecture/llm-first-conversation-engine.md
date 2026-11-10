@@ -99,3 +99,10 @@ Enable only in a controlled development environment after reviewing model costs 
 - Updated tool-execution regression scenarios and added an unauthorized-catalog invocation test.
 - **Next:** map existing AI bot tool snapshots to these capabilities and verify settings/tenant restrictions before expanding the widget pilot. The current greeting pilot does not grant tool access.
 - Tests and CI/CD have not been executed.
+
+## Increment: execution-scoped bot capability mapping
+
+- Added `conversation_tool_permissions.py` with exact allowlisted mappings: `recommend_products` and `catalog_search` to catalog search; `knowledge_search` to knowledge search. Unknown, malformed, order, refund and handoff names grant nothing.
+- The widget worker passes `execution.ai_agent_tools_snapshot` into the pilot. Missing snapshots grant no tools rather than silently trusting model requests or changing live bot permissions.
+- Added permission-mapping regression scenarios. **No broader rollout:** the widget pilot remains first-contact greetings only and explicitly rejects tool-based responses. Future knowledge/catalog rollout must verify the actual persisted bot capability names and current authorization semantics.
+- Tests and CI/CD have not been executed.
