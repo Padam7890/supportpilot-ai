@@ -52,3 +52,22 @@ Failure persistence and retry transitions now use `persist_execution_failure`. T
 - Corrected the refund follow-up error-stage boundary: the worker now marks `knowledge_retrieval` **before** invoking refund review, so exceptions thrown during retrieval retain their original types and retry classification. The custom `FollowUpRetrievalUnavailable` remains for a missing context result.
 - An attempted wrapper around retrieval exceptions was reverted immediately because changing the exception type could silently change retry behavior.
 - A direct repository clone was attempted again but failed DNS resolution for github.com. No targeted tests were run. **Keep Phase 1 at 10/11 and PR in draft.**
+
+## Security review — Playground knowledge inventory
+
+- Fixed a tenant-adjacent authorization boundary: the inventory service now locks and checks the running execution **before** loading any assigned knowledge. It always uses the execution's persisted `ai_agent_id` as the source of truth.
+- A supplied agent ID that disagrees with the execution now raises an error and rolls back without querying inventory.
+- Added regression tests for mismatched agent IDs and missing/non-running executions.
+- Verified source declarations exist for `widget_missing_knowledge_reply`, `log_generation_metrics`, `load_knowledge_inventory`, and `format_knowledge_inventory` using GitHub file contents. This is **not** an import/runtime test.
+
+### Focused local verification command
+
+From the repository root with backend dependencies installed:
+
+```bash
+cd backend
+python -m compileall -q app/features/ai/application app/services/ai_worker.py
+python -m pytest -q tests/test_guarded_generation.py tests/test_generated_reply_persistence.py tests/test_execution_failure_persistence.py tests/test_widget_follow_up_execution.py tests/test_playground_inventory_authorization.py
+```
+
+No test pass is claimed until these commands are executed successfully. The container could not resolve github.com for a clone, so the last verification package remains open. CI/CD pipeline cleanup is deferred.
