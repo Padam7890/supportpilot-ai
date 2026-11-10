@@ -52,30 +52,6 @@ def extract_text(name: str, content: bytes) -> str:
     return content.decode("utf-8-sig").strip()
 
 
-def make_chunks(text: str, *, size: int = 1200, overlap: int = 180) -> list[str]:
-    """Backward-compatible char chunker for legacy tests."""
-    use_legacy_only = size != 1200 or overlap != 180
-    if not use_legacy_only:
-        segments = structure_aware_chunks(text)
-        if segments:
-            return [content for content, _, _ in segments]
-    normalized = " ".join(text.split())
-    chunks: list[str] = []
-    start = 0
-    while start < len(normalized):
-        end = min(start + size, len(normalized))
-        if end < len(normalized):
-            boundary = normalized.rfind(" ", start + size // 2, end)
-            if boundary > start:
-                end = boundary
-        chunk = normalized[start:end].strip()
-        if chunk:
-            chunks.append(chunk)
-        if end >= len(normalized):
-            break
-        start = max(end - overlap, start + 1)
-    return chunks
-
 
 async def claim_one(organization_id: UUID) -> tuple[UUID, UUID] | None:
     now = datetime.now(UTC)
