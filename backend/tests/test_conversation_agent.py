@@ -84,3 +84,32 @@ async def test_numeric_claim_without_evidence_is_blocked() -> None:
             ))},
             composer=composer,
         )
+
+
+@pytest.mark.asyncio
+async def test_model_cannot_bypass_store_tools_with_general_answer() -> None:
+    planner = AsyncMock(return_value=AgentDecision(
+        response_mode="answer", reasoning_code="general",
+    ))
+    composer = AsyncMock()
+    with pytest.raises(ValueError, match="verified tool evidence"):
+        await run_conversation_agent(
+            AgentInput(message="What is your refund policy?", channel="widget"),
+            planner=planner, adapters={}, composer=composer,
+        )
+    composer.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_general_greeting_can_be_composed_without_store_facts() -> None:
+    planner = AsyncMock(return_value=AgentDecision(
+        response_mode="answer", reasoning_code="greeting",
+    ))
+    composer = AsyncMock(return_value=ComposedAnswer(
+        text="Hello! How can I help?", usage={}, model_name="test",
+    ))
+    result = await run_conversation_agent(
+        AgentInput(message="Hello", channel="widget"),
+        planner=planner, adapters={}, composer=composer,
+    )
+    assert result.answer == "Hello! How can I help?"
