@@ -53,7 +53,8 @@ class CustomerRoutingResolution:
         # The default knowledge classification means "unknown". Only a
         # confident, unambiguous GENERAL prediction can relax that fallback.
         if (
-            assessment.reason_code == "default_knowledge"
+            settings.ai_conversation_llm_first_enabled
+            and assessment.reason_code == "default_knowledge"
             and self.llm is not None
             and not self.clarify
             and not self.multi_intent
