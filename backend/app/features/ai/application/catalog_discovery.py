@@ -68,8 +68,8 @@ def is_catalog_discovery_request(message: str) -> bool:
     normalized = " ".join(message.casefold().split())
     return bool(re.search(
         r"\b(?:list|show|browse|see|view|display)\s+(?:(?:me|all|your|the|available|some)\s+){0,3}"
-        r"(?:products|items|catalog|inventory)\b"
-        r"|\bwhat\s+(?:(?:kind|types?)\s+of\s+)?(?:products|items)\s+"
+        r"(?:products?|items?|catalog|inventory)\b"
+        r"|\bwhat\s+(?:(?:kind|types?)\s+of\s+)?(?:products?|items?)\s+"
         r"(?:do\s+you\s+have|are\s+available|do\s+you\s+sell)\b"
         r"|\bwhat\s+do\s+you\s+sell\b",
         normalized,
