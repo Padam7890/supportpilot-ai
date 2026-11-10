@@ -45,11 +45,8 @@ from app.features.ai.application.follow_up import (
 from app.features.ai.application.intent_extraction import extract_intent
 from app.features.ai.application.intent_routing import resolve_customer_routing
 from app.features.ai.application.widget_turn_routing import resolve_widget_turn
-from app.features.ai.application.knowledge_inventory import (
-    format_knowledge_inventory,
-    is_knowledge_inventory_question,
-    load_knowledge_inventory,
-)
+from app.features.ai.application.knowledge_inventory import is_knowledge_inventory_question
+from app.features.ai.application.playground_execution import complete_playground_knowledge_inventory
 from app.features.ai.application.retrieval_search import citations_remain_authorized
 from app.features.ai.application.widget_orders import (
     _question_order_number,
@@ -437,45 +434,11 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 retrieval_match_count=retrieval_match_count,
             )
         if execution.kind == "playground" and is_knowledge_inventory_question(question):
-            async with SessionLocal() as db:
-                await set_tenant_context(db, organization_id)
-                inventory = await load_knowledge_inventory(
-                    db,
-                    organization_id=organization_id,
-                    ai_agent_id=execution.ai_agent_id,
-                )
-                answer, document_count = format_knowledge_inventory(inventory)
-                row = await db.scalar(
-                    select(AIExecution)
-                    .where(
-                        AIExecution.id == execution_id,
-                        AIExecution.organization_id == organization_id,
-                        AIExecution.kind == "playground",
-                        AIExecution.status == "running",
-                    )
-                    .with_for_update()
-                )
-                if row is None:
-                    await db.rollback()
-                    return
-                row.status = "succeeded"
-                row.playground_history = None
-                row.integration_context_encrypted = None
-                row.draft = answer
-                row.safe_summary = f"Listed {document_count} ready document(s) in this bot’s active assigned sources; no model call was made."
-                row.citations = []
-                row.tool_outcomes = [
-                    {
-                        "tool": "knowledge_source_inventory",
-                        "status": "completed",
-                        "result_count": document_count,
-                    }
-                ]
-                row.usage = {}
-                row.model_name = None
-                row.error_code = None
-                row.completed_at = now
-                await db.commit()
+            await complete_playground_knowledge_inventory(
+                organization_id,
+                execution_id,
+                ai_agent_id=execution.ai_agent_id,
+            )
             return
         if execution.kind == "playground":
             playground_plan = plan_playground_turn(question, transcript)
