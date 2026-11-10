@@ -43,13 +43,13 @@ from app.features.ai.application.follow_up import (
 from app.features.ai.application.intent_extraction import extract_intent
 from app.features.ai.application.intent_routing import resolve_customer_routing
 from app.features.ai.application.widget_turn_routing import resolve_widget_turn
+from app.features.ai.application.widget_sensitive_execution import complete_sensitive_widget_turn
 from app.features.ai.application.knowledge_inventory import is_knowledge_inventory_question
 from app.features.ai.application.playground_execution import complete_playground_knowledge_inventory
 from app.features.ai.application.retrieval_search import citations_remain_authorized
 from app.features.ai.application.widget_orders import (
     _question_order_number,
     refund_verification_is_active,
-    verified_widget_order_reply,
 )
 from app.features.ai.application.widget_replies import (
     finish_widget_reply,
@@ -74,12 +74,8 @@ from app.models import (
 from app.services.ai_execution import create_grounded_draft
 from app.services.widget_ai import (
     AI_TEMPORARY_FAILURE_REPLY,
-    ORDER_VERIFICATION_MESSAGE,
-    VERIFIED_CANCELLATION_REPLY,
     WIDGET_PROVIDER_UNAVAILABLE_REPLY,
-    widget_is_cancellation_request,
     widget_missing_knowledge_reply,
-    widget_request_needs_order_verification,
 )
 
 logger = logging.getLogger(__name__)
@@ -349,47 +345,14 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 )
                 return
             if turn.route == "sensitive":
-                draft = turn.draft or ""
-                reply_status = turn.reply_status
-                safe_summary = turn.safe_summary or ""
-                pending_order = None
-                if widget_is_cancellation_request(routed_question):
-                    order_verified, _order_reply = await verified_widget_order_reply(
-                        organization_id, execution.conversation_id, routed_question
-                    )
-                    if order_verified:
-                        draft = VERIFIED_CANCELLATION_REPLY
-                        safe_summary = "A previously verified order cancellation still requires human approval."
-                    else:
-                        pending_order = order_verification_question(action="cancel")
-                elif widget_request_needs_order_verification(routed_question):
-                    order_verified, order_reply = await verified_widget_order_reply(
-                        organization_id, execution.conversation_id, routed_question
-                    )
-                    if order_verified:
-                        draft = order_reply or (
-                            "Your order is verified, but I couldn’t retrieve its latest status. "
-                            "A store teammate can follow up here."
-                        )
-                        reply_status = (
-                            "escalated"
-                            if order_reply is None or "teammate can help" in order_reply.casefold()
-                            else delivery_status
-                        )
-                        safe_summary = "A current Shopify order lookup used the shopper’s active email verification."
-                    elif draft == ORDER_VERIFICATION_MESSAGE:
-                        pending_order = order_verification_question()
-                await finish_widget_reply(
+                await complete_sensitive_widget_turn(
                     organization_id,
                     execution_id,
-                    draft=draft,
-                    reply_status=reply_status,
-                    safe_summary=safe_summary,
-                    citations=[],
+                    execution.conversation_id,
+                    question=routed_question,
+                    turn=turn,
+                    delivery_status=delivery_status,
                     outcomes=router_outcomes,
-                    usage={},
-                    model_name=None,
-                    pending_question=pending_order,
                 )
                 return
             shopping_outcome = not follow_up_query and await process_widget_shopping_execution(
