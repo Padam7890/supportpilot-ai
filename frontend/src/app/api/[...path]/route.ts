@@ -196,15 +196,19 @@ function responseFromUpstream(response: Response, body: string, correlationId: s
   });
 }
 
-function attachmentResponseFromUpstream(response: Response, correlationId: string) {
+function fileResponseFromUpstream(response: Response, correlationId: string, isKnowledgePdf: boolean) {
   const headers = new Headers({
-    "content-type": "application/octet-stream",
+    "content-type": isKnowledgePdf ? "application/pdf" : "application/octet-stream",
     "cache-control": "private, no-store",
     "x-content-type-options": "nosniff",
     "x-correlation-id": response.headers.get("x-correlation-id") ?? correlationId,
   });
   const disposition = response.headers.get("content-disposition");
   if (disposition) headers.set("content-disposition", disposition);
+  if (isKnowledgePdf) {
+    headers.set("content-security-policy", "default-src 'none'; frame-ancestors 'self'");
+    headers.set("x-frame-options", "SAMEORIGIN");
+  }
   return new NextResponse(response.body, { status: response.status, headers });
 }
 
@@ -291,6 +295,9 @@ async function forward(
   const { path: segments } = await context.params;
   const path = segments.map(encodeURIComponent).join("/");
   const normalizedPath = `/${path}`;
+  const isKnowledgePdf = /^knowledge\/documents\/[^/]+\/pdf$/.test(path);
+  const isFileResponse = (request.method === "GET" && path.endsWith("/download"))
+    || (isKnowledgePdf && ["GET", "HEAD"].includes(request.method));
   const platform = normalizedPath.startsWith("/platform/");
   const isTenantLogin = normalizedPath === "/auth/login";
   const isTenantRegister = normalizedPath === "/auth/register";
@@ -424,8 +431,8 @@ async function forward(
       try {
         const tokenBody = await runSingleFlightRefresh(request, correlationId, platform, refreshToken);
         upstream = await requestBackend(request, path, correlationId, tokenBody.access_token, requestBody);
-        if (request.method === "GET" && path.endsWith("/download") && upstream.ok) {
-          const response = attachmentResponseFromUpstream(upstream, correlationId);
+        if (isFileResponse && upstream.ok) {
+          const response = fileResponseFromUpstream(upstream, correlationId, isKnowledgePdf);
           setSessionCookies(response, tokenBody, platform);
           return response;
         }
@@ -449,8 +456,8 @@ async function forward(
       }
     }
 
-    if (request.method === "GET" && path.endsWith("/download") && upstream.ok) {
-      return attachmentResponseFromUpstream(upstream, correlationId);
+    if (isFileResponse && upstream.ok) {
+      return fileResponseFromUpstream(upstream, correlationId, isKnowledgePdf);
     }
     if (request.method === "GET" && path === "notifications/stream" && upstream.ok) {
       return eventStreamResponseFromUpstream(upstream, correlationId);
@@ -477,6 +484,7 @@ async function forward(
 }
 
 export const GET = forward;
+export const HEAD = forward;
 export const POST = forward;
 export const PATCH = forward;
 export const PUT = forward;

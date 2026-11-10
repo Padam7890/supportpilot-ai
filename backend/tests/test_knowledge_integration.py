@@ -883,3 +883,54 @@ async def test_hybrid_semantic_retrieval_is_tenant_and_bot_scoped(client, monkey
         assert fallback.retrieval_method == "keyword"
         assert fallback.embedding_status == "embedding_provider_http_503"
         assert [match.document_name for match in fallback.matches] == ["selected.txt"]
+
+
+@pytest.mark.anyio
+async def test_original_pdf_preview_and_download_are_tenant_scoped(client):
+    owner = await approved_workspace(client, "pdf-owner")
+    headers = bearer(owner["access_token"])
+    content = b"%PDF-1.7\n%%EOF"
+    upload = await client.post(
+        "/api/v1/knowledge/documents",
+        params={"name": "Refund policy.pdf"},
+        content=content,
+        headers={**headers, "content-type": "application/pdf"},
+    )
+    assert upload.status_code == 202, upload.text
+    document_id = upload.json()["id"]
+    path = f"/api/v1/knowledge/documents/{document_id}/pdf"
+
+    preview = await client.get(path, headers=headers)
+    assert preview.status_code == 200, preview.text
+    assert preview.content == content
+    assert preview.headers["content-type"] == "application/pdf"
+    assert preview.headers["content-disposition"] == "inline; filename*=UTF-8''Refund%20policy.pdf"
+    assert preview.headers["cache-control"] == "private, no-store"
+
+    available = await client.head(path, headers=headers)
+    assert available.status_code == 200
+    assert available.content == b""
+
+    download = await client.get(path, params={"download": "true"}, headers=headers)
+    assert download.status_code == 200
+    assert download.content == content
+    assert download.headers["content-disposition"].startswith("attachment;")
+
+    stranger = await approved_workspace(client, "pdf-stranger")
+    stranger_headers = bearer(stranger["access_token"])
+    assert (await client.head(path, headers=stranger_headers)).status_code == 404
+    assert (await client.get(path, params={"download": "true"}, headers=stranger_headers)).status_code == 404
+    assert (await client.get(path)).status_code == 401
+
+    async with SessionLocal() as session:
+        organization_id = UUID(owner["user"]["organization_id"])
+        await set_tenant_context(session, organization_id)
+        source = await session.get(KnowledgeDocumentSource, (organization_id, UUID(document_id)))
+        assert source is not None
+        source.content = b"<html>Not a PDF</html>"
+        await session.commit()
+    assert (await client.head(path, headers=headers)).status_code == 422
+
+    removed = await client.delete(f"/api/v1/knowledge/documents/{document_id}", headers=headers)
+    assert removed.status_code == 204
+    assert (await client.get(path, headers=headers)).status_code == 404

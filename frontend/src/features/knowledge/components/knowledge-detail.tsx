@@ -3,13 +3,13 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, FileText } from "lucide-react";
+import { ArrowLeft, Download, FileText } from "lucide-react";
 import { Button } from "@/components/ui";
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
 import { ApiError } from "@/lib/api/errors";
 import { formatDateTime } from "@/lib/utils";
 import { getKnowledgeBase } from "../api/knowledge-base-api";
-import { getKnowledgeDocument, getKnowledgeSourcePreview, isKnowledgeDocumentProcessing, KNOWLEDGE_PROCESSING_POLL_INTERVAL_MS } from "../api/knowledge-api";
+import { getKnowledgeDocument, getKnowledgeSourcePreview, isKnowledgeDocumentProcessing, KNOWLEDGE_PROCESSING_POLL_INTERVAL_MS, knowledgePdfUrl } from "../api/knowledge-api";
 
 export function KnowledgeDetail() {
   const { id } = useParams<{ id: string }>();
@@ -31,6 +31,18 @@ export function KnowledgeDetail() {
     queryKey: ["knowledge-source-preview", id],
     queryFn: () => getKnowledgeSourcePreview(id),
     enabled: Boolean(document.data && !document.data.deleted_at && ["text/plain", "text/markdown"].includes(document.data.content_type)),
+    retry: false,
+  });
+
+  const isPdf = Boolean(document.data && !document.data.deleted_at && document.data.content_type === "application/pdf");
+  const pdf = useQuery({
+    queryKey: ["knowledge-pdf-availability", id],
+    queryFn: async ({ signal }) => {
+      const response = await fetch(knowledgePdfUrl(id), { method: "HEAD", cache: "no-store", signal });
+      if (!response.ok) throw new ApiError("The PDF preview could not be loaded.", response.status);
+      return true;
+    },
+    enabled: isPdf,
     retry: false,
   });
 
@@ -77,9 +89,30 @@ export function KnowledgeDetail() {
         </>}
       </PanelBody>
     </Panel>}
-    {!item.deleted_at && item.content_type === "application/pdf" && <Panel>
-      <PanelHeader title="Original PDF" description="The original file is retained for ingestion and reprocessing."/>
-      <PanelBody><p className="text-sm text-muted-foreground">PDF source preview is not available here. Use the Knowledge Library search to inspect the passages extracted for this bot.</p><Link href="/dashboard/knowledge" className="mt-3 inline-flex font-medium text-primary hover:underline">Open source search →</Link></PanelBody>
+    {isPdf && <Panel>
+      <PanelHeader title="PDF preview" description="View the original file uploaded to this knowledge base."/>
+      <PanelBody className="space-y-3">
+        {pdf.isPending ? <p role="status" className="text-sm text-muted-foreground">Loading PDF preview…</p> : pdf.isError ? (
+          <div role="alert" className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm">
+            {pdf.error instanceof ApiError && pdf.error.status === 410
+              ? "The original PDF is no longer retained."
+              : pdf.error instanceof ApiError && pdf.error.status === 422
+                ? "This file does not appear to be a valid PDF."
+                : "The PDF preview could not be loaded."}
+            {!(pdf.error instanceof ApiError && [404, 410, 415, 422].includes(pdf.error.status)) && (
+              <Button variant="unstyled" type="button" className="ml-2 font-medium underline" onClick={() => pdf.refetch()}>Retry</Button>
+            )}
+          </div>
+        ) : <>
+          <div className="flex justify-end">
+            <a href={knowledgePdfUrl(id, true)} className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm font-medium hover:bg-accent">
+              <Download size={16} aria-hidden="true"/> Download PDF
+            </a>
+          </div>
+          <iframe src={knowledgePdfUrl(id)} title={`PDF preview of ${item.name}`} className="h-[65dvh] min-h-80 w-full rounded-lg border border-border bg-muted"/>
+          <p className="text-xs text-muted-foreground">If your browser cannot display the preview, download the file to open it.</p>
+        </>}
+      </PanelBody>
     </Panel>}
     <Panel>
       <PanelHeader title="Processing history" description="Each ingestion attempt is retained for audit and troubleshooting."/>

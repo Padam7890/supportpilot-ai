@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, FileText, FolderOpen, History, LoaderCircle, MoreHorizontal, Plus, RotateCw, Search, Star, Trash2, Upload, X } from "lucide-react";
+import { Archive, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Download, Eye, FileText, FolderOpen, History, LoaderCircle, MoreHorizontal, Plus, RotateCw, Search, Star, Trash2, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -14,7 +14,7 @@ import { currentUserQueryKey, getCurrentUser } from "@/features/auth/api/auth-ap
 import { aiAgentsKey, listAIAgents } from "@/features/ai/api/ai-agent-api";
 import { formatDateTime } from "@/lib/utils";
 import { archiveKnowledgeBase, createKnowledgeBase, knowledgeBaseKey, listKnowledgeBaseAudit, listKnowledgeBases, makeDefaultKnowledgeBase, restoreKnowledgeBase, updateKnowledgeBase } from "../api/knowledge-base-api";
-import { deleteKnowledgeDocument, isKnowledgeDocumentProcessing, KNOWLEDGE_PROCESSING_POLL_INTERVAL_MS, knowledgeKeys, listKnowledgeDocuments, moveKnowledgeDocument, KNOWLEDGE_DOCUMENT_PAGE_SIZE, reprocessKnowledgeDocument, searchKnowledge, uploadKnowledgeDocument } from "../api/knowledge-api";
+import { deleteKnowledgeDocument, isKnowledgeDocumentProcessing, KNOWLEDGE_PROCESSING_POLL_INTERVAL_MS, knowledgeKeys, knowledgePdfUrl, listKnowledgeDocuments, moveKnowledgeDocument, KNOWLEDGE_DOCUMENT_PAGE_SIZE, reprocessKnowledgeDocument, searchKnowledge, uploadKnowledgeDocument } from "../api/knowledge-api";
 import type { KnowledgeDocument } from "../types/knowledge.types";
 
 type UploadEntry = { file: File; status: "queued" | "uploading" | "processing" | "ready" | "failed"; error?: string };
@@ -208,6 +208,7 @@ function BaseDetailsInline({ base, busy, onSave }: { base: { id: string; name: s
 function DocumentRow({ item, bases, canManage, busy, onReprocess, onDelete, onMove }: { item: KnowledgeDocument; bases: { id: string; name: string }[]; canManage: boolean; busy: boolean; onReprocess: () => void; onDelete: () => void; onMove: (baseId: string) => void }) {
   const [targetBaseId, setTargetBaseId] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
+  const isPdf = item.content_type === "application/pdf";
   const job = item.jobs[0];
   const needsReplacement = item.status === "failed" && job?.requires_replacement;
   const statusTone = item.status === "ready" ? "text-success" : item.status === "failed" ? "text-destructive" : "text-warning";
@@ -215,7 +216,23 @@ function DocumentRow({ item, bases, canManage, busy, onReprocess, onDelete, onMo
   return <li className="grid grid-cols-[minmax(0,1fr)_90px_165px_90px_100px] items-center gap-3 px-5 py-4 transition-colors hover:bg-accent max-md:grid-cols-[minmax(0,1fr)_74px_90px]">
     <div className="flex min-w-0 items-center gap-3"><FileText className="size-4 shrink-0 text-muted-foreground"/><div className="min-w-0"><Link href={`/dashboard/knowledge/${item.id}`} className="block truncate text-sm font-medium text-foreground hover:text-primary">{item.name}</Link>{item.status === "failed" && <p className="mt-1 truncate text-xs text-destructive">{needsReplacement ? "Upload a corrected file to retry." : job?.last_error || "Processing failed. Retry this file."}</p>}</div></div>
     <span className="text-sm text-muted-foreground max-md:hidden">{formatBytes(item.size_bytes)}</span><span className="text-sm text-muted-foreground max-md:hidden">{formatDateTime(item.created_at)}</span><span className={`text-sm capitalize ${statusTone}`}>● {item.status === "queued" ? "Processing" : item.status}</span>
-    <div className="flex justify-end gap-1">{canManage && destinations.length > 0 && <select aria-label={`Move ${item.name} to another library`} value={targetBaseId} onChange={(event) => { setTargetBaseId(event.target.value); if (event.target.value) onMove(event.target.value); }} disabled={busy || isKnowledgeDocumentProcessing(item)} className="max-w-[90px] rounded-md bg-transparent px-1 text-[11px] text-muted-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring"><option value="">Move</option>{destinations.map((base) => <option key={base.id} value={base.id}>{base.name}</option>)}</select>}{canManage && <div className="relative"><button aria-label={`More actions for ${item.name}`} aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)} className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"><MoreHorizontal size={16}/></button>{menuOpen && <div className="absolute right-0 top-full z-20 mt-1 min-w-36 rounded-lg border border-border bg-popover text-popover-foreground p-1 shadow-md"><button disabled={busy || needsReplacement || isKnowledgeDocumentProcessing(item)} onClick={() => { setMenuOpen(false); onReprocess(); }} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-xs hover:bg-accent disabled:opacity-40"><RotateCw size={13}/>Reprocess</button><button disabled={busy} onClick={() => { setMenuOpen(false); onDelete(); }} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-xs text-destructive hover:bg-accent disabled:opacity-40"><Trash2 size={13}/>Remove</button></div>}</div>}{isKnowledgeDocumentProcessing(item) && <LoaderCircle size={15} className="animate-spin text-primary"/>}</div>
+    <div className="flex justify-end gap-1">
+      {canManage && destinations.length > 0 && <select aria-label={`Move ${item.name} to another library`} value={targetBaseId} onChange={(event) => { setTargetBaseId(event.target.value); if (event.target.value) onMove(event.target.value); }} disabled={busy || isKnowledgeDocumentProcessing(item)} className="max-w-[90px] rounded-md bg-transparent px-1 text-[11px] text-muted-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring"><option value="">Move</option>{destinations.map((base) => <option key={base.id} value={base.id}>{base.name}</option>)}</select>}
+      {(canManage || isPdf) && <div className="relative">
+        <button type="button" aria-label={`More actions for ${item.name}`} aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)} className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"><MoreHorizontal size={16}/></button>
+        {menuOpen && <div className="absolute right-0 top-full z-20 mt-1 min-w-36 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md">
+          {isPdf && <>
+            <Link href={`/dashboard/knowledge/${item.id}`} className="flex items-center gap-2 rounded-md px-3 py-2 text-xs hover:bg-accent"><Eye size={13}/>Preview PDF</Link>
+            <a href={knowledgePdfUrl(item.id, true)} onClick={() => setMenuOpen(false)} className="flex items-center gap-2 rounded-md px-3 py-2 text-xs hover:bg-accent"><Download size={13}/>Download PDF</a>
+          </>}
+          {canManage && <>
+            <button type="button" disabled={busy || needsReplacement || isKnowledgeDocumentProcessing(item)} onClick={() => { setMenuOpen(false); onReprocess(); }} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-xs hover:bg-accent disabled:opacity-40"><RotateCw size={13}/>Reprocess</button>
+            <button type="button" disabled={busy} onClick={() => { setMenuOpen(false); onDelete(); }} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-xs text-destructive hover:bg-accent disabled:opacity-40"><Trash2 size={13}/>Remove</button>
+          </>}
+        </div>}
+      </div>}
+      {isKnowledgeDocumentProcessing(item) && <LoaderCircle size={15} className="animate-spin text-primary"/>}
+    </div>
   </li>;
 }
 
