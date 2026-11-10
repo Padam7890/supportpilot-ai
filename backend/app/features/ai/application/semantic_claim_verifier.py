@@ -50,6 +50,25 @@ class CandidateReview(BaseModel):
     spans: list[SpanReview] = Field(min_length=1, max_length=_MAX_SPANS)
 
 
+def _parse_review(raw: str) -> CandidateReview:
+    """Normalize harmless JSON transport variations, never infer verdicts."""
+    text = raw.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^\x60{3}(?:json)?\\s*|\\s*\x60{3}$", "", text, flags=re.IGNORECASE).strip()
+    data = json.loads(text)
+    if not isinstance(data, dict) or not isinstance(data.get("spans"), list):
+        raise ValueError("invalid_review_structure")
+    cleaned = []
+    for item in data["spans"]:
+        if not isinstance(item, dict):
+            raise ValueError("invalid_span_structure")
+        # Reject unknown verdicts and absent fields; do not manufacture approvals.
+        if not all(key in item for key in ("index", "verdict", "sources")):
+            raise ValueError("missing_review_field")
+        cleaned.append({key: item[key] for key in ("index", "verdict", "sources")})
+    return CandidateReview.model_validate({"spans": cleaned})
+
+
 @dataclass(frozen=True)
 class SemanticVerification:
     accepted: bool
@@ -124,10 +143,10 @@ async def verify_candidate(
             if isinstance(value, int):
                 combined_usage[key] = combined_usage.get(key, 0) + value
         try:
-            review = CandidateReview.model_validate_json(raw)
+            review = _parse_review(raw)
         except (ValidationError, ValueError) as exc:
-            logger.warning("semantic_review_invalid format=%s response_chars=%d batch_start=%d",
-                           type(exc).__name__, len(raw), offset)
+            logger.warning("semantic_review_invalid format=%s detail=%s response_chars=%d batch_start=%d",
+                           type(exc).__name__, str(exc).splitlines()[0][:110], len(raw), offset)
             return SemanticVerification(False, "invalid_review", usage=combined_usage)
         if [result.index for result in review.spans] != list(range(1, len(batch) + 1)):
             logger.warning("semantic_review_invalid format=span_index_mismatch expected=%d actual=%d batch_start=%d",
