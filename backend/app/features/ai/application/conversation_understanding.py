@@ -151,7 +151,7 @@ def _is_correction(message: str) -> bool:
     return bool(_CORRECTION_PATTERN.search(message.strip()))
 
 
-_CLAUSE_SEPARATOR = re.compile(r"\\s+(?:and|also|plus)\\s+|[;]", re.IGNORECASE)
+_CLAUSE_SEPARATOR = re.compile(r"\s+(?:and|also|plus)\s+|[;]", re.IGNORECASE)
 
 
 def _has_distinct_clauses(message: str) -> bool:
