@@ -69,3 +69,15 @@ No passing execution result has been verified through the GitHub connector. Keep
 - Existing verified Shopify order lookup and reply persistence are reused, retaining tenant/conversation identifiers.
 - Added focused scenarios for unverified cancellation and invalid route dispatch.
 - Refund follow-up review and shopping paths remain in the worker. Integration and compilation are not yet verified.
+
+## Refund follow-up extraction
+
+- Added `application/widget_follow_up_execution.py` with an explicit `FollowUpCompletion` result, preserving existing pending question and escalation behavior.
+- Verified refund requests remain staff-review requests only; no refund is issued automatically.
+- If verification is missing or expired, the flow asks for OTP verification rather than treating an earlier message as authorization.
+- Worker retains the routing stage diagnostic and delegates follow-up completion to the new service.
+- Added focused tests for OTP requirement and nonterminal follow-up routing.
+
+## Verification status
+
+GitHub CI was queued when checked on commit `4d5acc942fb7f89a2fe186327d4407f04da2719a`. No passing check or local runtime verification has been established. Keep the PR in draft until failures (if any) are resolved.
