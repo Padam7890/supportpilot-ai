@@ -16,6 +16,8 @@ from app.features.ai.application.widget_replies import finish_widget_reply
 class FollowUpRetrievalUnavailable(RuntimeError):
     """Verified follow-up retrieval did not return a running execution."""
 
+    failure_stage = "knowledge_retrieval"
+
 
 @dataclass(frozen=True)
 class FollowUpCompletion:
