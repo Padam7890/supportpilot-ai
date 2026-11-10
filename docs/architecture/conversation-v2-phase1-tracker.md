@@ -3,7 +3,7 @@
 **Branch:** `refactor/conversation-v2-phase1-foundation`  
 **PR:** https://github.com/Padam7890/supportpilot-ai/pull/31 (draft)  
 **Status:** In progress. CI/CD remediation deferred at developer request.  
-**Progress:** 9 of 11 tracked work packages implemented in code (not a production-readiness score).
+**Progress:** 10 of 11 tracked work packages implemented in code (not a production-readiness score).
 
 | Work package | State | Implementation |
 | --- | --- | --- |
@@ -16,7 +16,7 @@
 | Extract shared guarded generation and no-evidence policy | Implemented | `guarded_generation.py`, `missing_evidence_policy.py` |
 | Extract widget failure fallback policy | Implemented | `widget_failure_fallback.py` |
 | Extract non-widget generated answer persistence | Implemented | `generated_reply_persistence.py` revalidates tenant, active agent and sources before commit |
-| Extract remaining error persistence / retry orchestration | Pending | Worker still owns exception transaction and retry state |
+| Extract remaining error persistence / retry orchestration | Implemented | `execution_failure_persistence.py` owns tenant-scoped retry/failure transactions |
 | Run targeted runtime verification and fix compatibility regressions | Pending | Added tests are not confirmed passing |
 | Final architecture review and Phase 1 merge decision | Pending | Do not merge draft PR without review |
 
@@ -27,3 +27,7 @@
 - Preserve tenant isolation, verified-order authorization, source checks, and safe escalation.
 - CI/CD pipeline cleanup is explicitly out of scope for now. Targeted local/runtime checks remain necessary.
 - Keep this tracker updated after every Phase 1 code change.
+
+## Latest implementation note
+
+Failure persistence and retry transitions now use `persist_execution_failure`. The worker retains exception diagnostics and last-resort widget handoff. Phase 1 remains **not complete** until focused runtime verification, import checks, and architecture review; CI/CD cleanup is deferred, not the correctness gate.
