@@ -53,3 +53,11 @@ No passing execution result has been verified through the GitHub connector. Keep
 - Updated the worker to delegate route selection while keeping secure order verification, refund review, catalog processing, and reply persistence in their existing locations.
 - Added `tests/test_widget_turn_routing.py` covering follow-up bypass and ordinary intent routing.
 - This is **not** a complete widget orchestration extraction; sensitive workflows still require a separate application service and explicit dependency boundaries.
+
+## Playground inventory extraction
+
+- Added `application/playground_execution.py` to own tenant-scoped knowledge inventory lookup and deterministic persistence.
+- The worker now delegates inventory requests to this application service; no LLM call is required for inventory listings.
+- Supports missing agent selection (`UUID | None`) and retains existing row locks and execution state guards.
+- Worker is reduced further; full playground conversation orchestration and sensitive widget flows are still pending.
+- No local Python compilation or test run was executed in this connector-only editing session.
