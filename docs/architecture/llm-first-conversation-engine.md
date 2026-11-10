@@ -119,3 +119,10 @@ Enable only in a controlled development environment after reviewing model costs 
 - The default first-contact widget agent pilot now checks execution freshness both before and after the model call. A newer customer message can supersede an execution during LLM latency; the old answer must not be persisted.
 - Added a regression test simulating an execution becoming stale between the two checks.
 - The new path is still restricted to first-contact greetings. **Do not delete legacy knowledge, commerce or follow-up execution yet**: those paths are not replaced by this pilot. Tests and CI/CD have not been executed.
+
+## Increment: migrate knowledge-only answer composition
+
+- `generate_guarded_draft` now uses the new bounded `compose_natural_answer` and `ResponseEvidence` for knowledge-only widget/playground runs **without custom instructions**. This replaces the old `create_grounded_draft` generation call for that subset, not retrieval, authorization or persistence.
+- Existing tenant/bot-scoped retrieval, source citation checks at persistence, grounding validation, and widget lifecycle remain intact. Integration-backed responses, custom instructions and reply drafts still use `create_grounded_draft` until their contracts are migrated.
+- Added regression tests for new composer selection, custom-instruction compatibility and unsupported numeric claims. Tests have not been executed.
+- **Not a full RAG migration or safe blanket legacy deletion.** Remaining: instruction-aware composer, source provenance, citation/semantic grounding, integration-specific data boundaries, source freshness and end-to-end verification. Do not remove `create_grounded_draft` while it has active callers.
