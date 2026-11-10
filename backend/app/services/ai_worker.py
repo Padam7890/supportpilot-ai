@@ -17,13 +17,16 @@ from app.features.ai.application.catalog_search import (
     load_candidates,
 )
 from app.features.ai.application.context import load_execution_context
+from app.features.ai.application.stream_context_policy import (
+    can_stream_transcript as _can_stream_transcript,
+    stream_conversation_context as _stream_conversation_context,
+)
 from app.features.ai.application.claim_grounding import check_generated_answer
 from app.features.ai.application.conversation_orchestration import (
     plan_playground_turn,
     plan_widget_turn,
     playground_missing_knowledge_reply,
 )
-from app.features.ai.application.conversational_intents import widget_conversational_reply
 from app.features.ai.application.follow_up import (
     VERIFY_REFUND,
     assess_widget_follow_up,
@@ -40,7 +43,6 @@ from app.features.ai.application.knowledge_inventory import (
     is_knowledge_inventory_question,
     load_knowledge_inventory,
 )
-from app.features.ai.application.retrieval import is_contextual_follow_up
 from app.features.ai.application.retrieval_search import citations_remain_authorized
 from app.features.ai.application.widget_orders import (
     _question_order_number,
@@ -207,34 +209,6 @@ async def finish_deterministic_ai_execution(
         row.error_code = None
         row.completed_at = now
         await db.commit()
-
-
-def _can_stream_transcript(transcript: list[dict[str, str]]) -> bool:
-    """Exclude prior staff replies and assistant turns that may contain order facts."""
-    previous_social_reply = None
-    for turn in transcript:
-        sender, content = turn.get("sender"), turn.get("content", "")
-        if sender == "customer":
-            social = widget_conversational_reply(content)
-            previous_social_reply = social[0] if social else None
-        elif sender != "assistant" or previous_social_reply != content:
-            return False
-        else:
-            previous_social_reply = None
-    return True
-
-
-def _stream_conversation_context(
-    question: str, transcript: list[dict[str, str]],
-) -> list[dict[str, str]] | None:
-    if _can_stream_transcript(transcript):
-        return transcript
-    if is_contextual_follow_up(question):
-        # A reference can depend on an earlier reply with private order data.
-        return None
-    # Standalone turns already have the current question and authorized sources.
-    # Do not send historical assistant or staff content to a provisional reply.
-    return []
 
 
 async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> None:
