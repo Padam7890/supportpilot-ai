@@ -13,6 +13,10 @@ from app.features.ai.application.widget_orders import refund_verification_is_act
 from app.features.ai.application.widget_replies import finish_widget_reply
 
 
+class FollowUpRetrievalUnavailable(RuntimeError):
+    """Verified follow-up retrieval did not return a running execution."""
+
+
 @dataclass(frozen=True)
 class FollowUpCompletion:
     completed: bool
@@ -55,7 +59,7 @@ async def complete_widget_follow_up(
                 ),
             )
             if policy is None:
-                return FollowUpCompletion(completed=True, failure_stage="knowledge_retrieval")
+                raise FollowUpRetrievalUnavailable("verified follow-up retrieval unavailable")
             review_citations = policy[4]
             draft = (
                 "I’ll send your verified refund request to the store team to check "
