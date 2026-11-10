@@ -47,6 +47,7 @@ async def run_conversation_agent(
     planner: AgentPlanner,
     adapters: Mapping[ToolName, ToolAdapter],
     composer: AnswerComposer = compose_natural_answer,
+    allowed_tools: frozenset[ToolName] = frozenset(),
 ) -> AgentRunResult:
     """Run a single bounded turn, without granting model-generated permissions."""
     decision = await planner(agent_input)
@@ -76,7 +77,7 @@ async def run_conversation_agent(
         raise PermissionError("Only read-only tools are supported by this agent")
     results = await execute_agent_tools(
         requests,
-        context=ToolExecutionContext(allowed_tools=_READ_ONLY),
+        context=ToolExecutionContext(allowed_tools=_READ_ONLY & allowed_tools),
         adapters=adapters,
     ) if requests else []
     evidence = compose_response_evidence(results)
