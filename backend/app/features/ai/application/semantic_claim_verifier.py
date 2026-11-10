@@ -17,6 +17,7 @@ ReviewModel = Callable[..., Awaitable[tuple[str, dict[str, int], str | None]]]
 ReviewReason = Literal[
     "verified", "invalid_candidate", "invalid_review", "review_timeout",
     "unsupported_claim", "contradicted_claim", "ambiguous_claim", "sensitive_claim",
+    "missing_citations", "invalid_citation_index", "unsupported_numeric_claim", "citation_source_mismatch",
 ]
 _MAX_SPANS = 12
 _REVIEW_TIMEOUT_SECONDS = 12
@@ -123,7 +124,12 @@ async def verify_candidate(
             return SemanticVerification(False, "invalid_review", usage=usage)
         # Entailment is separate from exact numeric/unit and citation checks.
         lexical = check_grounded_claims(span, sources, require_citations=True)
-        if not lexical.accepted or set(lexical.cited_source_indices) != set(result.sources):
-            return SemanticVerification(False, "unsupported_claim", usage=usage)
+        if not lexical.accepted:
+            reason = lexical.reason if lexical.reason in {
+                "missing_citations", "invalid_citation_index", "unsupported_numeric_claim"
+            } else "unsupported_claim"
+            return SemanticVerification(False, reason, usage=usage)
+        if set(lexical.cited_source_indices) != set(result.sources):
+            return SemanticVerification(False, "citation_source_mismatch", usage=usage)
         used.update(result.sources)
     return SemanticVerification(True, "verified", tuple(sorted(used)), usage)
