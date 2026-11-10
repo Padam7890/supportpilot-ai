@@ -3,7 +3,7 @@
 **Branch:** `refactor/conversation-v2-phase1-foundation`  
 **PR:** https://github.com/Padam7890/supportpilot-ai/pull/31 (draft)  
 **Status:** In progress. CI/CD remediation deferred at developer request.  
-**Progress:** 8 of 11 tracked work packages implemented in code (not a production-readiness score).
+**Progress:** 9 of 11 tracked work packages implemented in code (not a production-readiness score).
 
 | Work package | State | Implementation |
 | --- | --- | --- |
@@ -15,7 +15,8 @@
 | Extract Playground routing and inventory | Implemented | `playground_routing.py`, `playground_execution.py` |
 | Extract shared guarded generation and no-evidence policy | Implemented | `guarded_generation.py`, `missing_evidence_policy.py` |
 | Extract widget failure fallback policy | Implemented | `widget_failure_fallback.py` |
-| Extract remaining execution persistence / error handling | Pending | Worker still owns transaction-heavy persistence |
+| Extract non-widget generated answer persistence | Implemented | `generated_reply_persistence.py` revalidates tenant, active agent and sources before commit |
+| Extract remaining error persistence / retry orchestration | Pending | Worker still owns exception transaction and retry state |
 | Run targeted runtime verification and fix compatibility regressions | Pending | Added tests are not confirmed passing |
 | Final architecture review and Phase 1 merge decision | Pending | Do not merge draft PR without review |
 
