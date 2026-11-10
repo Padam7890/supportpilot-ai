@@ -101,3 +101,51 @@ async def test_pilot_falls_back_on_invalid_model_plan() -> None:
         )
     assert not completed
     persist.assert_not_awaited()
+
+
+def test_pilot_rejects_substantive_previous_turns() -> None:
+    with patch(
+        "app.features.ai.application.widget_agent_pilot.settings.ai_conversation_llm_first_enabled",
+        True,
+    ):
+        assert not eligible_for_widget_agent_pilot(
+            "Hello",
+            [
+                {"sender": "customer", "content": "Where is my order?"},
+                {"sender": "assistant", "content": "Please verify your identity."},
+            ],
+        )
+
+
+@pytest.mark.asyncio
+async def test_pilot_rejects_numeric_output_without_persistence() -> None:
+    from uuid import uuid4
+
+    with (
+        patch(
+            "app.features.ai.application.widget_agent_pilot.settings.ai_conversation_llm_first_enabled",
+            True,
+        ),
+        patch(
+            "app.features.ai.application.widget_agent_pilot.widget_reply_is_stale",
+            new_callable=AsyncMock, return_value=False,
+        ),
+        patch(
+            "app.features.ai.application.widget_agent_pilot.run_read_only_agent_turn",
+            new_callable=AsyncMock,
+            return_value=AgentRunResult(
+                answer="We have 50 products.", source_ids=[],
+                tool_names=[], usage={}, model_name="test",
+            ),
+        ),
+        patch(
+            "app.features.ai.application.widget_agent_pilot.finish_widget_reply",
+            new_callable=AsyncMock,
+        ) as persist,
+    ):
+        completed = await try_complete_widget_agent_pilot(
+            organization_id=uuid4(), execution_id=uuid4(), ai_agent_id=uuid4(),
+            message="Hello", transcript=[], delivery_mode="auto_reply",
+        )
+    assert not completed
+    persist.assert_not_awaited()
