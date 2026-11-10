@@ -25,11 +25,13 @@ async def run_read_only_agent_turn(
     organization_id: UUID,
     ai_agent_id: UUID,
     agent_input: AgentInput,
+    allowed_tools: frozenset[ToolName] = frozenset(),
 ) -> AgentRunResult:
     """Compose tenant-scoped adapters; do not accept IDs from model output."""
     return await run_conversation_agent(
         agent_input,
         planner=plan_agent_turn,
+        allowed_tools=allowed_tools,
         adapters={
             ToolName.KNOWLEDGE_SEARCH: build_knowledge_search_adapter(
                 organization_id=organization_id,
