@@ -8,6 +8,7 @@ import re
 from uuid import UUID
 
 from app.core.config import settings
+from app.features.ai.application.conversation_tool_permissions import map_agent_tool_permissions
 from app.features.ai.application.conversation_agent_runtime import run_read_only_agent_turn
 from app.features.ai.application.conversation_context_builder import build_agent_input
 from app.features.ai.application.intent_routing.deterministic import assess_deterministic_route
@@ -54,6 +55,7 @@ async def try_complete_widget_agent_pilot(
     message: str,
     transcript: list[dict[str, str]],
     delivery_mode: str,
+    allowed_tools_snapshot: list[str] | None = None,
 ) -> bool:
     if not eligible_for_widget_agent_pilot(message, transcript):
         return False
@@ -65,6 +67,7 @@ async def try_complete_widget_agent_pilot(
             organization_id=organization_id,
             ai_agent_id=ai_agent_id,
             agent_input=build_agent_input(message, transcript, channel="widget"),
+            allowed_tools=map_agent_tool_permissions(allowed_tools_snapshot),
         )
     except (ValueError, PermissionError, LookupError):
         # Model-plan validation failures fall back to the existing widget path.
