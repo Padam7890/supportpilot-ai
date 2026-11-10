@@ -45,3 +45,11 @@ No passing execution result has been verified through the GitHub connector. Keep
 - Added `tests/test_execution_failure_policy.py` for provider errors, retrieval errors, retry exhaustion, non-retryable errors, widget fallback and invalid attempts.
 - Database writes and customer-facing fallback persistence remain in the worker for now. This change does not implement true streaming or a unified widget/playground engine.
 - Compilation and test execution remain unverified; run `python -m compileall -q app` and `pytest -q tests/test_execution_failure_policy.py tests/test_stream_context_policy.py` before merging.
+
+## Widget routing coordinator extraction
+
+- Added `application/widget_turn_routing.py` with typed `WidgetRouteResult`.
+- Preserved existing follow-up routing precedence, optional structured LLM routing, and router diagnostic events.
+- Updated the worker to delegate route selection while keeping secure order verification, refund review, catalog processing, and reply persistence in their existing locations.
+- Added `tests/test_widget_turn_routing.py` covering follow-up bypass and ordinary intent routing.
+- This is **not** a complete widget orchestration extraction; sensitive workflows still require a separate application service and explicit dependency boundaries.
