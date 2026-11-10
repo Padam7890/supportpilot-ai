@@ -13,6 +13,8 @@ from app.features.ai.application.claim_grounding import check_generated_answer, 
 from app.features.ai.application.conversation_context_builder import build_agent_input
 from app.features.ai.application.conversation_response_composer import compose_natural_answer
 from app.features.ai.application.conversation_response_evidence import ResponseEvidence
+from app.features.ai.application.intent_routing.deterministic import assess_deterministic_route
+from app.features.ai.application.intent_routing.schemas import Intent
 from app.features.ai.application.generation_metrics import log_generation_metrics
 from app.services.ai_execution import create_grounded_draft
 
@@ -61,6 +63,29 @@ async def generate_guarded_draft(
         ]
         evidence_items = [item for item in evidence_items if item["content"].strip()]
         grounding_sources = [{"excerpt": item["content"]} for item in evidence_items]
+        route = assess_deterministic_route(question, [])
+        needs_verified_facts = (
+            route.requires_tools
+            or route.requires_knowledge
+            or route.intent in {Intent.PRODUCT, Intent.ORDER, Intent.REFUND}
+        )
+        if not evidence_items and needs_verified_facts:
+            return GuardedDraft(
+                text=(
+                    "I couldn't verify that store-specific information. "
+                    "Please contact our support team for confirmation."
+                ),
+                accepted=False,
+                grounding_reason="no_verified_evidence",
+                citations=[],
+                outcomes=[
+                    *outcomes,
+                    {"tool": "claim_grounding", "status": "blocked",
+                     "reason": "no_verified_evidence"},
+                ],
+                usage={},
+                model_name=None,
+            )
         composed = await compose_natural_answer(
             build_agent_input(
                 question, transcript,
