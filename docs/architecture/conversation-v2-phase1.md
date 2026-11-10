@@ -100,3 +100,11 @@ GitHub Actions run `42739905056` for the phase branch reported backend Ruff fail
 - Unsupported claims are replaced with the existing safe fallback and their citations are cleared before persistence.
 - Added accepted/rejected grounding scenarios; these tests have not been executed in the current session.
 - True token-by-token progressive streaming remains a separate phase: the current guarded path intentionally buffers output until grounding checks finish.
+
+## Missing evidence policy extraction
+
+- Added `application/missing_evidence_policy.py` for consistent safe responses when no authorized knowledge or integration context is available.
+- Widget clarifications preserve the delivery mode; other missing-evidence widget requests escalate instead of inventing order or policy details.
+- Playground continues to finish deterministically without a model call; the existing completion service remains responsible for persistence.
+- Added three focused policy scenarios; not executed during this GitHub-only session.
+- CI/CD remediation remains intentionally deferred at the user's request.
