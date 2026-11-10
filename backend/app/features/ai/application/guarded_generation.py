@@ -114,7 +114,17 @@ async def generate_guarded_draft(
         correlation_id=correlation_id,
     )
     generated = str(result.get("draft", ""))[:12000]
-    # New RAG generation requires an explicit reference to retrieved evidence.\n    # The legacy integration path has separate trusted-data handling and is\n    # not covered by this stricter citation contract yet.\n    grounding = (\n        check_grounded_claims(generated, rag_grounding_sources, require_citations=True)\n        if used_new_rag_composer\n        else check_generated_answer(\n            generated, context if not integration_context else []\n        )\n    )
+    # Validate the same bounded excerpts actually supplied to the composer.
+    # Integration-backed generation keeps its existing specialized guard.
+    grounding = (
+        check_grounded_claims(
+            generated, rag_grounding_sources, require_citations=True,
+        )
+        if used_new_rag_composer
+        else check_generated_answer(
+            generated, context if not integration_context else []
+        )
+    )
     if grounding.accepted:
         return GuardedDraft(
             text=generated, accepted=True, grounding_reason=None,
