@@ -26,7 +26,7 @@ async def test_knowledge_only_widget_uses_new_composer() -> None:
             "app.features.ai.application.guarded_generation.compose_natural_answer",
             new_callable=AsyncMock,
             return_value=ComposedAnswer(
-                text="Returns are accepted within 14 days.",
+                text="Returns are accepted within 14 days. [source 1]",
                 usage={}, model_name="test",
             ),
         ) as compose,
@@ -54,7 +54,7 @@ async def test_custom_instructions_use_new_composer() -> None:
             "app.features.ai.application.guarded_generation.compose_natural_answer",
             new_callable=AsyncMock,
             return_value=ComposedAnswer(
-                text="Returns accepted within 14 days.", usage={}, model_name="test",
+                text="Returns accepted within 14 days. [source 1]", usage={}, model_name="test",
             ),
         ) as compose,
     ):
@@ -117,3 +117,32 @@ async def test_unsupported_numeric_answer_is_suppressed() -> None:
         result = await generate_guarded_draft(**_args())
     assert not result.accepted
     assert result.citations == []
+
+
+@pytest.mark.asyncio
+async def test_uncited_rag_answer_is_suppressed() -> None:
+    with patch(
+        "app.features.ai.application.guarded_generation.compose_natural_answer",
+        new_callable=AsyncMock,
+        return_value=ComposedAnswer(
+            text="Returns accepted within 14 days.", usage={}, model_name="test",
+        ),
+    ):
+        result = await generate_guarded_draft(**_args())
+    assert not result.accepted
+    assert result.grounding_reason == "missing_citations"
+
+
+@pytest.mark.asyncio
+async def test_invalid_rag_citation_is_suppressed() -> None:
+    with patch(
+        "app.features.ai.application.guarded_generation.compose_natural_answer",
+        new_callable=AsyncMock,
+        return_value=ComposedAnswer(
+            text="Returns accepted within 14 days. [source 9]",
+            usage={}, model_name="test",
+        ),
+    ):
+        result = await generate_guarded_draft(**_args())
+    assert not result.accepted
+    assert result.grounding_reason == "invalid_citation_index"
