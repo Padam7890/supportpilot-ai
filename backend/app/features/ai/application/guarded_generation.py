@@ -66,17 +66,45 @@ async def generate_guarded_draft(
             [*outcomes, {"tool": "claim_grounding", "status": "blocked", "reason": "no_verified_evidence"}],
             {}, None,
         )
-    composed = await compose_natural_answer(
-        build_agent_input(question, transcript, channel=execution_kind),
-        evidence,
-        instructions=instructions,
-    )
-    verification = await verify_candidate(composed.text, evidence)
-    usage = {
-        key: composed.usage.get(key, 0) + verification.usage.get(key, 0)
-        for key in composed.usage.keys() | verification.usage.keys()
-    }
-    model_name = composed.model_name[:120] if composed.model_name else None
+    agent_input = build_agent_input(question, transcript, channel=execution_kind)
+    usage: dict[str, int] = {}
+    model_name: str | None = None
+    verification = None
+    composed = None
+    for attempt in range(2):
+        # One bounded repair attempt. The retry receives only the same verified
+        # evidence, never new sources, order snapshots or model-created facts.
+        repair_instruction = (
+            "\\nGrounding repair: Your previous answer was rejected by the verifier "
+            "for reason " + verification.reason + ". Rewrite the answer from scratch "
+            "using ONLY explicit facts in the provided evidence. Cite each factual "
+            "sentence with [source N] immediately before its final punctuation. "
+            "Keep exact numbers, units, exclusions and conditions. Do not invent "
+            "policies, eligibility or actions. If the evidence cannot answer the "
+            "question, say so without asserting unsupported store facts."
+            if attempt and verification is not None else ""
+        )
+        composed = await compose_natural_answer(
+            agent_input, evidence,
+            instructions=(instructions or "") + repair_instruction,
+        )
+        verification = await verify_candidate(composed.text, evidence)
+        for key in composed.usage.keys() | verification.usage.keys():
+            usage[key] = usage.get(key, 0) + composed.usage.get(key, 0) + verification.usage.get(key, 0)
+        model_name = composed.model_name[:120] if composed.model_name else model_name
+        logger.info(
+            "rag_grounding_debug execution_id=%s stage=verification attempt=%d "
+            "accepted=%s reason=%s evidence_count=%d",
+            execution_id, attempt + 1, verification.accepted,
+            verification.reason, len(evidence.items),
+        )
+        if verification.accepted:
+            break
+        # Sensitive or contradictory claims should not be retried as routine
+        # citation repairs. Keep the existing safe fallback.
+        if verification.reason in {"sensitive_claim", "contradicted_claim"}:
+            break
+    assert composed is not None and verification is not None
     log_generation_metrics(
         execution_id=execution_id, execution_kind=execution_kind, model_name=model_name,
         started_monotonic=started, usage=usage, streamed=False, correlation_id=correlation_id,
@@ -90,8 +118,7 @@ async def generate_guarded_draft(
         },
     ]
     if not verification.accepted:
-        logger.info("rag_grounding_debug execution_id=%s stage=semantic_verification reason=%s evidence_count=%d", execution_id, verification.reason, len(evidence.items))
-        text = f"{order_text}\n\n{_SAFE_FALLBACK}" if order_text else _SAFE_FALLBACK
+        text = f"{order_text}\\n\\n{_SAFE_FALLBACK}" if order_text else _SAFE_FALLBACK
         return GuardedDraft(text, False, verification.reason, [], outcomes, usage, model_name)
 
     available = {(str(c["document_id"]), c["chunk_index"]): c for c in citations}
