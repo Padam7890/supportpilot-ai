@@ -25,7 +25,9 @@ _SYSTEM = (
     "Do not claim an action was completed unless a trusted tool result says so. "
     "If evidence is missing, clearly say you cannot verify the store-specific "
     "detail and offer a relevant next step. "
-    "For general conversation, respond normally without inventing store facts."
+    "For general conversation, respond normally without inventing store facts. "
+    "When evidence is provided, cite supporting excerpts with [source 1], "
+    "[source 2], etc. Never cite a source not shown in the evidence."
 )
 
 
@@ -36,7 +38,7 @@ def build_answer_messages(
     instructions: str | None = None,
 ) -> list[dict[str, str]]:
     evidence_text = "\n".join(
-        f"[{index + 1}] {item['source']}: {item['content']}"
+        f"[source {index + 1}] {item['source']}: {item['content']}"
         for index, item in enumerate(evidence.context)
     ) or "(no verified store facts)"
     history = [
