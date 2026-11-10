@@ -10,6 +10,9 @@ from typing import Any
 from uuid import UUID
 
 from app.features.ai.application.claim_grounding import check_generated_answer
+from app.features.ai.application.conversation_context_builder import build_agent_input
+from app.features.ai.application.conversation_response_composer import compose_natural_answer
+from app.features.ai.application.conversation_response_evidence import ResponseEvidence
 from app.features.ai.application.generation_metrics import log_generation_metrics
 from app.services.ai_execution import create_grounded_draft
 
@@ -41,19 +44,53 @@ async def generate_guarded_draft(
     correlation_id: str | None,
 ) -> GuardedDraft:
     started = time.monotonic()
-    result = await create_grounded_draft(
-        organization_id=organization_id,
-        execution_id=execution_id,
-        question=question,
-        instructions=instructions,
-        conversation_context=[
-            {"sender": turn["sender"], "content": turn["content"]}
-            for turn in transcript
-        ],
-        knowledge_context=context,
-        integration_context=integration_context,
-        auto_reply=auto_reply,
-    )
+    # Knowledge-only runs now share the bounded natural-answer composer.
+    # Retrieval and citation authorization remain in the existing worker.
+    # Integration-backed answers keep their dedicated secure execution path.
+    if context and not integration_context and execution_kind in {
+        "widget_reply", "playground", "reply_draft",
+    }:
+        evidence_items = [
+            {
+                "source": "knowledge_search",
+                "content": str(item.get("excerpt") or item.get("content") or "")[:1200],
+            }
+            for item in context[:6]
+        ]
+        evidence_items = [item for item in evidence_items if item["content"].strip()]
+        if not evidence_items:
+            raise ValueError("Retrieved knowledge has no usable excerpts")
+        composed = await compose_natural_answer(
+            build_agent_input(
+                question, transcript,
+                channel="widget" if execution_kind == "widget_reply" else "playground",
+            ),
+            ResponseEvidence(
+                context=evidence_items,
+                source_ids=[],
+                answerable=True,
+                unavailable=False,
+            ),
+        )
+        result = {
+            "draft": composed.text,
+            "usage": composed.usage,
+            "model_name": composed.model_name,
+        }
+    else:
+        result = await create_grounded_draft(
+            organization_id=organization_id,
+            execution_id=execution_id,
+            question=question,
+            instructions=instructions,
+            conversation_context=[
+                {"sender": turn["sender"], "content": turn["content"]}
+                for turn in transcript
+            ],
+            knowledge_context=context,
+            integration_context=integration_context,
+            auto_reply=auto_reply,
+        )
     usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
     raw_model_name = result.get("model_name")
     model_name = raw_model_name[:120] if isinstance(raw_model_name, str) and raw_model_name else None
