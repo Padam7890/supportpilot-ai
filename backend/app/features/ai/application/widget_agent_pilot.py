@@ -74,6 +74,10 @@ async def try_complete_widget_agent_pilot(
         return False
     if result.tool_names or not safe_first_contact_greeting(result.answer):
         return False
+    # The customer may have sent a newer message while the LLM was running.
+    # Never persist a completed reply for a superseded execution.
+    if await widget_reply_is_stale(organization_id, execution_id):
+        return True
     await finish_widget_reply(
         organization_id,
         execution_id,
