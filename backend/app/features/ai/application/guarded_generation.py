@@ -47,9 +47,12 @@ async def generate_guarded_draft(
     # Knowledge-only runs now share the bounded natural-answer composer.
     # Retrieval and citation authorization remain in the existing worker.
     # Integration-backed answers keep their dedicated secure execution path.
-    if context and not integration_context and execution_kind in {
-        "widget_reply", "playground", "reply_draft",
-    }:
+    if (
+        context
+        and not integration_context
+        and not instructions
+        and execution_kind in {"widget_reply", "playground"}
+    ):
         evidence_items = [
             {
                 "source": "knowledge_search",
