@@ -131,7 +131,7 @@ def parse_intent_output(raw: str, question: str) -> RecommendationIntent:
 async def extract_intent(
     question: str, categories: list[str], brands: list[str]
 ) -> tuple[RecommendationIntent, dict[str, int], str | None]:
-    from app.services.ai_execution import (
+    from app.features.ai.infrastructure.llm_gateway import (
         AIProviderError,
         generate_completion,
         is_provider_configured,
