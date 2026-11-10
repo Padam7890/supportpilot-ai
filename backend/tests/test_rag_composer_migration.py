@@ -42,14 +42,58 @@ async def test_knowledge_only_widget_uses_new_composer() -> None:
 
 
 @pytest.mark.asyncio
-async def test_custom_instructions_preserve_existing_generation_path() -> None:
+async def test_custom_instructions_use_new_composer() -> None:
     args = _args()
     args["instructions"] = "Answer in Nepali."
     with (
         patch(
             "app.features.ai.application.guarded_generation.create_grounded_draft",
             new_callable=AsyncMock,
-            return_value={"draft": "Returns accepted within 14 days.", "usage": {}},
+        ) as old,
+        patch(
+            "app.features.ai.application.guarded_generation.compose_natural_answer",
+            new_callable=AsyncMock,
+            return_value=ComposedAnswer(
+                text="Returns accepted within 14 days.", usage={}, model_name="test",
+            ),
+        ) as compose,
+    ):
+        await generate_guarded_draft(**args)
+    old.assert_not_awaited()
+    assert compose.await_args.kwargs["instructions"] == "Answer in Nepali."
+
+
+@pytest.mark.asyncio
+async def test_knowledge_reply_draft_uses_new_composer() -> None:
+    args = _args()
+    args["execution_kind"] = "reply_draft"
+    with (
+        patch(
+            "app.features.ai.application.guarded_generation.create_grounded_draft",
+            new_callable=AsyncMock,
+        ) as old,
+        patch(
+            "app.features.ai.application.guarded_generation.compose_natural_answer",
+            new_callable=AsyncMock,
+            return_value=ComposedAnswer(
+                text="Returns accepted within 14 days.", usage={}, model_name="test",
+            ),
+        ) as compose,
+    ):
+        await generate_guarded_draft(**args)
+    old.assert_not_awaited()
+    compose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_integration_context_keeps_specialized_generation() -> None:
+    args = _args()
+    args["integration_context"] = {"order": {"status": "verified"}}
+    with (
+        patch(
+            "app.features.ai.application.guarded_generation.create_grounded_draft",
+            new_callable=AsyncMock,
+            return_value={"draft": "I can help with your order.", "usage": {}},
         ) as old,
         patch(
             "app.features.ai.application.guarded_generation.compose_natural_answer",
