@@ -112,7 +112,7 @@ async def generate_guarded_draft(
                     repaired.append(segment)
                 else:
                     repaired.append(segment + " [source 1]")
-            candidate = "\\n".join(repaired)
+            candidate = "\n".join(repaired)
             source = [{"index": 1, "excerpt": evidence.items[0].content}]
             lexical = check_grounded_claims(candidate, source, require_citations=True)
             if lexical.accepted:
