@@ -23,7 +23,7 @@ ReviewReason = Literal[
     "missing_citations", "invalid_citation_index", "unsupported_numeric_claim", "citation_source_mismatch",
 ]
 _MAX_SPANS = 12
-_REVIEW_BATCH_SIZE = 3
+_REVIEW_BATCH_SIZE = 1
 _REVIEW_TIMEOUT_SECONDS = 12
 _SPAN_BREAK = re.compile(r"\n+|(?<=[.!?।])\s+(?!\[(?:source|doc)\b)", re.IGNORECASE)
 
@@ -54,7 +54,7 @@ def _parse_review(raw: str) -> CandidateReview:
     """Normalize harmless JSON transport variations, never infer verdicts."""
     text = raw.strip()
     if text.startswith("```"):
-        text = re.sub(r"^\x60{3}(?:json)?\\s*|\\s*\x60{3}$", "", text, flags=re.IGNORECASE).strip()
+        text = re.sub(r"^\x60{3}(?:json)?\s*|\s*\x60{3}$", "", text, flags=re.IGNORECASE).strip()
     data = json.loads(text)
     if not isinstance(data, dict) or not isinstance(data.get("spans"), list):
         raise ValueError("invalid_review_structure")
