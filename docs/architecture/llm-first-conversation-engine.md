@@ -76,3 +76,11 @@ Enable only in a controlled development environment after reviewing model costs 
 - Added regression scenarios for this bypass and ordinary greeting behavior.
 - **This runtime is not invoked from the live widget or Playground worker.** The backstop is only as complete as the existing deterministic assessment; semantic grounding, missing-evidence UX, provider-cost budgets, and streaming must be addressed before rollout.
 - Tests and CI/CD have not been executed.
+
+## Increment: live worker pilot (first-contact greetings only)
+
+- The widget worker now calls `try_complete_widget_agent_pilot` after existing follow-up checks and before deterministic turn routing. It is gated by `AI_CONVERSATION_LLM_FIRST_ENABLED` (default false).
+- Only low-risk, standalone first-contact greetings qualify. Any previous substantive transcript, contextual follow-up, policy, product, order, refund, negation or multi-intent request stays on the legacy path. Existing stale-reply checks and `finish_widget_reply` handle persistence, draft-only mode, and delivery suppression.
+- Invalid plans fall back to legacy routing. Unexpected provider errors use the worker's existing failure lifecycle. Output with numeric claims or over 500 characters is rejected by the pilot.
+- **Do not enable for general customer traffic yet.** Semantic claim validation, tenant-specific bot tool permissions, end-to-end integration tests, streaming, and non-greeting migration remain pending. Flag-off behavior is unchanged.
+- Tests and CI/CD have not been executed.
