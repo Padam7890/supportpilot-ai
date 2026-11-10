@@ -9,12 +9,17 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from app.features.ai.application.claim_grounding import check_generated_answer, check_grounded_claims
+from app.features.ai.application.claim_grounding import (
+    check_generated_answer,
+    check_grounded_claims,
+)
 from app.features.ai.application.conversation_context_builder import build_agent_input
 from app.features.ai.application.conversation_response_composer import compose_natural_answer
 from app.features.ai.application.conversation_response_evidence import ResponseEvidence
 from app.features.ai.application.generation_metrics import log_generation_metrics
-from app.services.ai_execution import create_grounded_draft
+from app.features.ai.application.intent_routing.deterministic import assess_deterministic_route
+from app.features.ai.application.intent_routing.schemas import Intent
+from app.features.ai.workflows.grounded_reply import create_grounded_draft
 
 
 @dataclass(frozen=True)
@@ -44,16 +49,14 @@ async def generate_guarded_draft(
     correlation_id: str | None,
 ) -> GuardedDraft:
     started = time.monotonic()
-    used_new_rag_composer = False
-    rag_grounding_sources: list[dict[str, str]] = []
-    # Knowledge-only runs now share the bounded natural-answer composer.
-    # Retrieval and citation authorization remain in the existing worker.
-    # Integration-backed answers keep their dedicated secure execution path.
-    if (
-        context
-        and not integration_context
-        and execution_kind in {"widget_reply", "playground", "reply_draft"}
-    ):
+    # All non-integration turns use the canonical natural-answer composer.
+    # Provider-specific commerce generation remains isolated until authorized
+    # Shopify facts can be supplied as typed, verified evidence.
+    use_canonical_composer = not integration_context and execution_kind in {
+        "widget_reply", "playground", "reply_draft",
+    }
+    grounding_sources: list[dict[str, str]] = []
+    if use_canonical_composer:
         evidence_items = [
             {
                 "source": "knowledge_search",
@@ -62,12 +65,32 @@ async def generate_guarded_draft(
             for item in context[:6]
         ]
         evidence_items = [item for item in evidence_items if item["content"].strip()]
-        rag_grounding_sources = [
-            {"excerpt": item["content"]} for item in evidence_items
-        ]
-        if not evidence_items:
+        grounding_sources = [{"excerpt": item["content"]} for item in evidence_items]
+        if context and not evidence_items:
             raise ValueError("Retrieved knowledge has no usable excerpts")
-        used_new_rag_composer = True
+        route = assess_deterministic_route(question, transcript)
+        needs_verified_facts = (
+            route.requires_tools
+            or route.requires_knowledge
+            or route.intent in {Intent.PRODUCT, Intent.ORDER, Intent.REFUND}
+        )
+        if not evidence_items and needs_verified_facts:
+            return GuardedDraft(
+                text=(
+                    "I couldn't verify that store-specific information. "
+                    "Please contact our support team for confirmation."
+                ),
+                accepted=False,
+                grounding_reason="no_verified_evidence",
+                citations=[],
+                outcomes=[
+                    *outcomes,
+                    {"tool": "claim_grounding", "status": "blocked",
+                     "reason": "no_verified_evidence"},
+                ],
+                usage={},
+                model_name=None,
+            )
         composed = await compose_natural_answer(
             build_agent_input(
                 question, transcript,
@@ -76,8 +99,8 @@ async def generate_guarded_draft(
             ResponseEvidence(
                 context=evidence_items,
                 source_ids=[],
-                answerable=True,
-                unavailable=False,
+                answerable=bool(evidence_items),
+                unavailable=not bool(evidence_items),
             ),
             instructions=instructions,
         )
@@ -115,14 +138,16 @@ async def generate_guarded_draft(
     )
     generated = str(result.get("draft", ""))[:12000]
     # Validate the same bounded excerpts actually supplied to the composer.
-    # Integration-backed generation keeps its existing specialized guard.
+    # The specialized integration path retains its own authorization boundary.
+    # Knowledge checks cannot validate verified Shopify order fields.
     grounding = (
         check_grounded_claims(
-            generated, rag_grounding_sources, require_citations=True,
+            generated, grounding_sources, require_citations=True,
         )
-        if used_new_rag_composer
+        if use_canonical_composer and grounding_sources
         else check_generated_answer(
-            generated, context if not integration_context else []
+            generated,
+            context if not integration_context else [],
         )
     )
     if grounding.accepted:

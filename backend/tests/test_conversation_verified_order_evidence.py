@@ -39,3 +39,23 @@ def test_empty_and_nested_unrecognized_payload_fails_closed() -> None:
             {"order": {"fulfillment_status": "fulfilled"}},
             identity_verified=True,
         )
+
+
+def test_nested_tracking_is_bounded_and_excludes_urls() -> None:
+    result = build_verified_order_evidence(
+        {
+            "tracking_url": "https://private.example/flat",
+            "tracking": [
+                {"company": "Carrier", "number": "ABC123", "url": "https://private.example/nested"},
+                {},
+                {},
+                {"number": "outside-limit"},
+            ],
+        },
+        identity_verified=True,
+    )
+    combined = " ".join(item["content"] for item in result.evidence.context)
+    assert "Carrier" in combined
+    assert "ABC123" in combined
+    assert "private.example" not in combined
+    assert "outside-limit" not in combined

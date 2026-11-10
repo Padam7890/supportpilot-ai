@@ -9,7 +9,6 @@ from app.workers.handlers.ingestion import (
     claim_one,
     extract_text,
     fail_exhausted_leases,
-    make_chunks,
     process_job,
 )
 from app.workers.runtime import run_worker
@@ -20,7 +19,6 @@ __all__ = [
     "claim_one",
     "extract_text",
     "fail_exhausted_leases",
-    "make_chunks",
     "process_job",
     "process_next_job",
     "run_worker",

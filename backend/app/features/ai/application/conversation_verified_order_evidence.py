@@ -13,8 +13,8 @@ from app.features.ai.application.conversation_response_evidence import ResponseE
 _ALLOWED_SCALARS = frozenset({
     "order_name", "order_number", "financial_status", "fulfillment_status",
     "display_fulfillment_status", "cancelled_at", "processed_at",
-    "currency", "total_price", "tracking_company", "tracking_number",
-    "tracking_url",
+    "currency", "total_price", "total_amount", "return_status",
+    "tracking_company", "tracking_number",
 })
 
 
@@ -46,6 +46,22 @@ def build_verified_order_evidence(
             continue
         facts.append(f"{field}: {value_text}")
         accepted.append(field)
+    # ShopifyOrderOut uses nested tracking entries. Flatten a bounded subset
+    # without exposing URLs, email addresses, addresses or raw provider payloads.
+    tracking = context.get("tracking")
+    if isinstance(tracking, list):
+        for index, entry in enumerate(tracking[:3], start=1):
+            if not isinstance(entry, Mapping):
+                continue
+            for field in ("company", "number"):
+                value = entry.get(field)
+                if not isinstance(value, str):
+                    continue
+                value = value.strip()
+                if not value or len(value) > 100 or any(c in value for c in "\r\n<>"):
+                    continue
+                facts.append(f"tracking_{index}_{field}: {value}")
+                accepted.append(f"tracking_{index}_{field}")
     if not facts:
         raise ValueError("No approved verified order fields available")
     return VerifiedOrderEvidence(

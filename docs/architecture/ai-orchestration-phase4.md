@@ -24,7 +24,7 @@ features/ai/application   execution context, widget gating and persistence, veri
 - `domain/policies.py` contains deterministic response suppression policy. The model cannot authorize a send or override AI/Human mode.
 - `domain/catalog.py`, `domain/ranking.py`, `application/intent_extraction.py`, `application/catalog_search.py`, and `domain/shopping_state.py` separate catalog primitives, deterministic ranking, bounded intent extraction, tenant search, and persisted multi-turn state.
 - `tools/recommendations.py` validates a closed set of recommendation/comparison inputs with `extra="forbid"`; callers cannot provide tenant IDs, SQL, or arbitrary tool names.
-- Existing `app.services.ai_execution`, `ai_worker`, `recommendations`, `recommendation_conversation`, and `recommendation_tool_registry` imports remain compatibility surfaces. New feature code should import from `app.features.ai`.
+- The obsolete `app.services.ai_execution` compatibility facade has been deleted. Provider callers import from `app.features.ai.infrastructure.llm_gateway` and grounded graph callers from `app.features.ai.workflows.grounded_reply`. Other compatibility surfaces are retained only where still referenced.
 
 ## Safety and resource policy
 
@@ -39,3 +39,8 @@ Widget reply delivery is a two-step guard: an early stale-work check avoids unne
 Unit coverage includes invalid provider output, token-budget exhaustion, untrusted retrieved prompt content, malformed/extra tool arguments, and deterministic reply suppression. PostgreSQL integration coverage includes tenant isolation, concurrent active-execution limits, widget workflows, and the in-flight Human takeover race. Database-backed checks require `TEST_DATABASE_URL`; a skipped integration test is not evidence that database behavior passed.
 
 Current text retrieval uses PostgreSQL full-text search over tenant chunks; there is no separate vector/RAG service. The worker still owns orchestration across execution kinds, but context assembly, policy/write paths, catalog extraction/search/ranking, and provider infrastructure now have focused modules. Future work can move each execution-kind orchestration into its own workflow when behavior diverges further; no checkpoint migration is needed for this split.
+
+
+## LLM-first migration update
+
+The widget, playground, and reply-draft paths use the shared natural-answer composer for non-integration generation. Ordinary conversation can proceed without retrieved knowledge; store-specific facts still require evidence. Shopify order verification and commerce authorization remain separate until an explicitly authorized, minimized evidence adapter is connected to the unified response pipeline. Lexical citation checks are not semantic entailment. This branch was updated without running tests or CI at the project owner's request.

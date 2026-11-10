@@ -70,12 +70,12 @@ def test_common_product_categories_normalize(alias, canonical):
 
 @pytest.mark.asyncio
 async def test_provider_failure_uses_deterministic_intent_fallback(monkeypatch):
-    from app.services.ai_execution import AIProviderError
+    from app.features.ai.infrastructure.llm_gateway import AIProviderError
 
     async def fail_provider(*_args, **_kwargs):
         raise AIProviderError("provider_timeout", "provider unavailable")
 
-    monkeypatch.setattr("app.services.ai_execution.generate_completion", fail_provider)
+    monkeypatch.setattr("app.features.ai.infrastructure.llm_gateway.generate_completion", fail_provider)
     intent, usage, model_name = await extract_intent(
         "Recommend a phone under NPR 30000", ["Phones"], ["Acme"]
     )

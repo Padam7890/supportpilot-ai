@@ -72,7 +72,11 @@ def _merge_to_token_budget(
         if carry_overlap and overlap_tokens > 0 and body:
             overlap_text = body
             while overlap_text and estimate_tokens(overlap_text) > overlap_tokens:
-                overlap_text = overlap_text[overlap_text.find(" ") + 1 :]
+                boundary = overlap_text.find(" ")
+                if boundary < 0:
+                    overlap_text = ""
+                    break
+                overlap_text = overlap_text[boundary + 1 :]
             buffer = [overlap_text] if overlap_text else []
             buffer_tokens = estimate_tokens(overlap_text) if overlap_text else 0
         else:
@@ -84,10 +88,16 @@ def _merge_to_token_budget(
         if segment_tokens > max_tokens:
             flush()
             start = 0
-            words = segment.text.split()
+            words = [
+                word_part
+                for word in segment.text.split()
+                for word_part in (
+                    word[offset : offset + max_tokens * 4]
+                    for offset in range(0, len(word), max_tokens * 4)
+                )
+            ]
             while start < len(words):
                 window: list[str] = []
-                token_count = 0
                 index = start
                 while index < len(words):
                     candidate = " ".join([*window, words[index]])
@@ -95,7 +105,6 @@ def _merge_to_token_budget(
                     if window and next_tokens > max_tokens:
                         break
                     window.append(words[index])
-                    token_count = next_tokens
                     index += 1
                 if window:
                     chunks.append(
@@ -146,13 +155,14 @@ def make_chunks(
         if overlap_tokens is None
         else overlap_tokens
     )
+    if max_tokens < 1:
+        raise ValueError("max_tokens must be positive")
+    if overlap_tokens < 0:
+        raise ValueError("overlap_tokens cannot be negative")
     overlap_tokens = min(overlap_tokens, max(0, max_tokens // 4))
     segments = split_blocks(text)
     if not segments:
-        legacy = " ".join(text.split())
-        if not legacy:
-            return []
-        return _legacy_char_chunks(legacy, max_tokens=max_tokens, overlap_tokens=overlap_tokens)
+        return []
     merged = _merge_to_token_budget(
         segments, max_tokens=max_tokens, overlap_tokens=overlap_tokens
     )
@@ -169,27 +179,3 @@ def make_chunks(
         output.append((body, segment.section_label, segment.page_number))
     return output
 
-
-def _legacy_char_chunks(
-    normalized: str,
-    *,
-    max_tokens: int,
-    overlap_tokens: int,
-) -> list[tuple[str, str | None, int | None]]:
-    size = max_tokens * 4
-    overlap = overlap_tokens * 4
-    chunks: list[tuple[str, str | None, int | None]] = []
-    start = 0
-    while start < len(normalized):
-        end = min(start + size, len(normalized))
-        if end < len(normalized):
-            boundary = normalized.rfind(" ", start + size // 2, end)
-            if boundary > start:
-                end = boundary
-        chunk = normalized[start:end].strip()
-        if chunk:
-            chunks.append((chunk, None, None))
-        if end >= len(normalized):
-            break
-        start = max(end - overlap, start + 1)
-    return chunks

@@ -114,7 +114,13 @@ async def verified_widget_order_reply(
         if order is None or order.get("id") != order_id:
             return False, None
         mapped = ShopifyOrderOut.model_validate(order)
-        return True, format_verified_order_status(mapped, opening="I checked your verified order")
+        # A lexical citation/number check cannot establish semantic correctness
+        # of order status, tracking, cancellation or refund claims. Deliver only
+        # the deterministic formatter backed by this authorized Shopify lookup.
+        # Keep natural-language composition for non-sensitive support turns.
+        return True, format_verified_order_status(
+            mapped, opening="I checked your verified order",
+        )
     except Exception as exc:  # noqa: BLE001 - fail closed while retaining the verified session.
         logger.warning(
             "Verified widget order lookup failed: organization_id=%s conversation_id=%s error_type=%s",

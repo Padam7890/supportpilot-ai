@@ -15,41 +15,47 @@ from app.features.ai.application.catalog_search import (
     load_candidates,
 )
 from app.features.ai.application.context import load_execution_context
+from app.features.ai.application.execution_failure_persistence import persist_execution_failure
 from app.features.ai.application.execution_failure_policy import (
     assess_execution_failure,
 )
-from app.features.ai.application.execution_failure_persistence import persist_execution_failure
 from app.features.ai.application.execution_lifecycle import (
     claim_ai_execution,
     fail_exhausted_ai_leases,
     finish_deterministic_ai_execution,
 )
-from app.features.ai.application.stream_context_policy import (
-    can_stream_transcript as _can_stream_transcript,
-    stream_conversation_context as _stream_conversation_context,
-)
 from app.features.ai.application.follow_up import (
     assess_widget_follow_up,
     infer_assistant_question,
 )
+from app.features.ai.application.generated_reply_persistence import (
+    complete_non_widget_generated_reply,
+)
+from app.features.ai.application.guarded_generation import generate_guarded_draft
 from app.features.ai.application.intent_extraction import extract_intent
-from app.features.ai.application.widget_turn_routing import resolve_widget_turn
-from app.features.ai.application.widget_agent_pilot import try_complete_widget_agent_pilot
-from app.features.ai.application.widget_sensitive_execution import complete_sensitive_widget_turn
-from app.features.ai.application.widget_follow_up_execution import complete_widget_follow_up
+from app.features.ai.application.intent_routing.deterministic import assess_deterministic_route
+from app.features.ai.application.intent_routing.schemas import Intent
 from app.features.ai.application.knowledge_inventory import is_knowledge_inventory_question
+from app.features.ai.application.missing_evidence_policy import plan_missing_evidence_reply
 from app.features.ai.application.playground_execution import complete_playground_knowledge_inventory
 from app.features.ai.application.playground_routing import route_playground_conversation
-from app.features.ai.application.guarded_generation import generate_guarded_draft
-from app.features.ai.application.generated_reply_persistence import complete_non_widget_generated_reply
-from app.features.ai.application.missing_evidence_policy import plan_missing_evidence_reply
+from app.features.ai.application.stream_context_policy import (
+    can_stream_transcript as _can_stream_transcript,
+)
+from app.features.ai.application.stream_context_policy import (
+    stream_conversation_context as _stream_conversation_context,
+)
+from app.features.ai.application.widget_agent_pilot import try_complete_widget_agent_pilot
 from app.features.ai.application.widget_failure_fallback import plan_widget_failure_fallback
+from app.features.ai.application.widget_follow_up_execution import complete_widget_follow_up
 from app.features.ai.application.widget_orders import _question_order_number
 from app.features.ai.application.widget_replies import (
     finish_widget_reply,
     process_widget_shopping_execution,
     widget_reply_is_stale,
 )
+from app.features.ai.application.widget_sensitive_execution import complete_sensitive_widget_turn
+from app.features.ai.application.widget_turn_routing import resolve_widget_turn
 from app.features.ai.domain.failure_codes import (
     safe_ai_failure_code as _safe_ai_failure_code,
 )
@@ -71,9 +77,9 @@ from app.services.widget_ai import (
 
 logger = logging.getLogger(__name__)
 __all__ = [
+    "_can_stream_transcript",
     "_question_order_number",
     "_safe_ai_failure_code",
-    "_can_stream_transcript",
     "_stream_conversation_context",
     "claim_ai_execution",
     "fail_exhausted_ai_leases",
@@ -403,7 +409,16 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 channel="playground",
                 **{k: (intent_router_outcome or {}).get(k) for k in ("mode", "primary_intent", "metrics")},
             )
-        if not context and not integration_context:
+        route = assess_deterministic_route(execution.question, [])
+        requires_store_evidence = (
+            route.requires_tools
+            or route.requires_knowledge
+            or route.intent in {Intent.PRODUCT, Intent.ORDER, Intent.REFUND}
+        )
+        if not context and not integration_context and (
+            execution.kind not in {"widget_reply", "playground", "reply_draft"}
+            or requires_store_evidence
+        ):
             missing = plan_missing_evidence_reply(
                 execution_kind=execution.kind,
                 question=execution.question if execution.kind == "widget_reply" else question,
