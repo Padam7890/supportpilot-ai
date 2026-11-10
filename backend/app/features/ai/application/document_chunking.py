@@ -88,7 +88,14 @@ def _merge_to_token_budget(
         if segment_tokens > max_tokens:
             flush()
             start = 0
-            words = segment.text.split()
+            words = [
+                word_part
+                for word in segment.text.split()
+                for word_part in (
+                    word[offset : offset + max_tokens * 4]
+                    for offset in range(0, len(word), max_tokens * 4)
+                )
+            ]
             while start < len(words):
                 window: list[str] = []
                 token_count = 0
@@ -150,6 +157,10 @@ def make_chunks(
         if overlap_tokens is None
         else overlap_tokens
     )
+    if max_tokens < 1:
+        raise ValueError("max_tokens must be positive")
+    if overlap_tokens < 0:
+        raise ValueError("overlap_tokens cannot be negative")
     overlap_tokens = min(overlap_tokens, max(0, max_tokens // 4))
     segments = split_blocks(text)
     if not segments:
