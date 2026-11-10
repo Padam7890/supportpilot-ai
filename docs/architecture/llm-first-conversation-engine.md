@@ -91,3 +91,11 @@ Enable only in a controlled development environment after reviewing model costs 
 - Corrected the numeric-claim regular expression and added regression scenarios for both guards.
 - **No scope expansion:** live agent use remains first-contact greetings only, flag off by default. Strong semantic grounding, tool permission snapshots, end-to-end tests and safe wider migration are prerequisites to expanding traffic.
 - Tests and CI/CD have not been executed.
+
+## Increment: explicit tool permission enforcement
+
+- The agent orchestrator no longer grants every read-only capability by default. `allowed_tools` defaults to an empty set and is intersected with the hard-coded read-only capability ceiling before execution.
+- The standalone runtime now accepts an explicit server-provided tool allowlist; it also defaults to no tools. This prevents the model from searching catalog or knowledge unless the caller has authorized that capability.
+- Updated tool-execution regression scenarios and added an unauthorized-catalog invocation test.
+- **Next:** map existing AI bot tool snapshots to these capabilities and verify settings/tenant restrictions before expanding the widget pilot. The current greeting pilot does not grant tool access.
+- Tests and CI/CD have not been executed.
