@@ -68,3 +68,11 @@ Enable only in a controlled development environment after reviewing model costs 
 - Added isolated regression scenarios for authorized tool execution, rejected handoff, absent evidence and unsupported numeric claims.
 - **Important limits:** this is not yet connected to the live widget/Playground worker or durable execution/persistence. Grounding currently performs lexical/numeric checks, not semantic entailment; unverified nonnumeric claims require stronger validation before rollout. Sensitive order/refund/handoff actions remain outside this agent. Planner and composer currently require two model calls when tools are used.
 - Tests and CI/CD have not been executed.
+
+## Increment: standalone composition root and answer-bypass guard
+
+- Added `conversation_agent_runtime.py` to wire the structured planner, read-only agent orchestrator, tenant/agent-scoped knowledge adapter and tenant-scoped catalog adapter. The caller provides trusted IDs; the model cannot select tenant or bot.
+- Added a deterministic safety backstop in `conversation_agent.py`: recognized product/order/refund, knowledge, or tool-requiring requests cannot be answered using the model-only `answer` route.
+- Added regression scenarios for this bypass and ordinary greeting behavior.
+- **This runtime is not invoked from the live widget or Playground worker.** The backstop is only as complete as the existing deterministic assessment; semantic grounding, missing-evidence UX, provider-cost budgets, and streaming must be addressed before rollout.
+- Tests and CI/CD have not been executed.
