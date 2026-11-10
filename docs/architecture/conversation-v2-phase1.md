@@ -85,3 +85,10 @@ GitHub CI was queued when checked on commit `4d5acc942fb7f89a2fe186327d4407f04da
 ## CI investigation (November 10)
 
 GitHub Actions run `42739905056` for the phase branch reported backend Ruff failure (99 findings repository-wide) and frontend ESLint failure (six errors). Backend Ruff included unrelated existing files such as `app/workers/handlers/automation.py` (undefined `execution`), plus import-order findings and unused compatibility imports in `ai_worker.py`. Follow-up commit explicitly exports compatibility worker symbols and removes unused settings/timedelta imports. This does not resolve repository-wide CI failures. Do not merge without a green check or a reviewed baseline comparison. Direct local checkout was unavailable in this environment.
+
+## Playground conversation routing separation
+
+- Added `application/playground_routing.py` for deterministic-first preview routing and optional structured intent classification.
+- Worker now delegates Playground turn selection while retaining shared generation, grounding, and persistence boundaries.
+- Added targeted tests for deterministic preview and model-router fallback.
+- Per developer preference, CI/CD cleanup is deferred during the testing phase; this does not mean runtime checks are passing. Local smoke tests and real conversation scenarios remain important before release.
