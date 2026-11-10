@@ -19,6 +19,12 @@ class FollowUpRetrievalUnavailable(RuntimeError):
     failure_stage = "knowledge_retrieval"
 
 
+class FollowUpRetrievalFailed(RuntimeError):
+    """Verified follow-up knowledge lookup failed before completion."""
+
+    failure_stage = "knowledge_retrieval"
+
+
 @dataclass(frozen=True)
 class FollowUpCompletion:
     completed: bool
@@ -53,13 +59,16 @@ async def complete_widget_follow_up(
                 organization_id, conversation_id, review.verification_id
             )
         ):
-            policy = await load_execution_context(
-                organization_id, execution_id, include_knowledge=True,
-                follow_up_query=(
-                    "refund return eligibility policy "
-                    f"{review.refund_reason.replace('_', ' ')}"
-                ),
-            )
+            try:
+                policy = await load_execution_context(
+                    organization_id, execution_id, include_knowledge=True,
+                    follow_up_query=(
+                        "refund return eligibility policy "
+                        f"{review.refund_reason.replace('_', ' ')}"
+                    ),
+                )
+            except Exception as exc:
+                raise FollowUpRetrievalFailed("verified refund knowledge lookup failed") from exc
             if policy is None:
                 raise FollowUpRetrievalUnavailable("verified follow-up retrieval unavailable")
             review_citations = policy[4]
