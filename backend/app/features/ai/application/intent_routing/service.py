@@ -1,4 +1,4 @@
-"""Resolve customer routing: deterministic first, optional structured LLM."""
+"""Resolve customer routing with opt-in LLM-first interpretation and safe fallbacks."""
 
 from __future__ import annotations
 
@@ -96,7 +96,10 @@ async def resolve_customer_routing(
     invoke = (
         not understanding.negated_action
         and not understanding.needs_clarification
-        and should_invoke_llm_router(assessment, message)
+        and (
+            (settings.ai_conversation_llm_first_enabled and assessment.risk_level != "high")
+            or should_invoke_llm_router(assessment, message)
+        )
     )
     llm_invoked = False
 
