@@ -1,5 +1,9 @@
 # Multi-store, multi-channel commerce architecture
 
+## Product scope and release policy
+**V1 ships Shopify commerce and web widget only.** WooCommerce, WhatsApp, Messenger and custom providers are future integrations, not current deliverables. Build provider-neutral contracts, trusted store/channel resolution and safe extension points now, but do not create fake providers, disconnected settings toggles or unfinished customer-facing integrations. Shopify is the first concrete adapter. Future integrations must be addable without rewriting the AI orchestration or shared catalog services.
+
+
 ## Current incremental implementation
 - `catalog_discovery.py` lists products from a single connected provider account and tenant, not from RAG.
 - Widget browse requests resolve a server-owned conversation integration connection. If absent, a singleton connection is accepted; multiple connections fail closed.
