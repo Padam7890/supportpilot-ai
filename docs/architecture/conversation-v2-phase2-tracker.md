@@ -31,3 +31,7 @@ All changes remain in the single PR #32 until explicitly merged.
 ## Explicit limits
 
 This milestone does not certify natural-language understanding for every utterance or production correctness. Tests are committed but have not been executed. CI/CD and integration verification are deferred. Phase 3 (durable conversation memory) and Phase 7 (true progressive streaming) remain separate future work.
+
+## Post-completion screenshot regression: repeated handoff reply
+
+The exact repeated message was traced to `ORDER_HANDOFF_PENDING` in `follow_up.py`. After a handoff was requested, a broad short-message fallback kept the previous order workflow active even for unrelated messages such as a product inquiry. The resolver now releases this state for all messages except explicit recovered order references, so normal conversation routing can resume. Added phone/mobile/laptop recognition and focused screenshot-based regression scenarios. This is a code-level fix; tests and CI/CD have not been executed.
