@@ -264,11 +264,18 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             if await widget_reply_is_stale(organization_id, execution_id):
                 return
             delivery_status = "draft_ready" if execution.delivery_mode == "draft_only" else "sent"
-            follow_up, follow_up_reason = assess_widget_follow_up(
-                execution.question, transcript, agent_id=execution.ai_agent_id,
-                source_message_id=getattr(execution, "source_message_id", None), now=now,
-                allow_refund_workflow=execution.delivery_mode == "auto_reply",
-            )
+            # Explicit catalog browsing is a new intent, never an answer to a
+            # previous product-selection question. Prevent stale follow-up state
+            # from swallowing repeated "list all products" requests.
+            from app.features.ai.application.catalog_discovery import is_catalog_discovery_request
+            if is_catalog_discovery_request(execution.question):
+                follow_up, follow_up_reason = None, "catalog_browse_override"
+            else:
+                follow_up, follow_up_reason = assess_widget_follow_up(
+                    execution.question, transcript, agent_id=execution.ai_agent_id,
+                    source_message_id=getattr(execution, "source_message_id", None), now=now,
+                    allow_refund_workflow=execution.delivery_mode == "auto_reply",
+                )
             _log_ai_execution_event(
                 "widget_follow_up_routing", execution_id=str(execution_id),
                 correlation_id=correlation_id, reason=follow_up_reason,
@@ -303,6 +310,12 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 ),
             )
             turn = route_result.turn
+            from app.features.ai.application.catalog_trace import trace_catalog_route
+            trace_catalog_route(
+                execution_id=str(execution_id), route=turn.route,
+                tool=turn.tool_name, follow_up=follow_up_reason,
+                catalog_request=is_catalog_discovery_request(execution.question),
+            )
             requires_store_evidence = route_result.requires_evidence
             intent_router_outcome = route_result.outcome
             if route_result.model_router_invoked:
@@ -335,6 +348,12 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                         )
                         if connection_id is not None else []
                     )
+                trace_catalog_route(
+                    execution_id=str(execution_id), route="inventory_result",
+                    tool="catalog_discovery", follow_up=follow_up_reason,
+                    catalog_request=True, result_count=len(products),
+                    connection_resolved=connection_id is not None,
+                )
                 draft = (
                     render_product_listing(products) if connection_id is not None
                     else "I can't identify a single connected store for this chat. Please contact the store team."
