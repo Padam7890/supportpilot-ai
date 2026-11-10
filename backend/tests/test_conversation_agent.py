@@ -116,3 +116,19 @@ async def test_general_greeting_can_be_composed_without_store_facts() -> None:
         planner=planner, adapters={}, composer=composer,
     )
     assert result.answer == "Hello! How can I help?"
+
+
+@pytest.mark.asyncio
+async def test_unapproved_catalog_tool_never_executes() -> None:
+    planner = AsyncMock(return_value=AgentDecision(
+        response_mode="tool",
+        tool_requests=[ToolRequest(name=ToolName.CATALOG_SEARCH, query="phones")],
+        reasoning_code="catalog_query",
+    ))
+    adapter = AsyncMock()
+    with pytest.raises(PermissionError, match="not enabled"):
+        await run_conversation_agent(
+            _INPUT, planner=planner,
+            adapters={ToolName.CATALOG_SEARCH: adapter},
+        )
+    adapter.assert_not_awaited()
