@@ -18,7 +18,8 @@ export type LoginStart =
   | { status: "workspace_selection_required"; workspaces: WorkspaceChoice[]; email_hint?: string }
   | { status: "otp_required"; workspaces: []; email_hint?: string }
   | { user: User };
-export type AuthFlowStatus = { status: string; message: string; email_hint?: string } | { user: User };
+type AuthFlowMessage = { status: string; message: string; email_hint?: string };
+export type AuthFlowStatus = AuthFlowMessage | { user: User };
 export type AuthSessionPage = components["schemas"]["SessionPage"];
 
 export const currentUserQueryKey = ["me"] as const;
@@ -44,7 +45,7 @@ export function verifyLoginCode(code: string) {
 }
 
 export function resendAuthCode() {
-  return api<AuthFlowStatus>("/auth/resend-code", { method: "POST", body: JSON.stringify({}) });
+  return api<AuthFlowMessage>("/auth/resend-code", { method: "POST", body: JSON.stringify({}) });
 }
 
 export function register(values: RegisterValues) {
@@ -60,7 +61,7 @@ export function verifyRegistrationCode(code: string) {
 }
 
 export function requestPasswordReset(email: string) {
-  return api<AuthFlowStatus>("/auth/password-reset/request", {
+  return api<AuthFlowMessage>("/auth/password-reset/request", {
     method: "POST", body: JSON.stringify({ email }),
   });
 }

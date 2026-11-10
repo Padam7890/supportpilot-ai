@@ -14,6 +14,7 @@ vi.mock("../api/ai-api", () => ({
   aiQueryKeys: { execution: (id: string | undefined) => ["ai-execution", id], history: ["ai-executions"] },
   createPlaygroundExecution,
   getAIExecution,
+  previewPlaygroundRetrieval: vi.fn(),
 }));
 
 vi.mock("@/features/auth/api/auth-api", () => ({ getCurrentUser }));
@@ -56,16 +57,16 @@ describe("AI playground", () => {
 
   it("polls for a grounded answer and shows its citation without sending a message", async () => {
     const view = renderPlayground();
-    const question = screen.getByLabelText("Question");
-    fireEvent.change(question, { target: { value: "What is the return policy?" } });
-    const submit = view.getByRole("button", { name: "Generate answer" });
+    const question = screen.getByLabelText("Conversation");
+    const submit = view.getByRole("button", { name: "Send message" });
     await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.change(question, { target: { value: "What is the return policy?" } });
     fireEvent.click(submit);
 
     expect(await screen.findByText(succeededExecution.draft)).toBeInTheDocument();
     expect(screen.getByText(/bot configuration v2/)).toBeInTheDocument();
     expect(screen.getByText("returns.txt · section 1")).toBeInTheDocument();
-    expect(createPlaygroundExecution.mock.calls[0][0]).toEqual({ question: "What is the return policy?" });
+    expect(createPlaygroundExecution.mock.calls[0][0]).toEqual({ question: "What is the return policy?", conversation_history: [] });
     expect(getAIExecution).toHaveBeenCalledWith(succeededExecution.id);
     expect(screen.queryByText(/private reasoning/i)).not.toBeInTheDocument();
   });
@@ -73,6 +74,7 @@ describe("AI playground", () => {
   it("keeps generation disabled for viewers", async () => {
     getCurrentUser.mockResolvedValue({ role: "viewer" });
     const view = renderPlayground();
-    expect(await view.findByRole("button", { name: "Generate answer" })).toBeDisabled();
+    expect(await view.findByText(/Your role has read-only access/)).toBeInTheDocument();
+    expect(view.getByRole("button", { name: "Send message" })).toBeDisabled();
   });
 });

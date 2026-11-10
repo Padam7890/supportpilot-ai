@@ -21,6 +21,7 @@ function renderCanvas(overrides?: Partial<ComponentProps<typeof AutomationNodeCa
       canvasLayout={layout}
       selectedStep={{ type: "trigger" }}
       onSelectStep={vi.fn()}
+      onSelectBranch={vi.fn()}
       validationIssueKeys={new Set()}
       onLayoutChange={vi.fn()}
       onAddCondition={vi.fn()}

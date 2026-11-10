@@ -239,24 +239,16 @@
   }
 
   function normalizeAssistantLineBreaks(content) {
-    // Normalize literal escaped newlines from both new and stored AI messages.
-    // Handle multiple encoding layers without evaluating HTML or other escapes.
-    let text = String(content ?? "");
-    for (let pass = 0; pass < 3; pass++) {
-      const next = text
-        .split(String.raw`\\r\\n`).join("\n")
-        .split(String.raw`\\n`).join("\n");
-      if (next === text) break;
-      text = next;
-    }
-    return text;
+    // Stored and streamed AI replies can contain literal newline escapes.
+    // Decode only line breaks; all reply content is still rendered as text.
+    return String(content ?? "").replace(/\\+r\\+n|\\+n/g, "\n");
   }
 
   function renderAssistantMessage(bubble, content, partial = false) {
     const fragment = document.createDocumentFragment();
     let block = null;
     let blockType = "";
-    for (const line of content.split(/\r?\n/)) {
+    for (const line of normalizeAssistantLineBreaks(content).split(/\r?\n/)) {
       if (!line.trim()) {
         block = null;
         continue;

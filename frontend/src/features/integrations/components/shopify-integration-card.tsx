@@ -277,7 +277,7 @@ export function ShopifyIntegrationCard() {
           {status.data.auth_mode === "client_credentials" && status.data.client_credentials_available
             ? <Button type="button" variant="secondary" size="sm" disabled={connectConfigured.isPending} onClick={() => connectConfigured.mutate()}>{connectConfigured.isPending ? "Reconnecting…" : "Reconnect store"}</Button>
             : status.data.auth_mode === "oauth" && status.data.configured && status.data.shop_domain
-              ? <Button type="button" variant="secondary" size="sm" onClick={() => connect(status.data?.shop_domain)}><ExternalLink size={15}/>Reauthorize Shopify</Button>
+              ? <Button type="button" variant="secondary" size="sm" onClick={() => connect(status.data?.shop_domain ?? undefined)}><ExternalLink size={15}/>Reauthorize Shopify</Button>
               : null}
         </div>}
         {status.data && !status.data.configured && !status.data.client_credentials_available && <p role="status" className="rounded-xl bg-slate-50 p-3 text-sm text-slate-600">For local development, configure a valid store domain, Shopify app client ID and secret, and Fernet encryption key. An HTTPS callback is only needed for Shopify’s browser authorization flow.</p>}

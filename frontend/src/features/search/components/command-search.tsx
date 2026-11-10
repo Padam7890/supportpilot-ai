@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { FileText, LoaderCircle, Search, Ticket, Users, X } from "lucide-react";
@@ -114,7 +114,7 @@ export function CommandSearch({ open: controlledOpen, onOpenChange }: CommandSea
     router.push(item.href);
   }
 
-  function handleInputKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+  function handleInputKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
     if (event.key === "ArrowDown" && items.length) {
       event.preventDefault();
       setActiveIndex((index) => (index + 1) % items.length);

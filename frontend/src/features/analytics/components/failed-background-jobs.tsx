@@ -66,7 +66,7 @@ export function FailedBackgroundJobs({ onTrace }: { onTrace?: (correlationId: st
     refetchIntervalInBackground: false,
   });
   const retry = useMutation({
-    mutationFn: ({ jobId, jobKind }: { jobId: string; jobKind: "ai_execution" | "catalog_sync" }) =>
+    mutationFn: async ({ jobId, jobKind }: { jobId: string; jobKind: "ai_execution" | "catalog_sync" }) =>
       jobKind === "ai_execution" ? retryAIExecution(jobId) : retryCatalogSyncJob(jobId),
     onSuccess: async () => {
       await Promise.all([

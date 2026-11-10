@@ -164,7 +164,7 @@ export default function TicketDetailPage() {
           <Panel><PanelHeader title="Customer"/><PanelBody><Button type="button" variant="unstyled" disabled={customerDrawerLoading} onClick={openCustomerDetails} className="flex w-full items-center gap-3 rounded-lg text-left hover:bg-muted/40"><span className="grid size-10 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground">{customerDrawerLoading ? <LoaderCircle size={17} className="animate-spin"/> : <UserRound size={18}/>}</span><span className="min-w-0 truncate font-medium text-foreground">{ticket.customer_name ?? "View customer"}</span><span className="ml-auto text-xs text-primary">{customerDrawerLoading ? "Loading…" : "View profile"}</span></Button></PanelBody></Panel>
         </div>
       </div>
-      {customerForDrawer && <CustomerFormDrawer open={customerDrawerOpen} onOpenChange={setCustomerDrawerOpen} customer={customerForDrawer} mode={customerDrawerMode} onModeChange={setCustomerDrawerMode}/>}
+      {customerForDrawer && <CustomerFormDrawer open={customerDrawerOpen} onOpenChange={setCustomerDrawerOpen} customer={customerForDrawer} mode={customerDrawerMode} onModeChange={(mode) => { if (mode !== "create") setCustomerDrawerMode(mode); }}/>}
     </div>
   );
 }

@@ -184,6 +184,8 @@ function summarizeWorkflow(workflow: AutomationWorkflow) {
         return `Priority → ${a.value}`;
       case "assign_to_user":
         return "Assign teammate";
+      case "assign_to_team":
+        return "Assign support team";
       case "set_ticket_status":
         return `Status → ${a.value}`;
       case "set_conversation_ai_mode":

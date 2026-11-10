@@ -1121,7 +1121,7 @@ export function AutomationWorkspace() {
               <label className="mt-2 flex cursor-pointer items-start gap-2 text-[11px] text-amber-900">
                 <Checkbox
                   checked={acknowledgeBroadRule}
-                  onCheckedChange={(e) => setAcknowledgeBroadRule(e.target.checked)}
+                  onCheckedChange={setAcknowledgeBroadRule}
                   className="mt-0.5 rounded border-amber-300"
                 />
                 <span className="leading-snug">Broad rule: no conditions. Confirm before publishing.</span>
@@ -1475,6 +1475,7 @@ export function AutomationWorkspace() {
                   draftValidation={draftValidation}
                   setShowValidation={setShowValidation}
                   members={members}
+                  teams={teams}
                   bots={aiAgents.data?.items ?? []}
                   connections={integrationConnections.data?.items ?? []}
                   botOptionsStatus={!canManage ? "restricted" : aiAgents.isPending ? "loading" : aiAgents.isError ? "error" : "ready"}
@@ -1642,6 +1643,7 @@ function InspectorConfigure({
   draftValidation,
   setShowValidation,
   members,
+  teams,
   bots,
   connections,
   botOptionsStatus,
@@ -1658,6 +1660,7 @@ function InspectorConfigure({
   draftValidation: ReturnType<typeof validateWorkflowDraft>;
   setShowValidation: (v: boolean) => void;
   members: UseQueryResult<User[], Error>;
+  teams: UseQueryResult<SupportTeam[], Error>;
   bots: AIAgent[];
   connections: IntegrationConnection[];
   botOptionsStatus: "restricted" | "loading" | "error" | "ready";
@@ -1667,6 +1670,7 @@ function InspectorConfigure({
   fieldClass: string;
   onSelectErrorStep: (s: DraftStep) => void;
 }) {
+  const trigger = draft.trigger;
   const condIssues = (i: number) =>
     draftValidation.issues.filter((x) => x.step.type === "condition" && x.step.index === i).map((x) => x.message);
   const actIssues = (i: number) =>
@@ -1682,7 +1686,7 @@ function InspectorConfigure({
           <label className="mt-2 block text-sm font-medium text-slate-700">
             Start workflow when
             <Select
-              value={draft.trigger.kind}
+              value={trigger.kind}
               onChange={(event) => updateDraft({
                 trigger: event.target.value === "conversation_started"
                   ? { kind: "conversation_started" }
@@ -1697,11 +1701,11 @@ function InspectorConfigure({
               <option value="ticket_created">An inbound message creates a ticket</option>
             </Select>
           </label>
-          {draft.trigger.kind === "conversation_started" ? (
+          {trigger.kind === "conversation_started" ? (
             <p className="mt-2 text-xs text-slate-500">
               Runs once when the first customer message is saved. Later messages in the same conversation do not start another run.
             </p>
-          ) : draft.trigger.kind === "ticket_created" ? (
+          ) : trigger.kind === "ticket_created" ? (
             <>
               <p className="mt-2 text-xs text-slate-500">
                 Runs when the first inbound storefront or connected-channel message creates a ticket. Agent-created tickets without an inbound conversation do not trigger this workflow. Add a channel filter to limit it to a source such as widget.
@@ -1709,8 +1713,8 @@ function InspectorConfigure({
               <label className="mt-3 block text-sm font-medium text-slate-700">
                 Channel filter (optional)
                 <Input
-                  value={draft.trigger.channel ?? ""}
-                  onChange={(event) => updateDraft({ trigger: { ...draft.trigger, channel: event.target.value.trim() ? event.target.value : null } })}
+                  value={trigger.channel ?? ""}
+                  onChange={(event) => updateDraft({ trigger: { ...trigger, channel: event.target.value.trim() ? event.target.value : null } })}
                   maxLength={40}
                   placeholder="e.g. widget"
                   className={fieldClass}
@@ -1719,13 +1723,13 @@ function InspectorConfigure({
               <label className="mt-3 block text-sm font-medium text-slate-700">
                 AI bot filter (optional)
                 <Select
-                  value={draft.trigger.ai_agent_id ?? ""}
+                  value={trigger.ai_agent_id ?? ""}
                   disabled={botOptionsStatus !== "ready"}
-                  onChange={(event) => updateDraft({ trigger: { ...draft.trigger, ai_agent_id: event.target.value || null } })}
+                  onChange={(event) => updateDraft({ trigger: { ...trigger, ai_agent_id: event.target.value || null } })}
                   className={fieldClass}
                 >
                   <option value="">Any bot</option>
-                  {draft.trigger.ai_agent_id && !bots.some((bot) => bot.id === draft.trigger.ai_agent_id && bot.status === "active") && <option value={draft.trigger.ai_agent_id}>{bots.find((bot) => bot.id === draft.trigger.ai_agent_id)?.name ?? "Saved bot selection unavailable"} · inactive or unavailable</option>}
+                  {trigger.ai_agent_id && !bots.some((bot) => bot.id === trigger.ai_agent_id && bot.status === "active") && <option value={trigger.ai_agent_id}>{bots.find((bot) => bot.id === trigger.ai_agent_id)?.name ?? "Saved bot selection unavailable"} · inactive or unavailable</option>}
                   {bots.filter((bot) => bot.status === "active").map((agent) => <option key={agent.id} value={agent.id}>{agent.name}{agent.is_default ? " · default" : ""}</option>)}
                 </Select>
                 {botOptionsStatus === "loading" && <span role="status" className="mt-1 block text-xs font-normal text-slate-500">Loading active bots…</span>}
@@ -1735,13 +1739,13 @@ function InspectorConfigure({
               <label className="mt-3 block text-sm font-medium text-slate-700">
                 Connected integration filter (optional)
                 <Select
-                  value={draft.trigger.integration_connection_id ?? ""}
+                  value={trigger.integration_connection_id ?? ""}
                   disabled={connectionOptionsStatus !== "ready"}
-                  onChange={(event) => updateDraft({ trigger: { ...draft.trigger, integration_connection_id: event.target.value || null } })}
+                  onChange={(event) => updateDraft({ trigger: { ...trigger, integration_connection_id: event.target.value || null } })}
                   className={fieldClass}
                 >
                   <option value="">Any connection</option>
-                  {draft.trigger.integration_connection_id && !connections.some((connection) => connection.id === draft.trigger.integration_connection_id && connection.status === "connected") && <option value={draft.trigger.integration_connection_id}>{connections.find((connection) => connection.id === draft.trigger.integration_connection_id)?.display_name ?? "Saved connection unavailable"} · disconnected or unavailable</option>}
+                  {trigger.integration_connection_id && !connections.some((connection) => connection.id === trigger.integration_connection_id && connection.status === "connected") && <option value={trigger.integration_connection_id}>{connections.find((connection) => connection.id === trigger.integration_connection_id)?.display_name ?? "Saved connection unavailable"} · disconnected or unavailable</option>}
                   {connections.filter((connection) => connection.status === "connected").map((connection) => <option key={connection.id} value={connection.id}>{connection.display_name} · {connection.provider_id}</option>)}
                 </Select>
                 {connectionOptionsStatus === "loading" && <span role="status" className="mt-1 block text-xs font-normal text-slate-500">Loading connected integrations…</span>}
@@ -1757,11 +1761,11 @@ function InspectorConfigure({
           <label className="mt-3 block text-sm font-medium text-slate-700">
             Channel filter (optional)
             <Input
-              value={draft.trigger.channel ?? ""}
+              value={trigger.channel ?? ""}
               onChange={(e) =>
                 updateDraft({
                   trigger: {
-                    ...draft.trigger,
+                    ...trigger,
                     channel: e.target.value.trim() ? e.target.value : null,
                   },
                 })
@@ -1772,10 +1776,10 @@ function InspectorConfigure({
           </label>
           <label className="mt-2 flex items-center gap-2 text-sm text-slate-700">
             <Checkbox
-              checked={draft.trigger.first_message_only}
-              onCheckedChange={(e) =>
+              checked={trigger.first_message_only}
+              onCheckedChange={(checked) =>
                 updateDraft({
-                  trigger: { ...draft.trigger, first_message_only: e.target.checked },
+                  trigger: { ...trigger, first_message_only: checked },
                 })
               }
             />
@@ -1784,13 +1788,13 @@ function InspectorConfigure({
           <label className="mt-3 block text-sm font-medium text-slate-700">
             AI bot filter (optional)
             <Select
-              value={draft.trigger.ai_agent_id ?? ""}
+              value={trigger.ai_agent_id ?? ""}
               disabled={botOptionsStatus !== "ready"}
-              onChange={(event) => updateDraft({ trigger: { ...draft.trigger, ai_agent_id: event.target.value || null } })}
+              onChange={(event) => updateDraft({ trigger: { ...trigger, ai_agent_id: event.target.value || null } })}
               className={fieldClass}
             >
               <option value="">Any bot</option>
-              {draft.trigger.ai_agent_id && !bots.some((bot) => bot.id === draft.trigger.ai_agent_id && bot.status === "active") && <option value={draft.trigger.ai_agent_id}>{bots.find((bot) => bot.id === draft.trigger.ai_agent_id)?.name ?? "Saved bot selection unavailable"} · inactive or unavailable</option>}
+              {trigger.ai_agent_id && !bots.some((bot) => bot.id === trigger.ai_agent_id && bot.status === "active") && <option value={trigger.ai_agent_id}>{bots.find((bot) => bot.id === trigger.ai_agent_id)?.name ?? "Saved bot selection unavailable"} · inactive or unavailable</option>}
               {bots.filter((bot) => bot.status === "active").map((bot) => <option key={bot.id} value={bot.id}>{bot.name}{bot.is_default ? " · default" : ""}</option>)}
             </Select>
             {botOptionsStatus === "loading" && <span role="status" className="mt-1 block text-xs font-normal text-slate-500">Loading active bots…</span>}
@@ -1800,13 +1804,13 @@ function InspectorConfigure({
           <label className="mt-2 block text-sm font-medium text-slate-700">
             Connected integration filter (optional)
             <Select
-              value={draft.trigger.integration_connection_id ?? ""}
+              value={trigger.integration_connection_id ?? ""}
               disabled={connectionOptionsStatus !== "ready"}
-              onChange={(event) => updateDraft({ trigger: { ...draft.trigger, integration_connection_id: event.target.value || null } })}
+              onChange={(event) => updateDraft({ trigger: { ...trigger, integration_connection_id: event.target.value || null } })}
               className={fieldClass}
             >
               <option value="">Any connection</option>
-              {draft.trigger.integration_connection_id && !connections.some((connection) => connection.id === draft.trigger.integration_connection_id && connection.status === "connected") && <option value={draft.trigger.integration_connection_id}>{connections.find((connection) => connection.id === draft.trigger.integration_connection_id)?.display_name ?? "Saved connection unavailable"} · disconnected or unavailable</option>}
+              {trigger.integration_connection_id && !connections.some((connection) => connection.id === trigger.integration_connection_id && connection.status === "connected") && <option value={trigger.integration_connection_id}>{connections.find((connection) => connection.id === trigger.integration_connection_id)?.display_name ?? "Saved connection unavailable"} · disconnected or unavailable</option>}
               {connections.filter((connection) => connection.status === "connected").map((connection) => <option key={connection.id} value={connection.id}>{connection.display_name} · {connection.provider_id}</option>)}
             </Select>
             {connectionOptionsStatus === "loading" && <span role="status" className="mt-1 block text-xs font-normal text-slate-500">Loading connected integrations…</span>}
@@ -2116,11 +2120,11 @@ function InspectorConfigure({
               <label className="mt-2 flex items-center gap-2 text-sm text-slate-700">
                 <Checkbox
                   checked={(draft.actions[selectedStep.index] as Extract<Action, { kind: "set_priority" }>).only_raise}
-                  onCheckedChange={(e) =>
+                  onCheckedChange={(checked) =>
                     updateDraft((c) => {
                       const next = [...c.actions];
                       const cur = next[selectedStep.index] as Extract<Action, { kind: "set_priority" }>;
-                      next[selectedStep.index] = { ...cur, only_raise: e.target.checked };
+                      next[selectedStep.index] = { ...cur, only_raise: checked };
                       return { ...c, actions: next };
                     })
                   }
@@ -2160,11 +2164,11 @@ function InspectorConfigure({
               <label className="mt-2 flex items-center gap-2 text-sm text-slate-700">
                 <Checkbox
                   checked={(draft.actions[selectedStep.index] as Extract<Action, { kind: "assign_to_user" }>).only_if_unassigned}
-                  onCheckedChange={(e) =>
+                  onCheckedChange={(checked) =>
                     updateDraft((c) => {
                       const next = [...c.actions];
                       const cur = next[selectedStep.index] as Extract<Action, { kind: "assign_to_user" }>;
-                      next[selectedStep.index] = { ...cur, only_if_unassigned: e.target.checked };
+                      next[selectedStep.index] = { ...cur, only_if_unassigned: checked };
                       return { ...c, actions: next };
                     })
                   }
@@ -2208,11 +2212,11 @@ function InspectorConfigure({
               <label className="mt-2 flex items-center gap-2 text-sm text-slate-700">
                 <Checkbox
                   checked={(draft.actions[selectedStep.index] as Extract<Action, { kind: "assign_to_team" }>).only_if_unassigned}
-                  onCheckedChange={(e) =>
+                  onCheckedChange={(checked) =>
                     updateDraft((c) => {
                       const next = [...c.actions];
                       const cur = next[selectedStep.index] as Extract<Action, { kind: "assign_to_team" }>;
-                      next[selectedStep.index] = { ...cur, only_if_unassigned: e.target.checked };
+                      next[selectedStep.index] = { ...cur, only_if_unassigned: checked };
                       return { ...c, actions: next };
                     })
                   }
@@ -2283,9 +2287,9 @@ function InspectorConfigure({
                   className={fieldClass}
                 >
                   <option value="" disabled>
-                    {aiAgents.isLoading ? "Loading active AI bots…" : "Choose an active AI bot"}
+                    {botOptionsStatus === "loading" ? "Loading active AI bots…" : "Choose an active AI bot"}
                   </option>
-                  {aiAgents.data?.items
+                  {bots
                     .filter((agent) => agent.status === "active")
                     .map((agent) => (
                       <option key={agent.id} value={agent.id}>
@@ -2297,12 +2301,12 @@ function InspectorConfigure({
               <p className="mt-2 text-xs leading-5 text-slate-500">
                 This applies to future widget messages after the workflow finishes. The current message may already have an AI reply queued.
               </p>
-              {aiAgents.isError && (
+              {botOptionsStatus === "error" && (
                 <span role="alert" className="mt-1 block text-xs text-red-700">
-                  Unable to load AI bots. <Button variant="unstyled" type="button" className="underline" onClick={() => void aiAgents.refetch()}>Try again</Button>
+                  Unable to load AI bots. <Button variant="unstyled" type="button" className="underline" onClick={onRetryBotOptions}>Try again</Button>
                 </span>
               )}
-              {!aiAgents.isLoading && !aiAgents.isError && !(aiAgents.data?.items.some((agent) => agent.status === "active")) && (
+              {botOptionsStatus === "ready" && !bots.some((agent) => agent.status === "active") && (
                 <p className="mt-1 text-xs text-amber-800">
                   Create or activate a bot in <Link href="/dashboard/ai/agents" className="underline">AI Bots</Link> before routing conversations.
                 </p>
@@ -2778,11 +2782,11 @@ function InspectorTest({
             {previewResult.matches ? "Workflow would match" : "Workflow would not match"}
             {previewResult.assumptions?.length ? " under these assumptions" : ""}
           </p>
-          {previewResult.assumptions?.length > 0 && (
+          {Boolean(previewResult.assumptions?.length) && (
             <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-950">
               <p className="font-semibold">Preview assumptions</p>
               <ul className="mt-1 list-disc space-y-0.5 pl-4">
-                {previewResult.assumptions.map((assumption) => <li key={assumption}>{assumption}</li>)}
+                {previewResult.assumptions?.map((assumption) => <li key={assumption}>{assumption}</li>)}
               </ul>
             </div>
           )}

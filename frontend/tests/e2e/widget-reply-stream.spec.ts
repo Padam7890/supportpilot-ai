@@ -55,7 +55,7 @@ test("widget renders a partial reply, resumes after disconnect, and keeps one fi
               if (resumed) {
                 completed = true;
                 push("message.delta", `${executionId}:1:126-0`, {
-                  text: "\n\n- Standard delivery\n- <img src=x onerror=alert(1)>",
+                  text: String.raw`\n\n- Standard delivery\n- <img src=x onerror=alert(1)>\n\nDelivery times vary by location.`,
                 });
                 push("message.completed", `${executionId}:1:999-0`, { message_id: "final" });
               }
@@ -69,7 +69,7 @@ test("widget renders a partial reply, resumes after disconnect, and keeps one fi
         if (completed && !historyReady) performance.mark("test-history-pending");
         return Response.json({ ai_mode: "ai", messages: [
           ...(sent ? [{ id: "customer", sender_type: "customer", content: question, created_at: date }] : []),
-          ...(completed && historyReady ? [{ id: "final", sender_type: "assistant", content: "Shipping takes **two days**.\n\n- Standard delivery\n- <img src=x onerror=alert(1)>", created_at: date }] : []),
+          ...(completed && historyReady ? [{ id: "final", sender_type: "assistant", content: String.raw`Shipping takes **two days**.\\r\\n\\r\\n- Standard delivery\\n- <img src=x onerror=alert(1)>\\n\\nDelivery times vary by location.`, created_at: date }] : []),
         ] });
       }
       return originalFetch(input, options);
@@ -117,6 +117,7 @@ test("widget renders a partial reply, resumes after disconnect, and keeps one fi
     performance.getEntriesByName("test-history-pending").length
   )).toBeGreaterThan(0);
   await expect(partial).toContainText("Shipping takes two days.");
+  await expect(partial.locator("ul li")).toHaveCount(2);
   await expect.poll(async () => Number(await widget.getAttribute("data-burst-paints"))).toBeGreaterThan(2);
   // The browser must paint several intermediate lengths even when the final
   // network burst contains most of the response in a single read.
@@ -129,6 +130,7 @@ test("widget renders a partial reply, resumes after disconnect, and keeps one fi
   await expect(reply.locator("ul li")).toHaveCount(2);
   await expect(reply.locator("ul li").last()).toHaveText("<img src=x onerror=alert(1)>");
   await expect(reply.locator("img")).toHaveCount(0);
+  await expect(reply.locator("p")).toHaveText(["Shipping takes two days.", "Delivery times vary by location."]);
   await expect(partial).toHaveCount(0);
   await expect(widget.locator(".customer .message")).toHaveCount(1);
 });
