@@ -23,7 +23,7 @@ ReviewReason = Literal[
     "missing_citations", "invalid_citation_index", "unsupported_numeric_claim", "citation_source_mismatch",
 ]
 _MAX_SPANS = 12
-_REVIEW_BATCH_SIZE = 1
+_REVIEW_BATCH_SIZE = 3
 _REVIEW_TIMEOUT_SECONDS = 12
 _SPAN_BREAK = re.compile(r"\n+|(?<=[.!?।])\s+(?!\[(?:source|doc)\b)", re.IGNORECASE)
 
