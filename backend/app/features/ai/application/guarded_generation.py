@@ -134,6 +134,9 @@ async def generate_guarded_draft(
     # Keep verified provenance in structured citations, not customer-visible text.
     # Strip only after verification and provenance checks have succeeded.
     text = CITATION_PATTERN.sub("", composed.text)
+    # The model may emit escaped paragraph separators as literal characters.
+    # Normalize only newline escapes after the factual answer is verified.
+    text = text.replace("\\\\r\\\\n", "\\n").replace("\\\\n", "\\n")
     text = "\\n".join(line.rstrip() for line in text.splitlines()).strip()
     if order_text:
         text = f"{order_text}\n\n{text}"
