@@ -304,15 +304,18 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 routed_question = follow_up.routed_question
                 if follow_up.decision == "policy_timing":
                     follow_up_query = routed_question
+            context_query_resolved = False
             if follow_up is None:
                 from app.features.ai.application.conversational_query_resolver import resolve_conversational_query
                 resolved_query = await resolve_conversational_query(execution.question, transcript)
                 if resolved_query.mode == "resolved":
+                    context_query_resolved = True
                     routed_question = resolved_query.question
                     follow_up_query = resolved_query.question
             route_result = await resolve_widget_turn(
                 routed_question,
                 transcript,
+                allow_model=not context_query_resolved,
                 follow_up_decision=(
                     follow_up.decision
                     if follow_up is not None and follow_up.routed_question else None
