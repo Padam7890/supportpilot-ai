@@ -45,6 +45,7 @@ async def generate_guarded_draft(
 ) -> GuardedDraft:
     started = time.monotonic()
     used_new_rag_composer = False
+    rag_grounding_sources: list[dict[str, str]] = []
     # Knowledge-only runs now share the bounded natural-answer composer.
     # Retrieval and citation authorization remain in the existing worker.
     # Integration-backed answers keep their dedicated secure execution path.
@@ -61,6 +62,9 @@ async def generate_guarded_draft(
             for item in context[:6]
         ]
         evidence_items = [item for item in evidence_items if item["content"].strip()]
+        rag_grounding_sources = [
+            {"excerpt": item["content"]} for item in evidence_items
+        ]
         if not evidence_items:
             raise ValueError("Retrieved knowledge has no usable excerpts")
         used_new_rag_composer = True
@@ -110,7 +114,7 @@ async def generate_guarded_draft(
         correlation_id=correlation_id,
     )
     generated = str(result.get("draft", ""))[:12000]
-    # New RAG generation requires an explicit reference to retrieved evidence.\n    # The legacy integration path has separate trusted-data handling and is\n    # not covered by this stricter citation contract yet.\n    grounding = (\n        check_grounded_claims(generated, context, require_citations=True)\n        if used_new_rag_composer\n        else check_generated_answer(\n            generated, context if not integration_context else []\n        )\n    )
+    # New RAG generation requires an explicit reference to retrieved evidence.\n    # The legacy integration path has separate trusted-data handling and is\n    # not covered by this stricter citation contract yet.\n    grounding = (\n        check_grounded_claims(generated, rag_grounding_sources, require_citations=True)\n        if used_new_rag_composer\n        else check_generated_answer(\n            generated, context if not integration_context else []\n        )\n    )
     if grounding.accepted:
         return GuardedDraft(
             text=generated, accepted=True, grounding_reason=None,
