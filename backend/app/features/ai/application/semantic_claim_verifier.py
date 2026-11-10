@@ -101,7 +101,9 @@ async def verify_candidate(
         return SemanticVerification(False, "sensitive_claim")
     messages = [
         {"role": "system", "content": _REVIEW_INSTRUCTIONS},
-        {"role": "user", "content": json.dumps({"sources": sources, "spans": spans}, ensure_ascii=False)},
+        {"role": "user", "content": json.dumps({"sources": sources, "span_count": len(spans), "spans": [
+            {"index": index, "text": span} for index, span in enumerate(spans, 1)
+        ]}, ensure_ascii=False)},
     ]
     try:
         async with asyncio.timeout(_REVIEW_TIMEOUT_SECONDS):
