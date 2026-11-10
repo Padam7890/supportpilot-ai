@@ -304,11 +304,6 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 routed_question = follow_up.routed_question
                 if follow_up.decision == "policy_timing":
                     follow_up_query = routed_question
-            from app.features.ai.application.policy_follow_up import resolve_policy_option
-            policy_option_query = resolve_policy_option(execution.question, transcript)
-            if policy_option_query and follow_up is None:
-                routed_question = policy_option_query
-                follow_up_query = policy_option_query
             route_result = await resolve_widget_turn(
                 routed_question,
                 transcript,
