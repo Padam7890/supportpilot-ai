@@ -11,12 +11,12 @@ Interpret customer turns consistently across widget and Playground without chang
 | Package | Status |
 | --- | --- |
 | 1. Repair multi-clause detection and protect existing routing | Implemented |
-| 2. Normalize and classify corrections, negations, and topic switches | Pending |
-| 3. Resolve contextual follow-ups with bounded topic history | Pending |
-| 4. Represent multiple intents without executing multiple actions | Pending |
+| 2. Normalize and classify corrections, negations, and topic switches | Implemented (advisory signals) |
+| 3. Resolve contextual follow-ups with bounded topic history | Existing bounded resolver reused; deeper review pending |
+| 4. Represent multiple intents without executing multiple actions | Shared advisory signal implemented; final review pending |
 | 5. Improve ambiguous references and clarification decisions | Pending |
-| 6. Support English, Nepali, and mixed messages safely | Pending |
-| 7. Integrate understanding consistently into widget and Playground | Pending |
+| 6. Support English, Nepali, and mixed messages safely | Existing language detector reused; language-specific review pending |
+| 7. Integrate understanding consistently into widget and Playground | Shared router metadata implemented |
 | 8. Review latency, routing costs, and safe fallback paths | Pending |
 | 9. Final code-level consolidation | Pending |
 
@@ -27,3 +27,13 @@ Fixed the clause separator regex: it previously matched literal backslash-s text
 **Safety invariant:** Classification is advisory. No inferred intent may bypass order verification, trigger refunds/cancellations, or turn conversation history into trusted evidence.
 
 **Verification:** Tests and CI/CD are deferred by owner request. No runtime pass is claimed.
+
+## Current branch changes
+
+- Repaired multi-clause whitespace separator and added regression scenarios.
+- Added explicit correction and negated-commerce-action signals to the typed understanding result. These signals are advisory and never authorize an order or refund action.
+- Integrated the same bounded understanding metadata into the common intent routing service used by widget and Playground. No additional LLM call was introduced.
+- Preserved existing deterministic action routing and verification precedence; no model-inferred commerce execution is enabled.
+- Added regression scenarios for negated cancellation, Nepali script detection and a context-free follow-up.
+
+**Remaining:** Clarification behavior, language-specific cases, follow-up edge cases, latency review and final consolidation. Do not mark Phase 2 complete before these are reviewed. Tests and CI/CD were not executed, per request.
