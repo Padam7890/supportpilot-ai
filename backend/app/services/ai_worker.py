@@ -28,7 +28,6 @@ from app.features.ai.application.stream_context_policy import (
     can_stream_transcript as _can_stream_transcript,
     stream_conversation_context as _stream_conversation_context,
 )
-from app.features.ai.application.conversation_orchestration import playground_missing_knowledge_reply
 from app.features.ai.application.follow_up import (
     assess_widget_follow_up,
     infer_assistant_question,
@@ -86,13 +85,15 @@ async def finish_no_knowledge_execution(
     organization_id: UUID, execution_id: UUID, *, question: str = ""
 ) -> None:
     """Complete a non-widget run without calling the model when retrieval is empty."""
+    missing = plan_missing_evidence_reply(
+        execution_kind="playground",
+        question=question,
+    )
     await finish_deterministic_ai_execution(
         organization_id,
         execution_id,
-        draft=playground_missing_knowledge_reply(question),
-        safe_summary=(
-            "No matching knowledge was found in the active bot’s assigned sources; no model answer was generated."
-        ),
+        draft=missing.draft,
+        safe_summary=missing.safe_summary,
         tool_name="tenant_knowledge_search",
         result_count=0,
     )
