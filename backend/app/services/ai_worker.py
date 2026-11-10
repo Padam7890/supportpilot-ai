@@ -41,6 +41,7 @@ from app.features.ai.application.knowledge_inventory import is_knowledge_invento
 from app.features.ai.application.playground_execution import complete_playground_knowledge_inventory
 from app.features.ai.application.playground_routing import route_playground_conversation
 from app.features.ai.application.guarded_generation import generate_guarded_draft
+from app.features.ai.application.missing_evidence_policy import plan_missing_evidence_reply
 from app.features.ai.application.retrieval_search import citations_remain_authorized
 from app.features.ai.application.widget_orders import _question_order_number
 from app.features.ai.application.widget_replies import (
@@ -65,7 +66,6 @@ from app.models import (
 from app.services.widget_ai import (
     AI_TEMPORARY_FAILURE_REPLY,
     WIDGET_PROVIDER_UNAVAILABLE_REPLY,
-    widget_missing_knowledge_reply,
 )
 
 logger = logging.getLogger(__name__)
@@ -387,26 +387,22 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 **{k: (intent_router_outcome or {}).get(k) for k in ("mode", "primary_intent", "metrics")},
             )
         if not context and not integration_context:
+            missing = plan_missing_evidence_reply(
+                execution_kind=execution.kind,
+                question=execution.question if execution.kind == "widget_reply" else question,
+                clarification=generic_clarification,
+                intent_router_outcome=intent_router_outcome,
+                delivery_status=delivery_status if execution.kind == "widget_reply" else "sent",
+            )
             if execution.kind == "widget_reply":
                 await finish_widget_reply(
                     organization_id,
                     execution_id,
-                    draft=generic_clarification or widget_missing_knowledge_reply(execution.question),
-                    reply_status=delivery_status if generic_clarification else "escalated",
-                    safe_summary=(
-                        "The shopper was asked for clarification after no matching sources were found."
-                        if generic_clarification else
-                        "No matching knowledge was found in the active bot’s assigned sources. The shopper received a safe next step."
-                    ),
+                    draft=missing.draft,
+                    reply_status=missing.reply_status,
+                    safe_summary=missing.safe_summary,
                     citations=[],
-                    outcomes=[
-                        *([intent_router_outcome] if intent_router_outcome else []),
-                        {
-                            "tool": "tenant_knowledge_search",
-                            "status": "completed",
-                            "result_count": 0,
-                        },
-                    ],
+                    outcomes=missing.outcomes,
                     usage={},
                     model_name=None,
                 )
