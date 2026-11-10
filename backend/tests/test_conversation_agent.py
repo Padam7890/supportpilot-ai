@@ -25,7 +25,7 @@ async def test_read_only_agent_uses_authorized_evidence() -> None:
         facts=["Phone A is available"], source_ids=["product-a"],
     ))
     composer = AsyncMock(return_value=ComposedAnswer(
-        text="Phone A is available.", usage={}, model_name="test",
+        text="Phone A is available. [source 1]", usage={}, model_name="test",
     ))
     result = await run_conversation_agent(
         _INPUT, planner=planner,
@@ -132,3 +132,25 @@ async def test_unapproved_catalog_tool_never_executes() -> None:
             adapters={ToolName.CATALOG_SEARCH: adapter},
         )
     adapter.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tool_answer_without_citation_is_rejected() -> None:
+    planner = AsyncMock(return_value=AgentDecision(
+        response_mode="tool",
+        tool_requests=[ToolRequest(name=ToolName.KNOWLEDGE_SEARCH, query="delivery")],
+        reasoning_code="policy",
+    ))
+    composer = AsyncMock(return_value=ComposedAnswer(
+        text="Delivery time varies.", usage={}, model_name="test",
+    ))
+    with pytest.raises(ValueError, match="missing_citations"):
+        await run_conversation_agent(
+            _INPUT, planner=planner,
+            adapters={ToolName.KNOWLEDGE_SEARCH: AsyncMock(return_value=ToolResult(
+                name=ToolName.KNOWLEDGE_SEARCH, status="ok",
+                facts=["Delivery time varies."], source_ids=["doc-1"],
+            ))},
+            composer=composer,
+            allowed_tools=frozenset({ToolName.KNOWLEDGE_SEARCH}),
+        )
