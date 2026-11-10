@@ -7,7 +7,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.observability import current_correlation_id
@@ -87,7 +87,6 @@ from app.services.widget_ai import (
     widget_missing_knowledge_reply,
     widget_request_needs_order_verification,
 )
-from app.workers.domain.lease_policy import AI_EXECUTION_LEASE as LEASE_TIMEOUT
 from app.workers.domain.retry_policy import retry_delay_seconds
 
 logger = logging.getLogger(__name__)
