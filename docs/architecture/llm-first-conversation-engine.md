@@ -147,3 +147,10 @@ Enable only in a controlled development environment after reviewing model costs 
 - The standalone read-only agent now requires source citations on tool-backed responses, consistent with migrated RAG generation. The greeting path remains citation-free because it uses no tool evidence.
 - Added a regression test rejecting uncited tool-backed answers and updated the positive tool-answer fixture. Corrected stale runtime comments.
 - **Not yet migrated:** integration-backed order/Shopify generation and complete legacy removal. No tests or CI/CD were executed in this session.
+
+## Verified Shopify order evidence boundary (pre-integration)
+
+- Added `conversation_verified_order_evidence.py` to construct bounded, allowlisted evidence from **already-authorized** server-owned order context. The builder rejects unverified identity, unknown/nested fields and common prompt-injection formatting; it excludes contact details, addresses and tokens. It does not authenticate the customer, perform Shopify calls or grant model tool permissions.
+- Added regression tests for unauthorized access and sensitive-field exclusion. **Not wired into production order generation** until the real decrypted Shopify context schema and OTP authorization provenance are verified. No legacy order code deleted.
+- The remaining work is substantive: bind verification to an execution-scoped server token, map the actual Shopify response schema, enforce source-to-claim semantic support, update all live callers, and run integration tests before removing `create_grounded_draft`.
+- Tests were not run.
