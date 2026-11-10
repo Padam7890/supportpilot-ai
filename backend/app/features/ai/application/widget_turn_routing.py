@@ -25,6 +25,7 @@ async def resolve_widget_turn(
     transcript: list[dict[str, str]],
     *,
     follow_up_decision: str | None = None,
+    allow_model: bool = True,
 ) -> WidgetRouteResult:
     """Preserve follow-up precedence before optional LLM intent classification."""
     base = plan_widget_turn(message, transcript)
@@ -37,7 +38,7 @@ async def resolve_widget_turn(
     if base.route != "knowledge":
         return WidgetRouteResult(base, {"tool": base.tool_name, "status": "completed"}, False)
     routing = await resolve_customer_routing(
-        message, transcript, channel="widget", for_generation=True,
+        message, transcript, channel="widget", for_generation=True, allow_model=allow_model,
     )
     return WidgetRouteResult(
         turn=apply_routing_to_widget_plan(message, transcript, routing, base=base),
