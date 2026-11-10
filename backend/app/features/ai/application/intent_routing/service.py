@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
+from app.features.ai.application.conversation_understanding import understand_conversation_turn
 from app.features.ai.application.conversation_orchestration import (
     CustomerTurnPlan,
     plan_widget_turn,
@@ -37,6 +38,7 @@ class CustomerRoutingResolution:
     clarify: bool = False
     multi_intent: bool = False
     metrics: IntentRouterMetrics = field(default_factory=IntentRouterMetrics)
+    understanding: dict[str, object] = field(default_factory=dict)
 
     def tool_outcome(self) -> dict[str, object]:
         det = self.deterministic
@@ -55,6 +57,7 @@ class CustomerRoutingResolution:
             "multi_intent": self.multi_intent,
             "should_clarify": self.clarify,
             "metrics": self.metrics.to_log_fields(),
+            "understanding": self.understanding,
         }
 
 
@@ -65,6 +68,7 @@ async def resolve_customer_routing(
     channel: str,
 ) -> CustomerRoutingResolution:
     started = time.monotonic()
+    understanding = understand_conversation_turn(message, transcript)
     assessment = assess_deterministic_route(message, transcript)
     metrics = IntentRouterMetrics(deterministic_route_count=1)
     if assessment.competing or assessment.confidence < 0.75:
@@ -72,11 +76,28 @@ async def resolve_customer_routing(
 
     resolution = CustomerRoutingResolution(
         deterministic=assessment, mode="deterministic",
-        multi_intent=assessment.competing,
+        multi_intent=assessment.competing or understanding.multi_intent,
+        understanding={
+            "language": understanding.language,
+            "contextual_follow_up": understanding.contextual_follow_up,
+            "topic_switch": understanding.topic_switch,
+            "correction": understanding.correction,
+            "negated_action": understanding.negated_action,
+            "multi_intent": understanding.multi_intent,
+            "needs_clarification": understanding.needs_clarification,
+        },
     )
-    if assessment.competing:
+    if resolution.multi_intent:
         metrics.multi_intent_count = 1
-    invoke = should_invoke_llm_router(assessment, message)
+    if understanding.needs_clarification:
+        resolution.clarify = True
+    # Standalone negations and context-free references are deterministic;
+    # an extra model call cannot authorize an action or invent missing context.
+    invoke = (
+        not understanding.negated_action
+        and not understanding.needs_clarification
+        and should_invoke_llm_router(assessment, message)
+    )
     llm_invoked = False
 
     if invoke:
@@ -94,7 +115,7 @@ async def resolve_customer_routing(
         if decision is not None:
             resolution.mode = "llm"
             resolution.llm = decision
-            resolution.multi_intent = len(decision.intents) > 1 or assessment.competing
+            resolution.multi_intent = len(decision.intents) > 1 or assessment.competing or understanding.multi_intent
             resolution.clarify = decision.should_clarify or any(
                 item.confidence < settings.ai_intent_router_low_confidence for item in decision.intents
             )
@@ -154,7 +175,8 @@ def apply_routing_to_widget_plan(
     if resolution.llm is not None:
         should_clarify = should_clarify or resolution.llm.should_clarify
     if should_clarify and (
-        resolution.llm is not None
+        resolution.understanding.get("needs_clarification") is True
+        or resolution.llm is not None
         or resolution.deterministic.confidence < settings.ai_intent_router_low_confidence
     ):
         return CustomerTurnPlan(

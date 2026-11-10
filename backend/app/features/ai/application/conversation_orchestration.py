@@ -36,9 +36,28 @@ class CustomerTurnPlan:
     tool_name: str = "conversation_intent"
 
 
+
+def _negated_action_plan() -> CustomerTurnPlan:
+    """A negative instruction never starts or confirms a commerce operation."""
+    return CustomerTurnPlan(
+        route="direct",
+        draft=(
+            "Understood. I won't start a cancellation, return, or refund request "
+            "from this message. If a request was already submitted, please contact "
+            "the store team to check its status."
+        ),
+        safe_summary="The shopper negated an action; no commerce operation was initiated.",
+        intent="negated_action",
+        tool_name="conversation_negated_action",
+    )
+
+
 def plan_playground_turn(
     question: str, transcript: list[dict[str, str]] | None = None,
 ) -> CustomerTurnPlan | None:
+    understanding = understand_conversation_turn(question, transcript or [])
+    if understanding.negated_action:
+        return _negated_action_plan()
     previous = transcript[-1] if transcript else {}
     state = infer_assistant_question(previous.get("content", "")) if previous.get("sender") == "assistant" else None
     order_follow_up = resolve_order_support(" ".join(question.strip().split()), state)
@@ -54,7 +73,6 @@ def plan_playground_turn(
             intent="order",
             tool_name="playground_order_follow_up",
         )
-    understanding = understand_conversation_turn(question, transcript or [])
     if understanding.needs_clarification:
         return CustomerTurnPlan(route="clarification", draft="Could you clarify which product, order, or policy you mean?", intent="clarification")
     conversational = playground_conversational_reply(question)
@@ -77,6 +95,8 @@ def plan_widget_turn(
     transcript: list[dict[str, str]],
 ) -> CustomerTurnPlan:
     understanding = understand_conversation_turn(message, transcript)
+    if understanding.negated_action:
+        return _negated_action_plan()
     if understanding.needs_clarification:
         return CustomerTurnPlan(route="clarification", draft="Could you tell me which product, order, or policy you're referring to?", intent="clarification", tool_name="widget_context_clarification")
     conversational = widget_conversational_reply(message)

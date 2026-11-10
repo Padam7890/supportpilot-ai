@@ -23,6 +23,8 @@ class ConversationUnderstanding:
     retrieval_query: str
     pending_state: PendingQuestion | None
     language: Literal["en", "ne", "mixed"] = "en"
+    correction: bool = False
+    negated_action: bool = False
     candidate_intents: tuple[str, ...] = ()
     needs_clarification: bool = False
 
@@ -39,7 +41,7 @@ def understand_conversation_turn(
 
     from app.features.ai.application.intent_routing.deterministic import assess_deterministic_route
 
-    normalized = " ".join(message.split())
+    normalized = " ".join(message.split())[:1000]
     prior_turns = transcript
     if (
         prior_turns
@@ -47,18 +49,13 @@ def understand_conversation_turn(
         and prior_turns[-1].get("content", "").strip() == normalized
     ):
         prior_turns = prior_turns[:-1]
-    recent_customer_turns = [
-        item.get("content", "").strip()
-        for item in reversed(prior_turns[-12:])
-        if item.get("sender") in {"customer", "user"}
-        and item.get("content", "").strip()
-    ]
     # Explicit cancellation or correction must not inherit the prior topic.
     # The caller still decides whether a pending commerce action is cancelled.
     correction = _is_correction(normalized)
+    negated_action = _is_negated_action(normalized)
     # Prefer the latest explicit subject over acknowledgements and pronouns.
     memory = derive_topic_memory(prior_turns)
-    previous_customer = memory.topic_anchor or (recent_customer_turns[0] if recent_customer_turns else "")
+    previous_customer = memory.topic_anchor or ""
     contextual = (is_contextual_follow_up(normalized) or _is_short_prepositional_follow_up(normalized)) and not correction
     # A follow-up that names its own subject ("what about shipping?") already
     # forms a usable query. Do not blend an earlier, unrelated question into it.
@@ -71,8 +68,7 @@ def understand_conversation_turn(
         explicit_topic=topic_switch,
     )
     recent_intents = assess_deterministic_route(normalized, [])
-    unique_intents = set(recent_intents.candidate_intents)
-    multi_intent = (len(unique_intents) > 1 and recent_intents.competing) or _has_distinct_clauses(normalized)
+    multi_intent = recent_intents.competing or _has_distinct_clauses(normalized)
     pending = None
     if agent_id is not None:
         # Skip non-assistant turns; only a delivered assistant prompt can
@@ -90,6 +86,8 @@ def understand_conversation_turn(
         retrieval_query=retrieval_query,
         pending_state=pending,
         language=language,
+        correction=correction,
+        negated_action=negated_action,
         candidate_intents=tuple(intent.value for intent in recent_intents.candidate_intents),
         needs_clarification=bool(contextual and not topic_switch and not previous_customer),
     )
@@ -126,7 +124,7 @@ def _detect_language(message: str) -> Literal["en", "ne", "mixed"]:
     words = re.findall(r"[a-z]+", message.casefold())
     romanized = any(word in _ROMANIZED_NEPALI for word in words)
     english = any(word not in _ROMANIZED_NEPALI for word in words)
-    if devanagari and english or romanized and english:
+    if (devanagari and english) or (romanized and english):
         return "mixed"
     if devanagari or romanized:
         return "ne"
@@ -151,7 +149,7 @@ def _is_correction(message: str) -> bool:
     return bool(_CORRECTION_PATTERN.search(message.strip()))
 
 
-_CLAUSE_SEPARATOR = re.compile(r"\\s+(?:and|also|plus)\\s+|[;]", re.IGNORECASE)
+_CLAUSE_SEPARATOR = re.compile(r"\s+(?:and|also|plus)\s+|[;]", re.IGNORECASE)
 
 
 def _has_distinct_clauses(message: str) -> bool:
@@ -172,3 +170,23 @@ def _has_distinct_clauses(message: str) -> bool:
         assessment = assess_deterministic_route(clause, [])
         subjects.update(intent.value for intent in assessment.candidate_intents if intent.value not in {"greeting", "general"})
     return len(subjects) > 1
+
+
+_NEGATED_ACTION = re.compile(
+    r"\b(?:do\s+not|don't|dont|never|please\s+don't)\s+"
+    r"(?:\w+\s+){0,2}?(?:cancel|refund|return|order)\b",
+    re.IGNORECASE,
+)
+_ACTION_VERB = re.compile(r"\b(?:cancel|refund|return|exchange)\b", re.IGNORECASE)
+
+
+def _is_negated_action(message: str) -> bool:
+    """Only short, standalone negations are safe to resolve without an action."""
+    if not _NEGATED_ACTION.search(message):
+        return False
+    # Compound messages may contain a new positive request. Keep these in
+    # ordinary routing rather than claiming the entire turn is cancelled.
+    clauses = [part.strip() for part in _CLAUSE_SEPARATOR.split(message) if part.strip()]
+    if len(clauses) > 1:
+        return False
+    return len(_ACTION_VERB.findall(message)) <= 1

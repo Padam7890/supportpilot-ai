@@ -246,6 +246,12 @@ def resolve_order_support(
     in_order_context = waiting_for_order or (
         state is not None and state.stage == "order_confirmation"
     )
+    # Once a handoff has been requested, subsequent customer turns must not
+    # be trapped in the order-reference workflow. Only a recovered reference
+    # can explicitly resume it; other messages return to normal routing.
+    if state is not None and state.handoff_status == "requested":
+        if not order_reference_recovered(message):
+            return None
     if order_reference_unavailable(message, in_order_context=in_order_context):
         pending = (
             state
@@ -331,7 +337,8 @@ def resolve_order_support(
             pending=pending,
         )
     if (
-        widget_ai.PURCHASE_INTENT.search(message)
+        _is_new_subject(message)
+        or widget_ai.PURCHASE_INTENT.search(message)
         or (
             state.active_intent != "refund"
             and (widget_ai.REFUND_ACTION.search(message) or widget_ai.RETURN_ACTION.search(message))
@@ -530,7 +537,8 @@ def assess_widget_follow_up(
 
 _NEW_SUBJECT = re.compile(
     r"\\b(?:exchange|delivery|shipping|tracking|order|payment|product|"
-    r"recommend|warranty|contact|hours|store|price|stock)\\b", re.IGNORECASE
+    r"recommend|warranty|contact|hours|store|price|stock|phone|mobile|"
+    r"smartphone|available|availability|catalog|item|laptop)\\b", re.IGNORECASE
 )
 
 
