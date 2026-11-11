@@ -9,7 +9,12 @@ from app.db.session import get_db
 from app.models import User
 from app.models.knowledge_gap import KnowledgeGap
 from app.models.knowledge_gap_review import KnowledgeGapReview
-from app.models.knowledge_document import KnowledgeDocument, DocumentChunk, DocumentEmbedding, DocumentEmbeddingJob
+from app.models.knowledge_document import KnowledgeDocument, KnowledgeDocumentSource, DocumentIngestionJob, DocumentChunk, DocumentEmbedding, DocumentEmbeddingJob
+from app.models.knowledge_base import KnowledgeBase
+from app.features.ai.domain.content_hash import PENDING_CONTENT_REVISION
+from app.api.routes.knowledge import _resolve_knowledge_base
+from app.models.knowledge_base_audit import record_knowledge_base_audit
+from app.core.correlation import current_correlation_id
 from app.core.config import settings
 from app.features.ai.domain.knowledge_gap_policy import faq_suggestion
 
@@ -254,3 +259,87 @@ async def review_gap(
     return GapOut.model_validate(row)
 
 
+
+class AtomicFAQPublish(BaseModel):
+    gap_ids: list[UUID] = Field(min_length=1, max_length=100)
+    knowledge_base_id: UUID
+    question: str = Field(min_length=1, max_length=1000)
+    answer: str = Field(min_length=1, max_length=10000)
+
+
+class AtomicFAQResult(BaseModel):
+    document_id: UUID
+    status: str
+    already_submitted: bool
+
+
+@router.post("/groups/publish", response_model=AtomicFAQResult)
+async def publish_reviewed_faq(
+    payload: AtomicFAQPublish,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_roles("owner", "admin")),
+) -> AtomicFAQResult:
+    """Create the FAQ document, source, ingestion job and review links atomically.
+
+    The tenant's gap rows are locked to serialize competing submissions. A retry
+    with the same group returns the existing document; partial overlap is a conflict.
+    """
+    ids = sorted(set(payload.gap_ids))
+    if len(ids) != len(payload.gap_ids):
+        raise HTTPException(status_code=422, detail="Duplicate gap IDs are not allowed")
+    question, answer = payload.question.strip(), payload.answer.strip()
+    if not question or not answer:
+        raise HTTPException(status_code=422, detail="Question and verified answer are required")
+    gaps = (await db.scalars(
+        select(KnowledgeGap).where(
+            KnowledgeGap.organization_id == user.organization_id,
+            KnowledgeGap.id.in_(ids),
+        ).order_by(KnowledgeGap.id).with_for_update()
+    )).all()
+    if len(gaps) != len(ids):
+        raise HTTPException(status_code=404, detail="One or more knowledge gaps not found")
+    existing = (await db.scalars(select(KnowledgeGapReview).where(
+        KnowledgeGapReview.organization_id == user.organization_id,
+        KnowledgeGapReview.gap_id.in_(ids),
+    ))).all()
+    if existing:
+        if len(existing) == len(ids) and len({r.document_id for r in existing}) == 1:
+            return AtomicFAQResult(document_id=existing[0].document_id, status="already_submitted", already_submitted=True)
+        raise HTTPException(status_code=409, detail="Some questions already have a linked FAQ")
+    selected_base = await _resolve_knowledge_base(
+        db, user.organization_id, payload.knowledge_base_id, require_active=True
+    )
+    content = f"# {question}\n\n{answer}\n".encode("utf-8")
+    document = KnowledgeDocument(
+        organization_id=user.organization_id,
+        name=f"FAQ-{ids[0]}.md",
+        content_type="text/markdown",
+        size_bytes=len(content),
+        status="queued",
+        uploaded_by_user_id=user.id,
+        knowledge_base_id=selected_base.id,
+        content_revision=PENDING_CONTENT_REVISION,
+    )
+    db.add(document)
+    await db.flush()
+    db.add(KnowledgeDocumentSource(
+        organization_id=user.organization_id, document_id=document.id, content=content,
+    ))
+    db.add(DocumentIngestionJob(
+        organization_id=user.organization_id, document_id=document.id,
+        correlation_id=current_correlation_id(), status="queued",
+    ))
+    record_knowledge_base_audit(
+        db, organization_id=user.organization_id,
+        knowledge_base_id=selected_base.id, actor_user_id=user.id,
+        event_type="document_uploaded",
+        details={"document_id": str(document.id), "size_bytes": len(content), "content_type": "text/markdown"},
+    )
+    for gap in gaps:
+        db.add(KnowledgeGapReview(
+            organization_id=user.organization_id, gap_id=gap.id,
+            document_id=document.id, reviewer_id=user.id,
+            question=question, answer=answer, status="pending_ingestion",
+        ))
+    await db.flush()
+    return AtomicFAQResult(document_id=document.id, status="queued", already_submitted=False)
