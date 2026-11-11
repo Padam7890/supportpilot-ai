@@ -104,3 +104,28 @@ async def review_gap(
     row.status = payload.status
     await db.flush()
     return GapOut.model_validate(row)
+
+
+class GroupReview(BaseModel):
+    gap_ids: list[UUID] = Field(min_length=1, max_length=100)
+    status: str = Field(pattern="^(dismissed|resolved|open)$")
+
+
+@router.post("/groups/review")
+async def review_group(
+    payload: GroupReview,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_roles("owner", "admin")),
+) -> dict[str, int]:
+    ids = set(payload.gap_ids)
+    rows = (await db.scalars(
+        select(KnowledgeGap)
+        .where(KnowledgeGap.organization_id == user.organization_id, KnowledgeGap.id.in_(ids))
+        .with_for_update()
+    )).all()
+    if len(rows) != len(ids):
+        raise HTTPException(status_code=404, detail="One or more knowledge gaps not found")
+    for row in rows:
+        row.status = payload.status
+    await db.flush()
+    return {"updated": len(rows)}
