@@ -4,8 +4,8 @@ Revision ID: 0071_nullable_customer_email
 Revises: 0070_embedding_content_revision
 """
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 revision = "0071_nullable_customer_email"
 down_revision = "0070_embedding_content_revision"

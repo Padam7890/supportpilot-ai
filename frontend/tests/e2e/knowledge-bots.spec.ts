@@ -134,24 +134,33 @@ test("creates a knowledge base, assigns it to a bot, and shows a cited bot answe
       await route.fulfill({ status: 200, json: { id: executionId, ai_agent_id: "9aa5f49c-c5b4-4e55-b34c-67a9cff31610", ai_agent_config_version: 1, kind: "playground", status: "succeeded", safe_summary: "Answer generated using 1 knowledge source.", draft: "Unused items may be returned within 30 days.", citations: [{ document_id: documentId, document_name: "returns-policy.txt", chunk_index: 0, excerpt: "Unused items may be returned within 30 days with proof of purchase." }], tool_outcomes: [{ tool: "tenant_knowledge_search", status: "completed", result_count: 1 }], usage: { prompt_tokens: 24, completion_tokens: 12, total_tokens: 36 }, model_name: "test-model", error_code: null, created_at: now, updated_at: now, started_at: now, completed_at: now } });
       return;
     }
+    if (new URL(route.request().url()).pathname.startsWith("/api/knowledge/gaps")) {
+      await route.fulfill({ status: 200, json: new URL(route.request().url()).pathname.endsWith("/durable-groups") ? [] : { items: [], has_more: false } });
+      return;
+    }
     await route.fulfill({ status: 200, json: {} });
   });
 
   await page.goto("/dashboard/knowledge");
-  await page.getByLabel("New knowledge base name").fill("Returns policies");
+  await page.getByRole("button", { name: "New", exact: true }).click();
+  await page.getByLabel("Knowledge base name", { exact: true }).fill("Returns policies");
   await page.getByRole("button", { name: "Create base" }).click();
-  await expect(page.getByRole("button", { name: "Returns policies", exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Returns policies", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Edit library details" }).click();
   await page.getByLabel("Knowledge base name", { exact: true }).fill("Returns policy library");
   await page.getByLabel("Knowledge base description").fill("Return and exchange guidance");
-  await page.getByRole("button", { name: "Save base details" }).click();
-  await expect(page.getByRole("button", { name: "Returns policy library", exact: true })).toBeVisible();
-  await page.getByLabel("Choose a PDF, text, or Markdown document").setInputFiles({
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("tab", { name: "Returns policy library", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Upload", exact: true }).click();
+  await page.getByLabel("Choose documents to upload").setInputFiles({
     name: "returns-policy.txt",
     mimeType: "text/plain",
     buffer: Buffer.from("Unused items may be returned within 30 days with proof of purchase."),
   });
+  await page.getByRole("button", { name: "Upload files" }).click();
+  await page.getByRole("button", { name: "Done", exact: true }).click();
   await expect(page.getByRole("link", { name: "returns-policy.txt" })).toBeVisible();
-  await expect(page.getByText("ready", { exact: true })).toBeVisible();
+  await expect(page.getByText("Ready", { exact: true })).toBeVisible();
 
   await page.goto("/dashboard/ai/agents");
   await page.getByRole("button", { name: "New bot" }).click();
@@ -203,13 +212,17 @@ test("viewer can read knowledge and bots but cannot access configuration control
       await route.fulfill({ status: 200, json: { items: [{ id: "agent-default", name: "SupportPilot Assistant", system_instructions: "", status: "active", config_version: 1, is_default: true, knowledge_base_ids: [defaultBase.id], created_at: now, updated_at: now }], total: 1, limit: 50, offset: 0 } });
       return;
     }
+    if (new URL(route.request().url()).pathname.startsWith("/api/knowledge/gaps")) {
+      await route.fulfill({ status: 200, json: new URL(route.request().url()).pathname.endsWith("/durable-groups") ? [] : { items: [], has_more: false } });
+      return;
+    }
     await route.fulfill({ status: 200, json: {} });
   });
 
   await page.goto("/dashboard/knowledge");
-  await expect(page.getByRole("status").filter({ hasText: "read-only access to knowledge settings" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Upload document" })).toHaveCount(0);
-  await expect(page.getByLabel("New knowledge base name")).toHaveCount(0);
+  await expect(page.getByText(/read-only access to knowledge settings/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Upload", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "New", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Archive General" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Reprocess returns-policy.txt" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Delete returns-policy.txt" })).toHaveCount(0);
@@ -236,9 +249,9 @@ test("agent has read-only knowledge and bot controls on mobile", async ({ page }
   await mockRoleWorkspace(page, "agent");
 
   await page.goto("/dashboard/knowledge");
-  await expect(page.getByRole("status").filter({ hasText: "read-only access to knowledge settings" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Upload document" })).toHaveCount(0);
-  await expect(page.getByLabel("New knowledge base name")).toHaveCount(0);
+  await expect(page.getByText(/read-only access to knowledge settings/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Upload", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "New", exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Knowledge base name", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Archive General" })).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -267,9 +280,9 @@ test("admin can manage knowledge bases and bots on mobile", async ({ page }) => 
   await mockRoleWorkspace(page, "admin");
 
   await page.goto("/dashboard/knowledge");
-  await expect(page.getByRole("button", { name: "Upload document" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Upload", exact: true })).toBeVisible();
   await expect(page.getByLabel("Knowledge base name", { exact: true })).toBeEnabled();
-  await expect(page.getByRole("button", { name: "Save base details" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   let accessibility = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
@@ -315,6 +328,10 @@ async function mockRoleWorkspace(page: import("@playwright/test").Page, role: "a
     }
     if (url.pathname === "/api/ai/agents/agent-default/audit") {
       await route.fulfill({ status: 200, json: { items: [], total: 0, limit: 20, offset: 0 } });
+      return;
+    }
+    if (new URL(route.request().url()).pathname.startsWith("/api/knowledge/gaps")) {
+      await route.fulfill({ status: 200, json: new URL(route.request().url()).pathname.endsWith("/durable-groups") ? [] : { items: [], has_more: false } });
       return;
     }
     await route.fulfill({ status: 200, json: {} });

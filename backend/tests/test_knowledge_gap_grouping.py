@@ -1,5 +1,7 @@
 from uuid import UUID
+
 import pytest
+
 from app.features.ai.application.knowledge_gap_grouping import cosine_similarity, group_vectors
 
 

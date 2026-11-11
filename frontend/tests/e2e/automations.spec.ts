@@ -45,7 +45,7 @@ test("owner creates, previews, and saves a customer-message workflow", async ({ 
       await route.fulfill({ status: 201, json: workflows[0] });
       return;
     }
-    await route.fulfill({ status: 200, json: {} });
+    await route.fulfill({ status: 200, json: url.pathname === "/api/automations/approvals" ? [] : {} });
   });
 
   await page.setViewportSize({ width: 1365, height: 900 });

@@ -1,9 +1,9 @@
 import uuid
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
-    JSON,
     ForeignKey,
     ForeignKeyConstraint,
     Index,

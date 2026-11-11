@@ -1,7 +1,9 @@
 """Durable, tenant-scoped reviewer-controlled knowledge gap groups."""
 import uuid
-from sqlalchemy import ForeignKeyConstraint, Index, String, Text, Uuid, UniqueConstraint
+
+from sqlalchemy import ForeignKeyConstraint, Index, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
+
 from app.db.base import Base
 from app.models.mixins import TimestampMixin, UUIDPrimaryKey
 

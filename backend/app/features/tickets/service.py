@@ -4,7 +4,10 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.features.customers.repository import CustomerRepository
-from app.features.notifications.application.events import TicketNotificationPayload, enqueue_notification_event
+from app.features.notifications.application.events import (
+    TicketNotificationPayload,
+    enqueue_notification_event,
+)
 from app.features.tickets.repository import TicketRepository
 from app.models import Team, TeamMember, Ticket, TicketActivity, User
 from app.schemas.ticket import TicketBulkUpdate, TicketCreate, TicketUpdate
@@ -71,13 +74,7 @@ class TicketService:
                 raise HTTPException(status_code=404, detail="Assignee not found")
         resulting_team_id = changes.get("team_id", ticket.team_id)
         resulting_assignee_id = changes.get("assignee_id", ticket.assignee_id)
-        if "team_id" in changes and resulting_team_id is not None:
-            await self._validate_team_assignment(
-                organization_id,
-                resulting_team_id,
-                resulting_assignee_id,
-            )
-        elif "assignee_id" in changes and resulting_assignee_id is not None and resulting_team_id is not None:
+        if "team_id" in changes and resulting_team_id is not None or "assignee_id" in changes and resulting_assignee_id is not None and resulting_team_id is not None:
             await self._validate_team_assignment(
                 organization_id,
                 resulting_team_id,

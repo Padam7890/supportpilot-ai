@@ -16,8 +16,12 @@ vi.mock("../api/analytics-api", () => ({
   analyticsQueryKeys: {
     usage: (start: string, end: string) => ["usage", start, end],
     evaluations: (start: string, end: string) => ["evaluations", start, end],
+    supportResponses: (start: string, end: string) => ["responses", start, end],
+    commerceApprovals: (start: string, end: string) => ["approvals", start, end],
     integrationDeliveries: (start: string, end: string) => ["deliveries", start, end],
   },
+  getSupportResponseAnalytics: vi.fn().mockResolvedValue({ conversations: 0, daily: [] }),
+  getCommerceApprovalAnalytics: vi.fn().mockResolvedValue({ total: 0 }),
   getAIUsage,
   getEvaluationSummary,
   getIntegrationDeliveryAnalytics,

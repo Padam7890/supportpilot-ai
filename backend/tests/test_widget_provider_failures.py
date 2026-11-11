@@ -100,7 +100,7 @@ async def test_widget_worker_keeps_retrieval_and_provider_outcomes_separate(
     row = SimpleNamespace(
         kind="widget_reply", question="What is your return policy?", ai_agent_id=uuid4(),
         attempt_count=attempt, max_attempts=2, correlation_id=None, status="running",
-        instructions=None, delivery_mode="auto_reply", conversation_id=uuid4(),
+        instructions=None, delivery_mode="auto_reply", conversation_id=uuid4(), source_message_id=None,
     )
     citations = [{"document_id": str(uuid4())}]
     empty = (row, row.question, [], [], [], [], {})

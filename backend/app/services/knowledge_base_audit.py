@@ -69,7 +69,7 @@ def _validated_audit_details(
             safe_details[key] = None
             continue
         if not isinstance(value, str):
-            raise ValueError("Knowledge-base audit metadata must be a string")
+            raise ValueError("Knowledge-base audit metadata must be a string")  # noqa: TRY004 - keep the audit validation error contract
         if key == "content_type":
             if value not in {"application/pdf", "text/plain", "text/markdown"}:
                 raise ValueError("Knowledge-base audit content type is invalid")

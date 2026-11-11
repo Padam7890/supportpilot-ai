@@ -5,9 +5,9 @@ fact is present. This helper is advisory until connected to answer generation.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)

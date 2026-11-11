@@ -415,11 +415,18 @@ def assess_widget_follow_up(
 ) -> tuple[FollowUp | None, str]:
     from app.services import widget_ai
 
+    if interpretation is None and not negation_uncertain:
+        from app.features.ai.application.conversation_understanding import (
+            understand_conversation_turn,
+        )
+
+        negation_uncertain = understand_conversation_turn(question, transcript).negated_action
+
     if negation_uncertain:
         return FollowUp(
             "declined",
             draft="I won’t start or submit that request without understanding what you intend. What would you like help with?",
-        ), "negation_interpretation_unavailable"
+        ), "retracted"
 
     if (
         interpretation is not None

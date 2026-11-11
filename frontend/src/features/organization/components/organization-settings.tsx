@@ -136,7 +136,7 @@ export default function SettingsPage() {
               {visibleGroups.map((group) => <div key={group.label} className="shrink-0 md:space-y-2"><p className="mb-2 hidden px-3 text-[11px] font-bold uppercase tracking-[.12em] text-slate-600 md:block">{group.label}</p><div className="flex gap-1.5 md:block md:space-y-1">{group.items.map((item) => {
                 const Icon = item.icon;
                 const sectionId = item.id;
-                const selected = item.id ? item.id === visibleSection : Boolean(item.href && (pathname === item.href || pathname.startsWith(`${item.href}/`)));
+                const selected = item.id ? item.id === visibleSection : Boolean(item.href && (pathname === item.href || pathname?.startsWith(`${item.href}/`)));
                 const sharedClass = `flex min-h-10 items-center gap-3 whitespace-nowrap rounded-xl px-3 py-2.5 text-sm font-medium transition-colors ${selected ? "bg-slate-200 text-slate-950" : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"}`;
                 if (item.href) return <Link key={item.href} href={item.href} aria-current={selected ? "page" : undefined} className={`${sharedClass} w-full`}><Icon size={17}/><span>{item.label}</span></Link>;
                 if (!sectionId) return null;

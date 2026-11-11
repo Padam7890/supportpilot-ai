@@ -2,15 +2,28 @@ import re
 from datetime import UTC, date, datetime, time, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import DateTime, Float, Integer, String, Uuid, case, cast, func, literal, null, select, union_all
+from sqlalchemy import (
+    DateTime,
+    Float,
+    Integer,
+    String,
+    Uuid,
+    case,
+    cast,
+    func,
+    literal,
+    null,
+    select,
+    union_all,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_roles
 from app.core.config import settings
 from app.db.session import get_db
-from app.features.conversations.response_metrics import first_reply_source
 from app.features.analytics.sla_service import get_first_response_sla_analytics
 from app.features.automations.policy import MAX_TOTAL_EXECUTION_ATTEMPTS
+from app.features.conversations.response_metrics import first_reply_source
 from app.models import (
     AIAgent,
     AIEvaluation,
@@ -28,24 +41,24 @@ from app.models import (
     User,
 )
 from app.schemas.analytics import (
+    AIBotUsage,
     AIEvaluationCreate,
     AIEvaluationOut,
     AIEvaluationSummaryOut,
+    AIExecutionErrorCount,
     AIUsageDay,
     AIUsageOut,
-    AIExecutionErrorCount,
-    AIBotUsage,
     BackgroundJobKind,
     CommerceApprovalAnalyticsOut,
     CommerceApprovalDay,
     FailedBackgroundJobOut,
     FailedBackgroundJobsOut,
-    JobTraceEventOut,
-    JobTraceOut,
     IntegrationDeliveryAnalyticsOut,
     IntegrationDeliveryDay,
     IntegrationDeliveryError,
     IntegrationDeliveryProvider,
+    JobTraceEventOut,
+    JobTraceOut,
     OperationalAlertOut,
     OperationalAlertsOut,
     SupportResponseAnalyticsOut,
@@ -54,7 +67,6 @@ from app.schemas.analytics import (
 )
 from app.schemas.errors import COMMON_ERROR_RESPONSES
 from app.workers.domain.ingestion_errors import INGESTION_ERROR_CODES, NON_RETRYABLE_INGESTION_CODES
-
 from app.workers.domain.lease_policy import (
     AI_EXECUTION_LEASE,
     CATALOG_JOB_LEASE,
@@ -671,7 +683,7 @@ async def ai_usage(
             priced_cost_sum,
         ).where(*predicate)
     )
-    count, succeeded, failed, prompt, completion, incomplete_usage, unpriced_executions, summed_cost = aggregate.one()
+    count, succeeded, failed, prompt, completion, _incomplete_usage, unpriced_executions, summed_cost = aggregate.one()
     document_eligible = (
         AIExecution.status == "succeeded",
         AIExecution.kind.in_(("playground", "reply_draft", "widget_reply")),

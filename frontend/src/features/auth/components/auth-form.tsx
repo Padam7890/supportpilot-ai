@@ -279,6 +279,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
           <Input
             autoComplete="off"
             placeholder="acme-support"
+            aria-label="Organization slug"
             aria-describedby="organization-slug-hint"
             {...register.register("organization_slug", {
               onChange: (event) => {

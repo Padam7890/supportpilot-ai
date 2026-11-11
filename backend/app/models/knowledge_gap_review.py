@@ -1,9 +1,12 @@
 """Audit records linking approved FAQ documents to their source questions."""
 import uuid
-from sqlalchemy import ForeignKeyConstraint, Index, String, Text, Uuid, UniqueConstraint
+
+from sqlalchemy import ForeignKeyConstraint, Index, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
+
 from app.db.base import Base
 from app.models.mixins import TimestampMixin, UUIDPrimaryKey
+
 
 class KnowledgeGapReview(UUIDPrimaryKey, TimestampMixin, Base):
     __tablename__ = "knowledge_gap_reviews"

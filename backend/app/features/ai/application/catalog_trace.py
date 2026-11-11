@@ -38,5 +38,5 @@ def trace_catalog_route(
 
     try:
         record_diagnostic(event)
-    except Exception:
+    except Exception:  # noqa: BLE001 - optional telemetry cannot break catalog routing
         logger.warning("LangSmith catalog diagnostic failed", exc_info=False)

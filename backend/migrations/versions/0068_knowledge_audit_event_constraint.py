@@ -3,7 +3,6 @@
 import sqlalchemy as sa
 from alembic import op
 
-
 revision = "0068_knowledge_audit_event_constraint"
 down_revision = "0067_notification_delivery_columns"
 branch_labels = None

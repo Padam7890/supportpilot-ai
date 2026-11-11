@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import {
   Building2,
   ChevronDown,
@@ -40,6 +40,28 @@ type AppSidebarProps = {
 
 const GROUPS_STORAGE_KEY = "supportpilot-sidebar-groups";
 
+function subscribeToGroupStorage(notify: () => void) {
+  window.addEventListener("storage", notify);
+  return () => window.removeEventListener("storage", notify);
+}
+
+function readGroupStorage(): string | null {
+  try {
+    return window.localStorage.getItem(GROUPS_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function parseClosedGroups(value: string | null): string[] {
+  try {
+    const parsed: unknown = value === null ? [] : JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 export function AppSidebar({
   user,
   collapsed,
@@ -53,24 +75,21 @@ export function AppSidebar({
 }: AppSidebarProps) {
   const pathname = usePathname();
   const groups = getDashboardNavigation(user.role);
-  const [closedGroups, setClosedGroups] = useState<string[]>([]);
+  const savedGroups = useSyncExternalStore(subscribeToGroupStorage, readGroupStorage, () => null);
+  const [groupOverride, setGroupOverride] = useState<string[]>();
+  const closedGroups = groupOverride ?? parseClosedGroups(savedGroups);
   const isCollapsed = collapsed && !mobile;
 
-  useEffect(() => {
-    try {
-      const stored = window.localStorage.getItem(GROUPS_STORAGE_KEY);
-      if (stored) setClosedGroups(JSON.parse(stored) as string[]);
-    } catch {
-      setClosedGroups([]);
-    }
-  }, []);
-
   function toggleGroup(label: string) {
-    setClosedGroups((current) => {
-      const next = current.includes(label) ? current.filter((item) => item !== label) : [...current, label];
+    const next = closedGroups.includes(label)
+      ? closedGroups.filter((item) => item !== label)
+      : [...closedGroups, label];
+    setGroupOverride(next);
+    try {
       window.localStorage.setItem(GROUPS_STORAGE_KEY, JSON.stringify(next));
-      return next;
-    });
+    } catch {
+      // Group preferences still work for the current session.
+    }
   }
 
   const sidebarContents = (

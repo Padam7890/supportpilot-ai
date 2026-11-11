@@ -195,9 +195,13 @@ async def test_document_processing_search_reprocess_and_tenant_isolation(client)
 
 
 @pytest.mark.anyio
-async def test_ingestion_retry_limit_and_reprocess_history(client):
+async def test_ingestion_retry_limit_and_reprocess_history(client, monkeypatch):
+    def transient_extraction_failure(*_args):
+        raise OSError("Temporary extraction failure")
+
+    monkeypatch.setattr("app.workers.handlers.ingestion.extract_text", transient_extraction_failure)
     owner = await approved_workspace(client, "knowledge-retry")
-    uploaded = await upload_text(client, owner, "invalid-encoding.txt", b"\xff")
+    uploaded = await upload_text(client, owner, "retry-policy.txt", b"A valid policy for a retry test.")
     assert uploaded.status_code == 202
     document_id = UUID(uploaded.json()["id"])
     organization_id = UUID(owner["user"]["organization_id"])
@@ -742,8 +746,8 @@ async def test_ai_execution_retrieval_uses_only_assigned_knowledge_bases(client)
 
 @pytest.mark.anyio
 async def test_hybrid_semantic_retrieval_is_tenant_and_bot_scoped(client, monkeypatch):
-    from app.features.ai.application import retrieval_search
     from app.core.config import settings
+    from app.features.ai.application import retrieval_search
     from app.features.ai.infrastructure.embedding_gateway import (
         EmbeddingProviderError,
         EmbeddingVector,
@@ -765,12 +769,14 @@ async def test_hybrid_semantic_retrieval_is_tenant_and_bot_scoped(client, monkey
     agent_a = next(agent for agent in agents_a if agent["is_default"])
     model = "test-embedding-model"
     monkeypatch.setattr(settings, "ai_embedding_model", model)
-    monkeypatch.setattr(settings, "ai_embedding_dimensions", 3)
+    dimensions = 1536
+    vector = [1.0] + [0.0] * (dimensions - 1)
+    monkeypatch.setattr(settings, "ai_embedding_dimensions", dimensions)
     monkeypatch.setattr(settings, "ai_embedding_version", "test-v1")
     monkeypatch.setattr(retrieval_search, "is_embedding_provider_configured", lambda: True)
 
     async def embedding_for_query(*_args, **_kwargs):
-        return [EmbeddingVector([1.0, 0.0, 0.0], model, 3)]
+        return [EmbeddingVector(vector, model, dimensions)]
 
     monkeypatch.setattr(retrieval_search, "embed_texts", embedding_for_query)
     async with SessionLocal() as db:
@@ -811,9 +817,9 @@ async def test_hybrid_semantic_retrieval_is_tenant_and_bot_scoped(client, monkey
                     chunk_index=0,
                     embedding_model=model,
                     embedding_version="test-v1",
-                    dimensions=3,
+                    dimensions=dimensions,
                     content_hash=hash_chunk_text(excerpt),
-                    embedding=[1.0, 0.0, 0.0],
+                    embedding=vector,
                 )
             )
         await db.commit()
@@ -850,9 +856,9 @@ async def test_hybrid_semantic_retrieval_is_tenant_and_bot_scoped(client, monkey
                 chunk_index=0,
                 embedding_model=model,
                 embedding_version="test-v1",
-                dimensions=3,
+                dimensions=dimensions,
                 content_hash=hash_chunk_text(excerpt),
-                embedding=[1.0, 0.0, 0.0],
+                embedding=vector,
             )
         )
         await db.commit()

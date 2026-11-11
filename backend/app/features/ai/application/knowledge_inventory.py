@@ -108,8 +108,8 @@ def format_knowledge_inventory(
     document_count = sum(count for count, _names in inventory.values())
     if not inventory or document_count == 0:
         return (
-            "This AI bot has no ready documents in its assigned active knowledge bases yet. "
-            "Add a document to an assigned base, or assign an active base to this bot.",
+            ("This AI bot has no ready documents in its assigned active knowledge bases yet. "
+             "Add a document to an assigned base, or assign an active base to this bot."),
             0,
         )
 

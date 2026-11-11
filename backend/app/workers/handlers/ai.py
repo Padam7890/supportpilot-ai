@@ -2,11 +2,15 @@
 
 from uuid import NAMESPACE_URL, UUID, uuid5
 
-from app.services.ai_worker import claim_ai_execution, process_ai_execution
-from app.db.session import SessionLocal, set_tenant_context
-from app.features.notifications.application.events import TicketNotificationPayload, enqueue_notification_event
-from app.models import AIExecution, Conversation
 from sqlalchemy import select
+
+from app.db.session import SessionLocal, set_tenant_context
+from app.features.notifications.application.events import (
+    TicketNotificationPayload,
+    enqueue_notification_event,
+)
+from app.models import AIExecution, Conversation
+from app.services.ai_worker import claim_ai_execution, process_ai_execution
 from app.workers.application.contracts import ClaimedJob, JobHandler
 
 

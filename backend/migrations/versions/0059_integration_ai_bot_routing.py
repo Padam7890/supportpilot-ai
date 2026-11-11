@@ -1,7 +1,7 @@
 """Allow supported inbound connections to select a tenant AI bot."""
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "0059_integration_ai_bot_routing"

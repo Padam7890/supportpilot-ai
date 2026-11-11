@@ -5,15 +5,15 @@ messages as proof of identity. Durable persistence is a separate migration.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 
 _TOPIC_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("refund", re.compile(r"\b(?:refund|return|exchange|receipt)\b|फिर्ता", re.I)),
-    ("delivery", re.compile(r"\b(?:shipping|delivery|courier|shipment)\b|डेलिभरी|ढुवानी", re.I)),
-    ("order", re.compile(r"\b(?:order|tracking|track)\b", re.I)),
-    ("product", re.compile(r"\b(?:product|stock|size|color|colour|warranty)\b", re.I)),
-    ("payment", re.compile(r"\b(?:payment|pay|card|billing)\b|भुक्तानी", re.I)),
+    ("refund", re.compile(r"\b(?:refund|return|exchange|receipt)\b|फिर्ता", re.IGNORECASE)),
+    ("delivery", re.compile(r"\b(?:shipping|delivery|courier|shipment)\b|डेलिभरी|ढुवानी", re.IGNORECASE)),
+    ("order", re.compile(r"\b(?:order|tracking|track)\b", re.IGNORECASE)),
+    ("product", re.compile(r"\b(?:product|phone|laptop|recommend|stock|size|color|colour|warranty)\b", re.IGNORECASE)),
+    ("payment", re.compile(r"\b(?:payment|pay|card|billing)\b|भुक्तानी", re.IGNORECASE)),
 )
 
 

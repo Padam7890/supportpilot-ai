@@ -3,8 +3,8 @@
 Revision ID: 0072_knowledge_gaps
 Revises: 0071_nullable_customer_email
 """
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 revision = "0072_knowledge_gaps"
 down_revision = "0071_nullable_customer_email"

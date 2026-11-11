@@ -2,7 +2,6 @@
 
 from alembic import op
 
-
 revision = "0067_notification_delivery_columns"
 down_revision = "0066_notifications"
 branch_labels = None

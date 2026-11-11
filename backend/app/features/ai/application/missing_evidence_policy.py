@@ -2,7 +2,9 @@
 
 from dataclasses import dataclass
 
-from app.features.ai.application.conversation_orchestration import playground_missing_knowledge_reply
+from app.features.ai.application.conversation_orchestration import (
+    playground_missing_knowledge_reply,
+)
 from app.services.widget_ai import widget_missing_knowledge_reply
 
 

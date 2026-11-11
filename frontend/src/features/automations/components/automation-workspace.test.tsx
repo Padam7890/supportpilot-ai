@@ -102,7 +102,7 @@ describe("automation workspace", () => {
     renderWorkspace();
 
     fireEvent.change(await screen.findByLabelText("Workflow name"), { target: { value: "Refund triage" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add keyword condition" }));
+    fireEvent.click(screen.getByText("Message text", { exact: true }));
 
     const phraseInputs = screen.getAllByLabelText(/message contains/i);
     fireEvent.change(phraseInputs[0]!, { target: { value: "refund" } });
@@ -114,7 +114,7 @@ describe("automation workspace", () => {
         expect.objectContaining({
           name: "Refund triage",
           definition: expect.objectContaining({
-            trigger: { kind: "customer_message_received", channel: null, first_message_only: false },
+            trigger: expect.objectContaining({ kind: "customer_message_received", channel: null, first_message_only: false }),
             condition_mode: "all",
             conditions: [{ kind: "contains_keyword", value: "refund" }],
             actions: [{ kind: "set_priority", value: "high", only_raise: false }],
@@ -136,7 +136,7 @@ describe("automation workspace", () => {
     renderWorkspace();
 
     fireEvent.change(await screen.findByLabelText("Workflow name"), { target: { value: "Refund triage" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add keyword condition" }));
+    fireEvent.click(screen.getByText("Message text", { exact: true }));
 
     expect(screen.getByRole("button", { name: /save workflow draft/i })).toBeDisabled();
 
@@ -155,7 +155,7 @@ describe("automation workspace", () => {
 
     fireEvent.change(await screen.findByLabelText("Workflow name"), { target: { value: "Refund triage" } });
 
-    fireEvent.click(screen.getByRole("button", { name: "Add keyword condition" }));
+    fireEvent.click(screen.getByText("Message text", { exact: true }));
     const phraseInputs = screen.getAllByLabelText(/message contains/i);
     fireEvent.change(phraseInputs[0]!, { target: { value: "refund" } });
 
@@ -169,7 +169,7 @@ describe("automation workspace", () => {
     await waitFor(() => expect(previewAutomation).toHaveBeenCalled());
     expect(previewAutomation.mock.calls[0]?.[0]).toMatchObject({
       definition: expect.objectContaining({
-        trigger: { kind: "customer_message_received", channel: null, first_message_only: false },
+        trigger: expect.objectContaining({ kind: "customer_message_received", channel: null, first_message_only: false }),
         conditions: [{ kind: "contains_keyword", value: "refund" }],
       }),
       sample_message: "I need a refund for my order",

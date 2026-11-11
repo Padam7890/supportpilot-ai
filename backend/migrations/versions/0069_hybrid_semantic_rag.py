@@ -10,7 +10,6 @@ from alembic import op
 
 from app.models.knowledge_document import Vector
 
-
 revision = "0069_hybrid_semantic_rag"
 down_revision = "0068_knowledge_audit_event_constraint"
 branch_labels = None

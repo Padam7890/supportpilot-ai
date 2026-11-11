@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { FileText, LoaderCircle, Search, Ticket, Users, X } from "lucide-react";
@@ -26,6 +26,28 @@ type CommandItem = {
   icon: typeof Search;
 };
 
+function subscribeToRecentDestinations(notify: () => void) {
+  window.addEventListener("storage", notify);
+  return () => window.removeEventListener("storage", notify);
+}
+
+function readRecentDestinations(): string | null {
+  try {
+    return window.localStorage.getItem(RECENT_DESTINATIONS_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function parseRecentDestinations(value: string | null): string[] {
+  try {
+    const parsed: unknown = value === null ? [] : JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 type CommandSearchProps = {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -35,12 +57,14 @@ export function CommandSearch({ open: controlledOpen, onOpenChange }: CommandSea
   const router = useRouter();
   const [localOpen, setLocalOpen] = useState(false);
   const open = controlledOpen ?? localOpen;
-  const setOpen = (next: boolean) => {
+  const setOpen = useCallback((next: boolean) => {
     setLocalOpen(next);
     onOpenChange?.(next);
-  };
+  }, [onOpenChange]);
   const [query, setQuery] = useState("");
-  const [recentHrefs, setRecentHrefs] = useState<string[]>([]);
+  const savedRecents = useSyncExternalStore(subscribeToRecentDestinations, readRecentDestinations, () => null);
+  const [recentOverride, setRecentHrefs] = useState<string[]>();
+  const recentHrefs = useMemo(() => recentOverride ?? parseRecentDestinations(savedRecents), [recentOverride, savedRecents]);
   const [activeIndex, setActiveIndex] = useState(0);
   const me = useQuery({ queryKey: currentUserQueryKey, queryFn: getCurrentUser });
   const search = useQuery({
@@ -81,20 +105,6 @@ export function CommandSearch({ open: controlledOpen, onOpenChange }: CommandSea
   }, [backendItems, query, recentHrefs, routes, visibleRoutes]);
 
   useEffect(() => {
-    if (!open) return;
-    try {
-      const saved = window.localStorage.getItem(RECENT_DESTINATIONS_KEY);
-      setRecentHrefs(saved ? JSON.parse(saved) as string[] : []);
-    } catch {
-      setRecentHrefs([]);
-    }
-  }, [open]);
-
-  useEffect(() => {
-    setActiveIndex(0);
-  }, [query, items.length]);
-
-  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
@@ -103,14 +113,19 @@ export function CommandSearch({ open: controlledOpen, onOpenChange }: CommandSea
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [setOpen]);
 
   function navigateTo(item: CommandItem) {
     const nextRecents = [item.href, ...recentHrefs.filter((href) => href !== item.href)].slice(0, 5);
     setRecentHrefs(nextRecents);
-    window.localStorage.setItem(RECENT_DESTINATIONS_KEY, JSON.stringify(nextRecents));
+    try {
+      window.localStorage.setItem(RECENT_DESTINATIONS_KEY, JSON.stringify(nextRecents));
+    } catch {
+      // Recent links remain available for the current session.
+    }
     setOpen(false);
     setQuery("");
+    setActiveIndex(0);
     router.push(item.href);
   }
 
@@ -131,11 +146,11 @@ export function CommandSearch({ open: controlledOpen, onOpenChange }: CommandSea
     <Button variant="outline" className="h-9 w-full max-w-56 justify-start gap-2 px-2.5 text-xs font-normal text-muted-foreground sm:w-auto sm:min-w-52" type="button" onClick={() => setOpen(true)} aria-label="Search workspace, Command K">
       <Search size={15}/><span className="hidden flex-1 text-left sm:inline">Search workspace</span><kbd className="ml-auto rounded border border-border bg-muted px-1 py-0.5 font-mono text-[9px]">⌘K</kbd>
     </Button>
-    <Dialog open={open} onOpenChange={(next) => { setOpen(next); if (!next) setQuery(""); }}>
+    <Dialog open={open} onOpenChange={(next) => { setOpen(next); if (!next) { setQuery(""); setActiveIndex(0); } }}>
       <DialogContent showCloseButton={false} aria-label="Workspace command menu" className="top-[12vh] w-[min(640px,calc(100vw-1.5rem))] max-w-none translate-y-0 gap-0 overflow-hidden rounded-xl p-0 sm:max-w-none">
         <div className="flex items-center gap-3 border-b border-border px-3">
           <Search size={17} className="shrink-0 text-muted-foreground" aria-hidden="true"/>
-          <Input autoFocus aria-label="Search pages, tickets, customers, and documents" aria-controls="command-menu-results" aria-activedescendant={items[activeIndex] ? `command-item-${activeIndex}` : undefined} value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={handleInputKeyDown} placeholder="Search pages, tickets, customers…" className="h-12 min-w-0 flex-1 border-0 bg-transparent px-0 shadow-none focus-visible:border-transparent focus-visible:ring-0"/>
+          <Input autoFocus aria-label="Search pages, tickets, customers, and documents" aria-controls="command-menu-results" aria-activedescendant={items[activeIndex] ? `command-item-${activeIndex}` : undefined} value={query} onChange={(event) => { setQuery(event.target.value); setActiveIndex(0); }} onKeyDown={handleInputKeyDown} placeholder="Search pages, tickets, customers…" className="h-12 min-w-0 flex-1 border-0 bg-transparent px-0 shadow-none focus-visible:border-transparent focus-visible:ring-0"/>
           <Button variant="ghost" size="icon-sm" onClick={() => setOpen(false)} aria-label="Close search"><X/></Button>
         </div>
         <div id="command-menu-results" role="listbox" aria-label={query ? "Search results" : "Recent destinations and pages"} className="max-h-[min(60vh,480px)] overflow-y-auto p-2">

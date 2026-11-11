@@ -1,15 +1,14 @@
 from app.features.ai.domain.knowledge_gap_policy import detect_knowledge_gap, faq_suggestion
 
-
-BASE = dict(
-    organization_id="tenant-a",
-    conversation_id="conversation-a",
-    source_message_id="message-a",
-    question="Do you deliver to Pokhara?",
-    intent="knowledge",
-    retrieval_outcome="no_relevant_evidence",
-    answer_grounded=None,
-)
+BASE = {
+    "organization_id": "tenant-a",
+    "conversation_id": "conversation-a",
+    "source_message_id": "message-a",
+    "question": "Do you deliver to Pokhara?",
+    "intent": "knowledge",
+    "retrieval_outcome": "no_relevant_evidence",
+    "answer_grounded": None,
+}
 
 
 def test_missing_knowledge_creates_candidate():

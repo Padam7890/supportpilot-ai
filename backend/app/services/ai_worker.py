@@ -624,8 +624,10 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 # Record the confirmed early no-evidence path before returning.
                 # Failure of this analytics write must not block the reply.
                 try:
+                    from app.features.ai.application.knowledge_gap_repository import (
+                        persist_knowledge_gap,
+                    )
                     from app.features.ai.domain.knowledge_gap_policy import detect_knowledge_gap
-                    from app.features.ai.application.knowledge_gap_repository import persist_knowledge_gap
                     signal = detect_knowledge_gap(
                         organization_id=str(organization_id),
                         conversation_id=str(execution.conversation_id),
@@ -716,7 +718,9 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             if gap is not None:
                 # Knowledge analytics must never block the customer-facing reply.
                 try:
-                    from app.features.ai.application.knowledge_gap_repository import persist_knowledge_gap
+                    from app.features.ai.application.knowledge_gap_repository import (
+                        persist_knowledge_gap,
+                    )
 
                     async with SessionLocal() as gap_db:
                         await set_tenant_context(gap_db, organization_id)

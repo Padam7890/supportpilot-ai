@@ -31,7 +31,8 @@
     const style = document.createElement("style");
     style.id = "supportpilot-recommendation-styles";
     style.textContent = `
-      .recommendation-message{width:100%;max-width:100%;gap:7px}
+      .recommendation-message{width:100%;min-width:0;max-width:100%;gap:7px}
+      .recommendation-message,.recommendation-message *{box-sizing:border-box}
       .recommendation-intro{width:100%;border:1px solid #dfe6f2;border-radius:15px;background:#fff;padding:11px 13px;color:#25334d;font-size:12px;line-height:1.55}
       .recommendation-carousel{position:relative;width:100%;min-width:0}
       .recommendation-track{display:grid;grid-auto-columns:minmax(205px,74%);grid-auto-flow:column;gap:10px;overflow-x:auto;overscroll-behavior-inline:contain;scroll-snap-type:x mandatory;padding:2px 1px 9px;scrollbar-width:thin}

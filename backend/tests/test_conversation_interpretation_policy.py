@@ -31,8 +31,11 @@ def test_high_risk_action_does_not_get_model_first_upgrade() -> None:
 
 def test_negation_and_missing_context_use_safe_path() -> None:
     policy = ConversationInterpretationPolicy(model_first=True)
-    for negated, unclear in ((True, False), (False, True)):
-        assert not policy.should_use_model(
-            risk_level="low", negated_action=negated,
-            needs_clarification=unclear, legacy_router_would_invoke=True,
-        )
+    assert policy.should_use_model(
+        risk_level="low", negated_action=True,
+        needs_clarification=False, legacy_router_would_invoke=True,
+    )
+    assert not policy.should_use_model(
+        risk_level="low", negated_action=False,
+        needs_clarification=True, legacy_router_would_invoke=True,
+    )

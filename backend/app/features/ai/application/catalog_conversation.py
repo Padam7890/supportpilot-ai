@@ -6,8 +6,8 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import CatalogProduct, CatalogVariant, Conversation
 from app.features.ai.application.catalog_discovery import ProductListing
+from app.models import CatalogProduct, CatalogVariant, Conversation
 
 _CONTEXT_KEY = "catalog_browse"
 _TTL = timedelta(minutes=30)

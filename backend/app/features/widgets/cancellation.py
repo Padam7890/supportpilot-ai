@@ -17,8 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.observability import current_correlation_id
 from app.db.session import get_db, set_tenant_context
-from app.features.widgets.shared import require_visitor_conversation
 from app.features.ai.application.order_action_policy import authorize_order_action
+from app.features.widgets.shared import require_visitor_conversation
 from app.integrations.providers.shopify.actions import (
     ShopifyOrderActionError,
     check_cancellation_eligibility,

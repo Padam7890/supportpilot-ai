@@ -24,6 +24,8 @@ describe("mapInboxItem", () => {
       priority: "urgent",
       customer: { id: "customer-1", name: "Taylor", email: "taylor@example.com" },
       assignee: { id: "agent-1", name: "Morgan" },
+      team: null,
+      firstResponseSla: undefined,
       latestMessage: { preview: "Can you help?", createdAt: "2026-10-31T10:00:00Z", senderType: "customer" },
       unreadCount: 2,
       updatedAt: "2026-10-31T10:00:00Z",

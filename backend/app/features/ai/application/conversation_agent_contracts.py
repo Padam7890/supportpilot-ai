@@ -2,6 +2,7 @@
 
 from pydantic import BaseModel, ConfigDict, Field
 
+
 class ConversationTurn(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

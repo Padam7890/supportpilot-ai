@@ -1,6 +1,15 @@
 import uuid
 
-from sqlalchemy import Boolean, ForeignKey, ForeignKeyConstraint, Index, String, Text, UniqueConstraint, Uuid
+from sqlalchemy import (
+    Boolean,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base

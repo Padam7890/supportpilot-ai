@@ -12,7 +12,10 @@ from app.features.ai.application.catalog_search import (
     catalog_has_active_products,
     load_candidates,
 )
-from app.features.ai.application.conversation_response_evidence import EvidenceItem, ResponseEvidence
+from app.features.ai.application.conversation_response_evidence import (
+    EvidenceItem,
+    ResponseEvidence,
+)
 from app.features.ai.domain.ranking import build_recommendation_result
 from app.features.ai.domain.shopping_state import (
     MAX_REJECTIONS_BEFORE_HANDOFF_OFFER,

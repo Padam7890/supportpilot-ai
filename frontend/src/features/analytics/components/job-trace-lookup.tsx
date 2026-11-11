@@ -22,14 +22,14 @@ const correlationIdPattern = /^[A-Za-z0-9._:-]{8,64}$/;
 
 export function JobTraceLookup({ request }: { request?: { correlationId: string } | null }) {
   const linkedCorrelationId = useSearchParams().get("trace");
-  const [correlationId, setCorrelationId] = useState("");
+  const [draft, setDraft] = useState<{ lookupId?: string; text: string }>();
   const trace = useMutation({ mutationFn: getJobTrace });
   const { mutate } = trace;
+  const correlationId = draft && draft.lookupId === trace.variables ? draft.text : trace.variables ?? "";
   const headingRef = useRef<HTMLHeadingElement>(null);
 
   const openTrace = useCallback((id?: string | null) => {
     if (!id || !correlationIdPattern.test(id)) return;
-    setCorrelationId(id);
     mutate(id);
     headingRef.current?.focus();
   }, [mutate]);
@@ -63,7 +63,7 @@ export function JobTraceLookup({ request }: { request?: { correlationId: string 
               minLength={8}
               maxLength={64}
               value={correlationId}
-              onChange={(event) => setCorrelationId(event.target.value)}
+              onChange={(event) => setDraft({ lookupId: trace.variables, text: event.target.value })}
               placeholder="Paste correlation ID"
               className="min-w-0 flex-1 font-mono text-sm"
             />

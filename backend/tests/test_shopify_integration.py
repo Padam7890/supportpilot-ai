@@ -143,6 +143,7 @@ async def test_shopify_oauth_scope_tenant_isolation_lookup_verification_and_disc
         "shop_domain": None,
         "granted_scopes": [],
         "connected_at": None,
+        "auth_mode": None,
         "access_token_expires_at": None,
         "reconnect_required": False,
     }

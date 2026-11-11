@@ -1,8 +1,11 @@
 """Versioned embedding cache for unanswered customer questions."""
 import uuid
-from sqlalchemy import ForeignKeyConstraint, Index, Integer, JSON, String, Uuid
+
+from sqlalchemy import JSON, ForeignKeyConstraint, Index, Integer, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
+
 from app.db.base import Base
+
 
 class KnowledgeGapEmbedding(Base):
     __tablename__ = "knowledge_gap_embeddings"

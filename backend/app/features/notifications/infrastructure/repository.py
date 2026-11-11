@@ -9,7 +9,11 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.features.notifications.application.events import EVENT_TYPES
-from app.models import Notification, NotificationOutbox, NotificationPreference, NotificationRecipient
+from app.models import (
+    Notification,
+    NotificationPreference,
+    NotificationRecipient,
+)
 
 
 def encode_cursor(created_at: datetime, notification_id: UUID) -> str:

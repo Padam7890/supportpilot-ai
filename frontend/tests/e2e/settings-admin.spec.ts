@@ -55,7 +55,7 @@ async function mockSettingsApi(
       return;
     }
 
-    await route.fulfill({ status: 200, json: {} });
+    await route.fulfill({ status: 200, json: route.request().url().includes("/api/teams") ? [] : {} });
   });
 
   return requests;

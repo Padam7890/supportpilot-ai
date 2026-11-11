@@ -1,3 +1,4 @@
+from app.features.ai.application.durable_topic_state import ConversationTopicState
 from app.models.ai_agent_audit import AIAgentAudit
 from app.models.ai_evaluation import AIEvaluation
 from app.models.ai_execution import AIExecution
@@ -12,7 +13,6 @@ from app.models.automation import (
 from app.models.catalog import CatalogProduct, CatalogSyncJob, CatalogVariant, CatalogWebhookEvent
 from app.models.commerce_action import CommerceAction, CommerceActionAudit
 from app.models.conversation import Conversation
-from app.features.ai.application.durable_topic_state import ConversationTopicState
 from app.models.conversation_attachment import ConversationAttachment
 from app.models.conversation_read_state import ConversationReadState
 from app.models.customer import Customer
@@ -35,8 +35,13 @@ from app.models.knowledge_document import (
 )
 from app.models.knowledge_gap import KnowledgeGap
 from app.models.message import Message
+from app.models.notification import (
+    Notification,
+    NotificationOutbox,
+    NotificationPreference,
+    NotificationRecipient,
+)
 from app.models.organization import Organization
-from app.models.notification import Notification, NotificationOutbox, NotificationPreference, NotificationRecipient
 from app.models.platform_owner import PlatformOwner
 from app.models.platform_refresh_session import PlatformRefreshSession
 from app.models.recommendation import RecommendationEvent, RecommendationSettings
@@ -49,11 +54,11 @@ from app.models.support_widget import (
     WidgetOrderVerification,
     WidgetSubmission,
 )
+from app.models.team import Team, TeamAudit, TeamMember
 from app.models.team_invitation import TeamInvitation
 from app.models.ticket import Ticket
 from app.models.ticket_activity import TicketActivity
 from app.models.ticket_link import TicketLink
-from app.models.team import Team, TeamAudit, TeamMember
 from app.models.user import User
 
 __all__ = [
@@ -77,9 +82,9 @@ __all__ = [
     "CommerceAction",
     "CommerceActionAudit",
     "Conversation",
-    "ConversationTopicState",
     "ConversationAttachment",
     "ConversationReadState",
+    "ConversationTopicState",
     "Customer",
     "DocumentChunk",
     "DocumentEmbedding",
@@ -95,12 +100,16 @@ __all__ = [
     "KnowledgeDocument",
     "KnowledgeDocumentSource",
     "KnowledgeGap",
+    "KnowledgeGapEmbedding",
+    "KnowledgeGapGroup",
+    "KnowledgeGapGroupMember",
+    "KnowledgeGapReview",
     "Message",
-    "Organization",
     "Notification",
     "NotificationOutbox",
     "NotificationPreference",
     "NotificationRecipient",
+    "Organization",
     "PlatformOwner",
     "PlatformRefreshSession",
     "RecommendationEvent",
@@ -112,9 +121,9 @@ __all__ = [
     "ShopifyOAuthState",
     "SupportWidget",
     "SupportWidgetAIAgent",
-    "TeamInvitation",
     "Team",
     "TeamAudit",
+    "TeamInvitation",
     "TeamMember",
     "Ticket",
     "TicketActivity",
@@ -125,7 +134,5 @@ __all__ = [
 ]
 
 from app.models.knowledge_gap_embedding import KnowledgeGapEmbedding
-
-from app.models.knowledge_gap_review import KnowledgeGapReview
-
 from app.models.knowledge_gap_group import KnowledgeGapGroup, KnowledgeGapGroupMember
+from app.models.knowledge_gap_review import KnowledgeGapReview

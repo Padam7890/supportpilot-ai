@@ -11,8 +11,8 @@ from sqlalchemy.orm import aliased
 
 from app.api.deps import get_current_user, require_roles
 from app.core.observability import current_correlation_id
-from app.features.ai.application.shopify_dispatch_policy import authorize_shopify_dispatch
 from app.db.session import get_db, set_tenant_context
+from app.features.ai.application.shopify_dispatch_policy import authorize_shopify_dispatch
 from app.integrations.providers.shopify.actions import (
     ShopifyOrderActionError,
     check_cancellation_eligibility,
@@ -27,12 +27,12 @@ from app.schemas.commerce_action import (
     CommerceActionPage,
 )
 from app.schemas.errors import COMMON_ERROR_RESPONSES
-from app.services.shopify_access import installation_for
-from app.services.shopify_order_lookup import verified_lookup
 from app.services.commerce_action_identity import (
     commerce_action_fingerprint,
     commerce_idempotency_hash,
 )
+from app.services.shopify_access import installation_for
+from app.services.shopify_order_lookup import verified_lookup
 
 router = APIRouter(
     prefix="/commerce/actions", tags=["Commerce actions"], responses=COMMON_ERROR_RESPONSES

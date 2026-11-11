@@ -1,7 +1,7 @@
 """Tenant-scoped management APIs for concrete integration connections."""
 
-from datetime import UTC, datetime
 import logging
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -14,8 +14,8 @@ from app.integrations.connections.service import (
     disconnect_generic_connection,
     record_connection_audit,
 )
-from app.integrations.core.registry import IntegrationRegistry
 from app.integrations.core.errors.integration import IntegrationError
+from app.integrations.core.registry import IntegrationRegistry
 from app.integrations.core.types import IntegrationCapability
 from app.models import (
     AIAgent,
@@ -28,18 +28,18 @@ from app.models import (
     User,
 )
 from app.schemas.integrations import (
+    IntegrationConnectionAuditPageOut,
     IntegrationConnectionEventOut,
     IntegrationConnectionListOut,
-    IntegrationConnectionAuditPageOut,
     IntegrationConnectionOut,
     IntegrationConnectionRoutingUpdate,
     IntegrationDeliveryPageOut,
     IntegrationDeliveryRetryOut,
     IntegrationProviderOut,
-    ShopifyAccessAuditPageOut,
     IntegrationWebhookEventOut,
     IntegrationWebhookEventPageOut,
     IntegrationWebhookRetryOut,
+    ShopifyAccessAuditPageOut,
 )
 
 router = APIRouter(prefix="/integrations", tags=["Integration management"])

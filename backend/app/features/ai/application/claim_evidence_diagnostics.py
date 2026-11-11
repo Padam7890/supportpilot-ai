@@ -6,8 +6,8 @@ order mutation or certify a generated response as factually supported.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 _TOKEN = re.compile(r"[\w\u0900-\u097f]+")
 _STOP = frozenset({

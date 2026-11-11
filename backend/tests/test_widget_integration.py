@@ -1287,7 +1287,7 @@ async def _token():
 
 
 @pytest.mark.anyio
-async def test_reply_stream_rechecks_handoff_before_releasing_more_deltas(client, monkeypatch):
+async def test_reply_stream_withholds_uncommitted_deltas_and_rechecks_handoff(client, monkeypatch):
     from contextlib import aclosing
     from types import SimpleNamespace
 
@@ -1341,11 +1341,8 @@ async def test_reply_stream_rechecks_handoff_before_releasing_more_deltas(client
     authorization = f"Bearer {started.json()['visitor_token']}"
     async with aclosing(reply_events(request, conversation_id, authorization, execution_id, "")) as events:
         assert "event: execution.started" in await anext(events)
-        first = await anext(events)
-        second = await anext(events)
-        assert "event: message.delta" in first and '"text":"Shipping "' in first
-        assert "event: message.delta" in second and '"text":"takes "' in second
-        assert ":123-0" in first and ":123-1" in second
+        # Provisional deltas cannot be released before the answer is committed.
+        assert (await anext(events)).startswith(": keepalive")
         async with SessionLocal() as db:
             await set_tenant_context(db, organization_id)
             conversation = await db.get(Conversation, conversation_id)
@@ -1367,11 +1364,22 @@ async def test_widget_refund_follow_up_persists_through_otp_and_hands_off(client
 
     from app.features.ai.application.intent_routing.schemas import RoutingDecision
 
-    router = AsyncMock(return_value=(RoutingDecision.model_validate({
-        "intents": [{"intent": "knowledge", "confidence": 0.99, "requires_knowledge": False, "requires_tools": False}],
-        "reason_code": "refund_item",
-        "follow_up": {"relation": "answer_to_question", "goal": "refund_item", "confidence": 0.99},
-    }), {}, None, None))
+    reason = {"relation": "answer_to_question", "goal": "refund_reason", "refund_reason": "damaged"}
+    item = {"relation": "answer_to_question", "goal": "refund_item", "item_text": "Two blue mugs"}
+    confirm = {"relation": "answer_to_question", "goal": "none",
+               "action_target": "refund_request", "confirmation": "affirm"}
+    start = {"relation": "new_topic", "goal": "refund", "action": "refund",
+             "action_target": "refund_request"}
+
+    async def interpret(message, *_args, **_kwargs):
+        follow_up = {"I want a refund.": start, "damaged": reason, "Two blue mugs": item, "yes": confirm}[message]
+        return RoutingDecision.model_validate({
+            "intents": [{"intent": "knowledge", "confidence": 0.99, "requires_knowledge": False, "requires_tools": False}],
+            "reason_code": "refund_workflow",
+            "follow_up": {**follow_up, "confidence": 0.99},
+        }), {}, None, None
+
+    router = AsyncMock(side_effect=interpret)
     monkeypatch.setattr("app.features.ai.application.intent_routing.service.invoke_llm_intent_router", router)
     captured = {}
 
@@ -1434,7 +1442,7 @@ async def test_widget_refund_follow_up_persists_through_otp_and_hands_off(client
     await send("damaged")
     assert "Which item was it?" in (await history())[-1]["content"]
     await send("Two blue mugs")
-    router.assert_awaited_once()
+    assert sum(call.args[0] == "Two blue mugs" for call in router.await_args_list) == 1
     assert (await history())[-1]["verification_required"] is True
     await send("yes")
     assert (await history())[-1]["verification_required"] is True
@@ -1467,10 +1475,29 @@ async def test_widget_forgotten_order_number_pauses_verification_and_offers_hand
         client, "widget-missing-reference", origin, ai_enabled=True, ai_reply_mode="auto_reply",
     )
 
+    from app.features.ai.application.intent_routing.schemas import RoutingDecision
+
+    async def interpret(message, *_args, **_kwargs):
+        if message == "yes":
+            follow_up = {"relation": "answer_to_question", "confirmation": "affirm", "action_target": "human_support"}
+        elif message == "I forget the order number":
+            follow_up = {"relation": "new_topic", "action_target": "order", "order_reference_status": "unavailable"}
+        elif message == "sorry i forget number":
+            follow_up = {"relation": "answer_to_question", "action_target": "order", "order_reference_status": "unavailable"}
+        else:
+            follow_up = {"relation": "correction", "action_target": "order", "order_reference_status": "provided"}
+        return RoutingDecision.model_validate({
+            "intents": [{"intent": "knowledge", "confidence": 0.99, "requires_knowledge": False, "requires_tools": False}],
+            "reason_code": "order_reference",
+            "follow_up": {**follow_up, "goal": "none", "confidence": 0.99},
+        }), {}, None, None
+
+    monkeypatch.setattr("app.features.ai.application.intent_routing.service.invoke_llm_intent_router", interpret)
+
     async def unexpected_lookup(*_args, **_kwargs):
         pytest.fail("A shopper's missing order reference must not start a Shopify lookup")
 
-    monkeypatch.setattr(ai_worker, "verified_widget_order_reply", unexpected_lookup)
+    monkeypatch.setattr("app.features.ai.application.widget_sensitive_execution.verified_widget_order_reply", unexpected_lookup)
 
     async def work():
         execution_id = await claim_ai_execution(organization_id)
@@ -1515,7 +1542,7 @@ async def test_widget_forgotten_order_number_pauses_verification_and_offers_hand
         await set_tenant_context(db, organization_id)
         execution = await db.get(AIExecution, escalation_id)
         assert execution is not None and execution.reply_status == "escalated"
-    await send("Actually, I found it")
+    await send("Actually, I found it: #1001")
     resumed = await last_reply()
     assert resumed["verification_paused"] is False and resumed["verification_required"] is True
 

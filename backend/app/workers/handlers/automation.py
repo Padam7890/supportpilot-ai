@@ -11,11 +11,11 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import SessionLocal, set_tenant_context
-from app.features.automations.capabilities import organization_capabilities
 from app.features.automations.approvals import expire_pending_automation_approvals
+from app.features.automations.capabilities import organization_capabilities
 from app.features.automations.contracts import (
-    Action,
     SUPPORTED_TICKET_STATUSES,
+    Action,
     WorkflowDefinition,
 )
 from app.features.automations.policy import (
@@ -30,13 +30,15 @@ from app.features.automations.shopify_actions import (
     read_shopify_order_summary,
     ticket_customer_email,
 )
-from app.features.automations.shopify_automation_approval import request_verified_shopify_cancellation
+from app.features.automations.shopify_automation_approval import (
+    request_verified_shopify_cancellation,
+)
 from app.models import (
+    AIAgent,
     AutomationExecution,
     AutomationExecutionApproval,
     AutomationExecutionEffect,
     AutomationWorkflowVersion,
-    AIAgent,
     Conversation,
     Message,
     ShopifyInstallation,
@@ -936,7 +938,7 @@ async def _apply_actions(
             ok, summary = await read_shopify_catalog_titles(
                 db, organization_id, query=phrase, max_results=action.max_results
             )
-            body = f"[Shopify catalog] {summary}" if ok else f"[Shopify catalog] {summary}"
+            body = f"[Shopify catalog] {summary}"
             await _append_internal_note(db, organization_id, conversation_id, body[:4000])
             outcomes.append({
                 "action": action.kind,

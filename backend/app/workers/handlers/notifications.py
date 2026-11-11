@@ -2,7 +2,10 @@
 
 from uuid import UUID
 
-from app.features.notifications.infrastructure.worker import claim_notification_outbox, process_notification_outbox
+from app.features.notifications.infrastructure.worker import (
+    claim_notification_outbox,
+    process_notification_outbox,
+)
 from app.workers.application.contracts import ClaimedJob, JobHandler
 
 

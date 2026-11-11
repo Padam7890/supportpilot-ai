@@ -1,7 +1,9 @@
 """Tenant-scoped, deduplicated knowledge gap occurrences."""
 import uuid
+
 from sqlalchemy import ForeignKey, ForeignKeyConstraint, Index, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
+
 from app.db.base import Base
 from app.models.mixins import TimestampMixin, UUIDPrimaryKey
 

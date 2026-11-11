@@ -7,14 +7,14 @@ from sqlalchemy import select, tuple_
 
 from app.db.session import SessionLocal, set_tenant_context
 from app.features.ai.application.conversation_understanding import understand_conversation_turn
-from app.features.ai.application.topic_state_runtime import resolve_and_record_topic
-from app.features.ai.application.evidence_assessment import assess_knowledge_evidence
 from app.features.ai.application.conversational_intents import (
     should_skip_knowledge_retrieval,
 )
+from app.features.ai.application.evidence_assessment import assess_knowledge_evidence
 from app.features.ai.application.follow_up import PENDING_KEY
 from app.features.ai.application.policy_follow_up import FollowUpInterpretation
 from app.features.ai.application.retrieval_search import search_agent_knowledge
+from app.features.ai.application.topic_state_runtime import resolve_and_record_topic
 from app.features.ai.application.widget_stream_context import STREAM_SOURCE_IDS_KEY
 from app.models import (
     AIAgent,

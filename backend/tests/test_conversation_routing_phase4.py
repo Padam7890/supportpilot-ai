@@ -1,9 +1,9 @@
 """Phase 4: scoped casual chat and safe clarification routing."""
-from app.features.ai.application.conversational_intents import classify_conversational_intent
 from app.features.ai.application.conversation_orchestration import (
     plan_playground_turn,
     plan_widget_turn,
 )
+from app.features.ai.application.conversational_intents import classify_conversational_intent
 
 
 def test_off_topic_question_is_not_sent_to_knowledge() -> None:
