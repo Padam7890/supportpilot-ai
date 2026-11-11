@@ -8,6 +8,7 @@ from app.api.routes import (
     integration_management,
     integrations,
     knowledge,
+    knowledge_gaps,
     knowledge_bases,
     platform,
     recommendation_settings,
@@ -51,6 +52,7 @@ api_router.include_router(integrations.router)
 api_router.include_router(shopify_orders.orders_router)
 api_router.include_router(integration_management.router)
 api_router.include_router(knowledge.router)
+api_router.include_router(knowledge_gaps.router)
 api_router.include_router(knowledge_bases.router)
 api_router.include_router(users_router)
 api_router.include_router(saved_replies_router)
