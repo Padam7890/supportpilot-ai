@@ -27,6 +27,10 @@ export function KnowledgeGaps() {
       const answer = item.answer.trim();
       if (!question || !answer || !item.knowledgeBaseId) throw new Error("Enter a verified answer and select a knowledge base.");
       if (question.length > 1000 || answer.length > 10000) throw new Error("FAQ content is too long.");
+      const existing = await api<Array<{ gap_id: string; document_id: string; status: string }>>("/knowledge/gaps/reviews");
+      if (existing.some((review) => item.group.gap_ids.includes(review.gap_id))) {
+        throw new Error("This question already has an FAQ submission. Check its review status before uploading another.");
+      }
       // Reuse the existing document upload and ingestion pipeline.
       const markdown = `# ${question}\n\n${answer}\n`;
       const document = await uploadKnowledgeDocument({
@@ -44,8 +48,12 @@ export function KnowledgeGaps() {
     onSuccess: async (document) => {
       setNotice(`FAQ submitted and review history linked to the knowledge document (status: ${document.status}). Verify processing before resolving the gap.`);
       setDraft(null);
-      await queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents });
+      await Promise.all([queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents }), queryClient.invalidateQueries({ queryKey: ["knowledge-gap-reviews"] })]);
     },
+  });
+  const reviews = useQuery({
+    queryKey: ["knowledge-gap-reviews"],
+    queryFn: () => api<Array<{ gap_id: string; document_id: string; status: string }>>("/knowledge/gaps/reviews"),
   });
   const groups = useQuery({
     queryKey: ["knowledge-gap-groups"],
@@ -72,6 +80,7 @@ export function KnowledgeGaps() {
       {groups.data?.items.length === 0 && <p className="text-sm text-muted-foreground">No knowledge gaps recorded yet.</p>}
       {review.isError && <p role="alert" className="text-sm text-destructive">Could not update question status.</p>}
       {notice && <p role="status" className="text-sm text-muted-foreground">{notice}</p>}
+      {reviews.data && reviews.data.length > 0 && <p className="text-xs text-muted-foreground">FAQ submissions: {reviews.data.filter((r) => r.status === "ready").length} ready, {reviews.data.filter((r) => r.status !== "ready").length} pending or failed. Status is refreshed when this page loads.</p>}
       <ul className="divide-y divide-border">
         {groups.data?.items.map((group) => (
           <li key={group.gap_ids[0]} className="py-3 flex flex-wrap items-start justify-between gap-3">
