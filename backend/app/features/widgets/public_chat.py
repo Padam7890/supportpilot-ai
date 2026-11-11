@@ -5,7 +5,6 @@
 import hmac
 import logging
 import re
-import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 from uuid import UUID
@@ -260,7 +259,7 @@ async def start_widget_conversation(
     customer_email = (
         str(payload.visitor_email).strip().casefold()
         if payload.visitor_email
-        else f"visitor+{secrets.token_hex(12)}@widget.invalid"
+        else None
     )
     customer_name = (
         payload.visitor_name
