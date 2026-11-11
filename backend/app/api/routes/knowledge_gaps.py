@@ -1,8 +1,8 @@
 """Review-only knowledge gap API. Never publishes unapproved answers."""
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import require_roles
 from app.db.session import get_db
@@ -81,3 +81,26 @@ async def list_grouped_gaps(
     except EmbeddingProviderError as exc:
         raise HTTPException(status_code=503, detail="Semantic grouping is temporarily unavailable") from exc
     return GroupPage(items=[GroupOut(representative=g.representative, count=g.count, gap_ids=list(g.gap_ids)) for g in groups])
+
+
+class GapReview(BaseModel):
+    status: str = Field(pattern="^(dismissed|resolved|open)$")
+
+
+@router.patch("/{gap_id}", response_model=GapOut)
+async def review_gap(
+    gap_id: UUID,
+    payload: GapReview,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_roles("owner", "admin")),
+) -> GapOut:
+    row = await db.scalar(
+        select(KnowledgeGap)
+        .where(KnowledgeGap.organization_id == user.organization_id, KnowledgeGap.id == gap_id)
+        .with_for_update()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Knowledge gap not found")
+    row.status = payload.status
+    await db.flush()
+    return GapOut.model_validate(row)
