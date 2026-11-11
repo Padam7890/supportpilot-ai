@@ -138,4 +138,7 @@ async def generate_guarded_draft(
         # Older provider plain-text responses lack the structured field.
         # Do not infer a successful answer from safety acceptance alone.
         resolution = "insufficient_evidence"
-    return GuardedDraft(\n        text, True, None, selected, outcomes, usage, model_name,\n        composed.expected_answer, resolution,\n    )
+    return GuardedDraft(
+        text, True, None, selected, outcomes, usage, model_name,
+        composed.expected_answer, resolution,
+    )
