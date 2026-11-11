@@ -13,8 +13,8 @@ from app.models.knowledge_document import KnowledgeDocument, KnowledgeDocumentSo
 from app.models.knowledge_base import KnowledgeBase
 from app.features.ai.domain.content_hash import PENDING_CONTENT_REVISION
 from app.api.routes.knowledge import _resolve_knowledge_base
-from app.models.knowledge_base_audit import record_knowledge_base_audit
-from app.core.correlation import current_correlation_id
+from app.services.knowledge_base_audit import record_knowledge_base_audit
+from app.core.observability import current_correlation_id
 from app.core.config import settings
 from app.features.ai.domain.knowledge_gap_policy import faq_suggestion
 
