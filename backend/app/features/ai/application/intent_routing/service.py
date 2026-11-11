@@ -98,6 +98,7 @@ class CustomerRoutingResolution:
             "status": "completed" if not self.failure_code else "degraded",
             "mode": self.mode,
             "primary_intent": det.intent.value,
+            "customer_message_act": self.llm.customer_message_act if self.llm else "unclear",
             "deterministic_confidence": det.confidence,
             "candidate_intents": [intent.value for intent in det.candidate_intents],
             "requires_context": det.requires_context,
