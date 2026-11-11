@@ -392,3 +392,25 @@ async def move_durable_group_members(
             ))
     await db.flush()
     return {"moved": len(ids)}
+
+
+@router.delete("/durable-groups/{group_id}", status_code=204)
+async def delete_durable_group(
+    group_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_roles("owner", "admin")),
+) -> None:
+    """Delete a review grouping without deleting the underlying gaps."""
+    from sqlalchemy import delete
+    group = await db.scalar(select(KnowledgeGapGroup).where(
+        KnowledgeGapGroup.organization_id == user.organization_id,
+        KnowledgeGapGroup.id == group_id,
+    ).with_for_update())
+    if group is None:
+        raise HTTPException(status_code=404, detail="Group not found")
+    await db.execute(delete(KnowledgeGapGroupMember).where(
+        KnowledgeGapGroupMember.organization_id == user.organization_id,
+        KnowledgeGapGroupMember.group_id == group_id,
+    ))
+    await db.delete(group)
+    await db.flush()
