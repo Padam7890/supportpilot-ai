@@ -4,15 +4,18 @@ Groups are computed from configured embeddings, never hardcoded keywords.
 This service is read-only and does not publish knowledge.
 """
 from dataclasses import dataclass
+from hashlib import sha256
 from math import sqrt
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.features.ai.infrastructure.embedding_gateway import embed_texts
 from app.core.config import settings
 from app.models.knowledge_gap import KnowledgeGap
+from app.models.knowledge_gap_embedding import KnowledgeGapEmbedding
 
 
 @dataclass(frozen=True)
@@ -74,11 +77,47 @@ async def list_semantic_groups(
     )).all()
     if not rows:
         return []
-    vectors = []
-    batch_size = settings.ai_embedding_batch_size
-    for offset in range(0, len(rows), batch_size):
-        vectors.extend(await embed_texts([row.question for row in rows[offset:offset + batch_size]]))
+    model = settings.ai_embedding_model
+    version = settings.ai_embedding_version
+    if not model:
+        raise ValueError("Embedding model is not configured")
+    cached = (await db.scalars(
+        select(KnowledgeGapEmbedding).where(
+            KnowledgeGapEmbedding.organization_id == organization_id,
+            KnowledgeGapEmbedding.gap_id.in_([row.id for row in rows]),
+            KnowledgeGapEmbedding.model == model,
+            KnowledgeGapEmbedding.version == version,
+        )
+    )).all()
+    by_id = {item.gap_id: item for item in cached}
+    vectors_by_id: dict[UUID, list[float]] = {}
+    missing = []
+    for row in rows:
+        digest = sha256(row.question.encode("utf-8")).hexdigest()
+        item = by_id.get(row.id)
+        if item and item.question_hash == digest and len(item.values) == item.dimensions:
+            vectors_by_id[row.id] = item.values
+        else:
+            missing.append((row, digest))
+    batch_size = max(1, settings.ai_embedding_batch_size)
+    for offset in range(0, len(missing), batch_size):
+        batch = missing[offset:offset + batch_size]
+        embedded = await embed_texts([row.question for row, _ in batch], model=model)
+        if len(embedded) != len(batch):
+            raise ValueError("Embedding provider returned the wrong vector count")
+        for (row, digest), vector in zip(batch, embedded, strict=True):
+            vectors_by_id[row.id] = vector.values
+            stmt = insert(KnowledgeGapEmbedding).values(
+                organization_id=organization_id, gap_id=row.id, model=model,
+                version=version, question_hash=digest,
+                dimensions=len(vector.values), values=vector.values,
+            ).on_conflict_do_update(
+                index_elements=["organization_id", "gap_id", "model", "version"],
+                set_={"question_hash": digest, "dimensions": len(vector.values), "values": vector.values},
+            )
+            await db.execute(stmt)
+    # get_db commits the cache writes at request completion.
     return group_vectors(
         [(row.id, row.question) for row in rows],
-        [vector.values for vector in vectors],
+        [vectors_by_id[row.id] for row in rows],
     )
