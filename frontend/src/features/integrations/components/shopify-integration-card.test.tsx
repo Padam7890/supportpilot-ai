@@ -36,9 +36,13 @@ vi.mock("@/features/integrations/api/integration-management-api", () => ({
   getIntegrationProviders,
   getConnectionEvents,
   getConnectionDeliveries,
+  getIntegrationConnectionAudit: vi.fn().mockResolvedValue({ items: [] }),
+  getShopifyAccessAudit: vi.fn().mockResolvedValue({ items: [] }),
   integrationManagementQueryKeys: {
     connections: ["integration-connections"],
     providers: ["integration-providers"],
+    connectionAudit: (id: string | undefined) => ["connection-audit", id],
+    accessAudit: (id: string | undefined) => ["access-audit", id],
     events: (connectionId: string | undefined) => ["integration-events", connectionId],
     deliveries: (connectionId: string | undefined) => ["integration-deliveries", connectionId],
   },
@@ -144,7 +148,7 @@ describe("Shopify configured-store connection", () => {
     expect(await view.findAllByText("read_products")).toHaveLength(2);
     await view.findByText("No successful product sync yet");
     expect(view.container.textContent).toContain("0 synced products");
-    expect(await view.findByRole("button", { name: "Sync catalog" })).toBeEnabled();
+    expect(await view.findByRole("button", { name: "Run full sync" })).toBeEnabled();
   });
 
   it("shows only backend-registered Shopify capabilities", async () => {
@@ -174,7 +178,7 @@ describe("Shopify configured-store connection", () => {
     await waitFor(() => expect(getCatalogStatus).toHaveBeenCalled());
     await view.findByText("No successful product sync yet");
     expect(view.container.textContent).toContain("0 synced products");
-    const syncButton = await view.findByRole("button", { name: "Sync catalog" });
+    const syncButton = await view.findByRole("button", { name: "Run full sync" });
     expect(syncButton).toBeEnabled();
     fireEvent.click(syncButton);
     await waitFor(() => expect(startCatalogSync).toHaveBeenCalledOnce());
@@ -225,7 +229,7 @@ describe("Shopify configured-store connection", () => {
     expect(await view.findByText("Product access missing")).toBeInTheDocument();
     expect(await view.findByText("Missing", { selector: "span" })).toBeInTheDocument();
     expect(view.container.textContent).toContain("include read_products, then reconnect");
-    expect(view.getByRole("button", { name: "Sync catalog" })).toBeDisabled();
+    expect(view.getByRole("button", { name: "Run full sync" })).toBeDisabled();
   });
 
   it("shows safe webhook and delivery diagnostics without customer or message content", async () => {

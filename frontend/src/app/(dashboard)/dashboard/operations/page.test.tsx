@@ -6,7 +6,13 @@ import OperationsPage from "./page";
 
 const { getSystemReadiness } = vi.hoisted(() => ({ getSystemReadiness: vi.fn() }));
 
-vi.mock("@/features/dashboard/api/system-status-api", () => ({ getSystemReadiness }));
+vi.mock("@/features/dashboard/api/system-status-api", () => ({ getSystemReadiness, getWorkerHealth: vi.fn().mockResolvedValue({ status: "ready" }) }));
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
+  usePathname: () => "/dashboard/operations",
+  useSearchParams: () => new URLSearchParams(),
+}));
 
 afterEach(() => cleanup());
 

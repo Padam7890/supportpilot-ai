@@ -1,7 +1,7 @@
 """Pure, deterministic automation matching and preview policy."""
 
-from dataclasses import dataclass
 from collections.abc import Sequence
+from dataclasses import dataclass
 from uuid import UUID
 
 from app.features.automations.contracts import (
@@ -96,12 +96,7 @@ def _trigger_matches(definition: WorkflowDefinition, ctx: EvaluationContext) -> 
             return False
     if trig.ai_agent_id is not None and trig.ai_agent_id != ctx.conversation_ai_agent_id:
         return False
-    if (
-        trig.integration_connection_id is not None
-        and trig.integration_connection_id != ctx.conversation_integration_connection_id
-    ):
-        return False
-    return True
+    return not (trig.integration_connection_id is not None and trig.integration_connection_id != ctx.conversation_integration_connection_id)
 
 
 def _condition_group_matches(definition: WorkflowDefinition, ctx: EvaluationContext) -> bool:

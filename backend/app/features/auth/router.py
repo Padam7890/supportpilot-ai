@@ -25,7 +25,6 @@ from app.db.session import (
     set_tenant_context,
 )
 from app.features.ai.application.defaults import create_workspace_ai_defaults
-from app.features.auth.dev_bypass import auth_dev_otp_bypass_allowed
 from app.features.auth.challenges import (
     CHALLENGE_TTL,
     OTP_MAX_ATTEMPTS,
@@ -38,6 +37,7 @@ from app.features.auth.challenges import (
     normalize_email,
     send_challenge_code,
 )
+from app.features.auth.dev_bypass import auth_dev_otp_bypass_allowed
 from app.models import (
     AuthChallenge,
     AuthIdentity,

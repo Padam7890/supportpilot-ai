@@ -12,8 +12,8 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.features.ai.infrastructure.embedding_gateway import embed_texts
 from app.core.config import settings
+from app.features.ai.infrastructure.embedding_gateway import embed_texts
 from app.models.knowledge_gap import KnowledgeGap
 from app.models.knowledge_gap_embedding import KnowledgeGapEmbedding
 
@@ -104,8 +104,8 @@ async def list_semantic_groups(
         else:
             missing.append((row, digest))
     batch_size = max(1, settings.ai_embedding_batch_size)
-    for offset in range(0, len(missing), batch_size):
-        batch = missing[offset:offset + batch_size]
+    for batch_offset in range(0, len(missing), batch_size):
+        batch = missing[batch_offset:batch_offset + batch_size]
         embedded = await embed_texts([row.question for row, _ in batch], model=model)
         if len(embedded) != len(batch):
             raise ValueError("Embedding provider returned the wrong vector count")

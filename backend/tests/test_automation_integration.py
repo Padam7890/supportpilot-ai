@@ -43,6 +43,8 @@ async def test_published_priority_automation_runs_once_for_customer_message(clie
     )
     assert created.status_code == 201, created.text
     assert created.json()["canvas_layout"] == {
+        "branch_nodes": [],
+        "else_action": None,
         "trigger": {"x": 400, "y": 48},
         "conditions": [{"x": 370, "y": 154}],
         "actions": [{"x": 370, "y": 312}],
@@ -398,7 +400,7 @@ async def test_expired_final_lease_is_failed_and_visible_in_history_and_metrics(
             "date": today,
             "total": 1,
             "succeeded": 0,
-            "failed": 1,
+            "failed": 1, "expired": 0,
             "queued": 0,
             "running": 0,
         }

@@ -182,12 +182,16 @@ def _has_distinct_clauses(message: str) -> bool:
     if len(clauses) < 2:
         return False
     subjects: set[str] = set()
+    topics: set[str] = set()
     for clause in clauses[:4]:
         if not _has_explicit_topic(clause):
             continue
+        topic = derive_topic_memory([{"sender": "customer", "content": clause}]).active_topic
+        if topic:
+            topics.add(topic)
         assessment = assess_deterministic_route(clause, [])
         subjects.update(intent.value for intent in assessment.candidate_intents if intent.value not in {"greeting", "general"})
-    return len(subjects) > 1
+    return len(subjects) > 1 or len(topics) > 1
 
 
 _NEGATED_ACTION = re.compile(

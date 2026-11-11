@@ -3,19 +3,19 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from app.features.automations.router import _workflow_out_or_skip_invalid
 from app.features.automations.contracts import (
     WorkflowCanvasLayout,
     WorkflowCreate,
     WorkflowDefinition,
     default_canvas_layout,
 )
-from app.models import AutomationWorkflow
 from app.features.automations.policy import (
     EvaluationContext,
     evaluate_conditions,
     preview_definition,
 )
+from app.features.automations.router import _workflow_out_or_skip_invalid
+from app.models import AutomationWorkflow
 from app.workers.handlers.automation import retry_delay_seconds
 
 

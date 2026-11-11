@@ -35,12 +35,15 @@ async def route_playground_conversation(
     routing: CustomerRoutingResolution | None = None,
 ) -> PlaygroundRoutingResult:
     """Finish deterministic preview turns; classify other turns for retrieval."""
-    if routing is None:
+    interpretation = routing.llm.follow_up if routing and routing.llm else None
+    plan = plan_playground_turn(question, transcript, interpretation=interpretation)
+    if plan is None and routing is None:
         routing = await resolve_customer_routing(
             question, transcript or [], channel="playground", for_generation=True,
         )
-    interpretation = routing.llm.follow_up if routing.llm else None
-    plan = plan_playground_turn(question, transcript, interpretation=interpretation)
+        interpretation = routing.llm.follow_up if routing.llm else None
+        if interpretation is not None:
+            plan = plan_playground_turn(question, transcript, interpretation=interpretation)
     if plan is not None and plan.route == "inventory":
         async with SessionLocal() as db:
             await set_tenant_context(db, organization_id)
@@ -72,6 +75,7 @@ async def route_playground_conversation(
             result_count=0,
         )
         return PlaygroundRoutingResult(completed=True)
+    assert routing is not None
     return PlaygroundRoutingResult(
         completed=False, outcome=routing.tool_outcome(), requires_evidence=routing.requires_evidence,
         interpretation=routing.llm.follow_up if routing.llm else None,

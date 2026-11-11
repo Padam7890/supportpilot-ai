@@ -10,9 +10,9 @@ from uuid import UUID
 
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.services.catalog import enqueue_reconciliation
 from app.db.session import SessionLocal, set_tenant_context
 from app.features.ai.application.knowledge_gap_reconciliation import reconcile_organization
+from app.services.catalog import enqueue_reconciliation
 from app.workers.application.contracts import ClaimedJob, JobHandler
 from app.workers.application.scheduler import FairScheduler
 from app.workers.handlers.ai import AIExecutionHandler

@@ -8,13 +8,13 @@ from typing import Literal
 
 from app.features.ai.application.catalog_discovery import is_catalog_discovery_request
 from app.features.ai.application.conversation_understanding import understand_conversation_turn
-from app.features.ai.application.policy_follow_up import FollowUpInterpretation
 from app.features.ai.application.conversational_intents import (
     classify_conversational_intent,
     playground_conversational_reply,
     widget_conversational_reply,
 )
 from app.features.ai.application.follow_up import resolve_order_support
+from app.features.ai.application.policy_follow_up import FollowUpInterpretation
 from app.features.ai.application.retrieval import is_contextual_follow_up
 from app.services import widget_ai
 
@@ -64,7 +64,23 @@ def plan_playground_turn(
     )
     if understanding.negated_action:
         return _negated_action_plan()
-    order_follow_up = resolve_order_support(" ".join(question.strip().split()))
+    if (
+        interpretation is not None
+        and interpretation.confidence >= 0.8
+        and interpretation.relation == "answer_to_question"
+        and interpretation.action_target == "human_support"
+        and interpretation.confirmation == "affirm"
+    ):
+        return CustomerTurnPlan(
+            route="direct",
+            draft="The storefront would pass this conversation to the store team. This Playground preview does not contact them.",
+            safe_summary="Previewed a human handoff without contacting the store team.",
+            intent="handoff",
+            tool_name="playground_order_follow_up",
+        )
+    order_follow_up = resolve_order_support(
+        " ".join(question.strip().split()), interpretation=interpretation,
+    )
     if order_follow_up and order_follow_up.draft:
         return CustomerTurnPlan(
             route="direct",
@@ -135,13 +151,22 @@ def plan_widget_turn(
     # a sensitive operation. Let informational questions use grounded retrieval.
     # This is a speech-act guard, not a list of policy-specific phrases.
     informational_question = bool(re.match(
-        r"^\\s*(?:what|why|when|where|which|who|how|is|are|does|do|did|"
-        r"should|would|could|can)\\b", message, re.IGNORECASE,
+        r"^\s*(?:what|why|when|where|which|who|how|is|are|does|do|did|"
+        r"should|would|could|can)\b", message, re.IGNORECASE,
     )) and not bool(re.match(
-        r"^\\s*(?:(?:can|could|would|will)\\s+you\\s+|please\\s+)",
+        r"^\s*(?:(?:can|could|would|will)\s+you\s+|please\s+)",
         message, re.IGNORECASE,
     ))
-    sensitive = None if informational_question else widget_ai.widget_sensitive_reply(message)
+    private_order_lookup = (
+        widget_ai.widget_request_needs_order_verification(message)
+        and not widget_ai.widget_is_cancellation_request(message)
+        and not widget_ai.POLICY_QUESTION.search(message)
+    )
+    sensitive = (
+        widget_ai.widget_sensitive_reply(message)
+        if not informational_question or private_order_lookup
+        else None
+    )
     if sensitive is not None:
         draft, safe_summary = sensitive
         return CustomerTurnPlan(

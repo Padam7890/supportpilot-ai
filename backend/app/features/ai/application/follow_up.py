@@ -11,7 +11,6 @@ from pydantic import BaseModel, ConfigDict
 from app.features.ai.application.conversational_intents import classify_conversational_intent
 from app.features.ai.application.order_reference import (
     order_reference_recovered,
-    order_reference_unavailable,
 )
 from app.features.ai.application.policy_follow_up import (
     FollowUpInterpretation,
@@ -154,17 +153,16 @@ def resolve_order_support(
         "order_verification",
         "refund_verification",
     }
-    in_order_context = waiting_for_order or (
-        state is not None and state.stage == "order_confirmation"
-    )
     interpreted_missing_reference = bool(
         interpretation
         and interpretation.confidence >= 0.8
-        and interpretation.relation == "answer_to_question"
-        and interpretation.action_target == "order"
-        and interpretation.order_reference_text is None
+        and interpretation.order_reference_status == "unavailable"
+        and (
+            (interpretation.relation == "new_topic" and interpretation.action_target == "order")
+            or (interpretation.relation == "answer_to_question" and waiting_for_order)
+        )
     )
-    if interpreted_missing_reference or order_reference_unavailable(message, in_order_context=in_order_context):
+    if interpreted_missing_reference:
         pending = (
             state
             if waiting_for_order and state
@@ -222,9 +220,17 @@ def resolve_order_support(
         if state.expected_answer_type == "otp" and interpretation is not None and interpretation.relation == "unclear":
             return FollowUp("order_verification_interrupted", draft=VERIFY_CODE_HELP, pending=state)
         return None
-    if widget_ai.HUMAN_REQUEST.search(message) or (
+    semantic_handoff = bool(
+        interpretation
+        and interpretation.confidence >= 0.8
+        and interpretation.handoff_requested
+        and interpretation.action_target == "human_support"
+    )
+    if semantic_handoff or (interpretation is None and widget_ai.HUMAN_REQUEST.search(message)) or (
         state.handoff_status == "offered"
         and interpretation is not None
+        and interpretation.relation == "answer_to_question"
+        and interpretation.action_target == "human_support"
         and interpretation.confirmation == "affirm"
     ):
         if state.handoff_status == "requested":
@@ -242,7 +248,13 @@ def resolve_order_support(
             pending=pending,
             handoff=True,
         )
-    if interpretation is not None and interpretation.confirmation in {"deny", "retract"}:
+    if (
+        state.handoff_status == "offered"
+        and interpretation is not None
+        and interpretation.relation == "answer_to_question"
+        and interpretation.action_target == "human_support"
+        and interpretation.confirmation in {"deny", "retract"}
+    ):
         if state.handoff_status == "requested":
             return FollowUp("order_handoff_pending", draft=ORDER_HANDOFF_PENDING, pending=state)
         pending = state.model_copy(
@@ -253,9 +265,19 @@ def resolve_order_support(
             draft=ORDER_HANDOFF_DECLINED,
             pending=pending,
         )
-    if widget_ai.POLICY_QUESTION.search(message):
+    if interpretation is not None and (
+        interpretation.relation == "new_topic" or interpretation.goal == "policy_question"
+    ):
         return None
-    if state.active_intent == "order" and widget_ai.CANCELLATION_REQUEST.search(message):
+    if interpretation is None and widget_ai.POLICY_QUESTION.search(message):
+        return None
+    if (
+        state.active_intent == "order"
+        and interpretation is not None
+        and interpretation.action == "cancel"
+        and interpretation.action_target == "order"
+        and interpretation.confirmation != "retract"
+    ):
         state = state.model_copy(update={"order_action": "cancel"})
     if classify_conversational_intent(message) is None and (
         widget_ai.widget_request_needs_order_verification(message)
@@ -285,10 +307,24 @@ def resolve_follow_up(
     interpretation: FollowUpInterpretation | None = None,
 ) -> FollowUp | None:
     answer = " ".join(message.strip().split())
-    if interpretation is not None and interpretation.confirmation == "retract":
+    active_target = "refund_request" if state.active_intent == "refund" else "order"
+    scoped_retraction = bool(
+        interpretation
+        and interpretation.relation != "new_topic"
+        and interpretation.confirmation == "retract"
+        and interpretation.action_target in {active_target, "item"}
+    )
+    if scoped_retraction:
         return FollowUp("declined", draft="Understood. I won’t proceed with that request. What else can I help with?")
     if order_follow_up := resolve_order_support(
         answer, state, source_message_id=source_message_id, interpretation=interpretation,
+    ):
+        return order_follow_up
+    if (
+        interpretation is not None
+        and state.expected_answer_type == "confirmation"
+        and interpretation.confirmation in {"deny", "retract"}
+        and interpretation.action_target in {active_target, "human_support"}
     ):
         return order_follow_up
     if interpretation is not None and interpretation.confirmation in {"deny", "retract"}:
@@ -334,6 +370,7 @@ def resolve_follow_up(
             and slot_answer and interpretation.goal == "refund_item"
             and (
                 interpretation.item_text is not None
+                and interpretation.item_text.casefold() in answer.casefold()
                 and ITEM_IDENTIFIER.fullmatch(interpretation.item_text)
                 and not re.search(r"\b\d{5,}\b", interpretation.item_text)
                 and classify_conversational_intent(interpretation.item_text) is None
@@ -348,7 +385,15 @@ def resolve_follow_up(
                 }
             )
             return FollowUp("refund_item", draft=VERIFY_REFUND, pending=updated)
-        if state.stage == "refund_review" and interpretation and interpretation.confirmation == "affirm" and state.verification_id:
+        if (
+            state.stage == "refund_review"
+            and state.verification_status == "verified"
+            and state.verification_id
+            and interpretation is not None
+            and interpretation.relation == "answer_to_question"
+            and interpretation.action_target == "refund_request"
+            and interpretation.confirmation == "affirm"
+        ):
             return FollowUp("refund_review", review=state)
         if state.stage == "refund_verification" and interpretation and interpretation.confirmation == "affirm":
             return FollowUp("refund_verification", draft=VERIFY_REFUND, pending=state)
@@ -370,11 +415,18 @@ def assess_widget_follow_up(
 ) -> tuple[FollowUp | None, str]:
     from app.services import widget_ai
 
+    if interpretation is None and not negation_uncertain:
+        from app.features.ai.application.conversation_understanding import (
+            understand_conversation_turn,
+        )
+
+        negation_uncertain = understand_conversation_turn(question, transcript).negated_action
+
     if negation_uncertain:
         return FollowUp(
             "declined",
             draft="I won’t start or submit that request without understanding what you intend. What would you like help with?",
-        ), "negation_interpretation_unavailable"
+        ), "retracted"
 
     if (
         interpretation is not None

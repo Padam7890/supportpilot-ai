@@ -1,14 +1,13 @@
 """Durable worker for approved mock-commerce actions."""
 
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import and_, or_, select
 
-from app.workers.domain.lease_policy import COMMERCE_ACTION_LEASE as ACTION_LEASE_TIMEOUT
-from app.features.ai.application.shopify_dispatch_policy import authorize_shopify_dispatch
 from app.db.session import SessionLocal, set_tenant_context
+from app.features.ai.application.shopify_dispatch_policy import authorize_shopify_dispatch
 from app.integrations.providers.shopify.actions import (
     ShopifyOrderActionError,
     cancel_shopify_order,
@@ -17,8 +16,9 @@ from app.integrations.providers.shopify.actions import (
 from app.integrations.providers.shopify.orders import lookup_authorized_order
 from app.integrations.providers.shopify.security import decrypt_credential
 from app.models import CommerceAction, CommerceActionAudit, Customer, ShopifyInstallation, Ticket
-from app.services.mock_commerce import MockCommerceService
 from app.services.commerce_action_recovery import decide_lease_recovery
+from app.services.mock_commerce import MockCommerceService
+from app.workers.domain.lease_policy import COMMERCE_ACTION_LEASE as ACTION_LEASE_TIMEOUT
 
 logger = logging.getLogger(__name__)
 MAX_EXECUTION_ATTEMPTS = 3

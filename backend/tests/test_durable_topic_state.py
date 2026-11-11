@@ -29,7 +29,8 @@ async def test_new_topic_uses_insert_without_overwriting_existing_state() -> Non
     assert created is False
     sql = str(db.execute.await_args.args[0]).lower()
     assert "on conflict" in sql
-    assert "do nothing" in sql
+    assert "do update" in sql
+    assert "where conversation_topic_states.expires_at <=" in sql
 
 
 @pytest.mark.asyncio

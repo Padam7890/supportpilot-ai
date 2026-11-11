@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass
 
-from app.features.ai.application.policy_follow_up import FollowUpInterpretation
 from app.features.ai.application.conversation_orchestration import (
     CustomerTurnPlan,
     plan_widget_turn,
@@ -12,6 +11,7 @@ from app.features.ai.application.intent_routing import (
     apply_routing_to_widget_plan,
     resolve_customer_routing,
 )
+from app.features.ai.application.policy_follow_up import FollowUpInterpretation
 
 
 @dataclass(frozen=True)
@@ -32,6 +32,12 @@ async def resolve_widget_turn(
     routing: CustomerRoutingResolution | None = None,
 ) -> WidgetRouteResult:
     """Preserve follow-up precedence before optional LLM intent classification."""
+    if follow_up_decision is not None and routing is None:
+        return WidgetRouteResult(
+            turn=plan_widget_turn(message, transcript),
+            outcome={"tool": "widget_follow_up", "status": follow_up_decision},
+            model_router_invoked=False,
+        )
     if routing is None:
         routing = await resolve_customer_routing(
             message, transcript, channel="widget", for_generation=True, allow_model=allow_model,

@@ -4,10 +4,10 @@ import logging
 from unittest.mock import patch
 
 from app.features.ai.application.generation_metrics import (
+    configured_model_prices,
+    estimated_generation_cost_usd,
     log_generation_metrics,
     normalized_token_totals,
-    estimated_generation_cost_usd,
-    configured_model_prices,
     sanitized_token_usage,
 )
 
@@ -26,17 +26,19 @@ def test_missing_usage_is_safe() -> None:
 
 
 def test_metric_log_omits_private_usage_fields(caplog) -> None:
-    with patch("app.features.ai.application.generation_metrics.monotonic", return_value=3.5):
-        with caplog.at_level(logging.INFO, logger="app.features.ai.application.generation_metrics"):
-            log_generation_metrics(
-                execution_id="execution-1",
-                execution_kind="widget_reply",
-                model_name="test-model",
-                started_monotonic=1.0,
-                usage={"input_tokens": 15, "prompt": "secret", "api_key": "never-log"},
-                streamed=True,
-                correlation_id="trace-1",
-            )
+    with (
+        patch("app.features.ai.application.generation_metrics.monotonic", return_value=3.5),
+        caplog.at_level(logging.INFO, logger="app.features.ai.application.generation_metrics"),
+    ):
+        log_generation_metrics(
+            execution_id="execution-1",
+            execution_kind="widget_reply",
+            model_name="test-model",
+            started_monotonic=1.0,
+            usage={"input_tokens": 15, "prompt": "secret", "api_key": "never-log"},
+            streamed=True,
+            correlation_id="trace-1",
+        )
     record = next(record for record in caplog.records if "ai_generation_metrics " in record.message)
     data = json.loads(record.message.split("ai_generation_metrics ", 1)[1])
     assert data["duration_ms"] == 2500

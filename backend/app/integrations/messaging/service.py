@@ -9,10 +9,13 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.features.ai.application.defaults import get_default_agent
 from app.core.observability import current_correlation_id
+from app.features.ai.application.defaults import get_default_agent
 from app.features.automations.service import enqueue_customer_message_workflows
-from app.features.notifications.application.events import TicketNotificationPayload, enqueue_notification_event
+from app.features.notifications.application.events import (
+    TicketNotificationPayload,
+    enqueue_notification_event,
+)
 from app.integrations.core.contracts.messaging import IncomingMessage
 from app.models import (
     AIAgent,

@@ -28,13 +28,13 @@ from app.models import (
     WidgetOrderVerification,
 )
 from app.schemas.commerce_action import CommerceActionCreate
-from app.services.commerce_action_identity import (
-    commerce_action_fingerprint,
-    commerce_idempotency_hash,
-)
 from app.services.catalog import (
     connected_shopify_connection,
     connection_ref,
+)
+from app.services.commerce_action_identity import (
+    commerce_action_fingerprint,
+    commerce_idempotency_hash,
 )
 from app.services.shopify_commerce_credentials import resolve_shopify_commerce_credentials
 

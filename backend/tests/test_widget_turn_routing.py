@@ -33,6 +33,7 @@ async def test_normal_turn_uses_intent_router() -> None:
         tool_outcome=lambda: {"tool": "intent_router", "status": "completed"},
         metrics=SimpleNamespace(llm_router_invocation_count=1),
         requires_evidence=True,
+        llm=None,
     )
     with patch(
         "app.features.ai.application.widget_turn_routing.resolve_customer_routing",

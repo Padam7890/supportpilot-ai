@@ -6,7 +6,17 @@ Callers must set the tenant DB context before using the repository.
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKeyConstraint, Index, Integer, String, Uuid, select, update
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    String,
+    Uuid,
+    select,
+    update,
+)
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column

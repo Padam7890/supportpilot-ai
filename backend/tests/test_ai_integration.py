@@ -196,6 +196,7 @@ async def test_ai_reply_draft_is_grounded_safe_and_never_sent(client, monkeypatc
     monkeypatch.setattr(settings, "ai_provider_base_url", "http://127.0.0.1:8012/v1")
     monkeypatch.setattr(settings, "ai_model", "test-support-model")
     monkeypatch.setattr(settings, "ai_provider_api_key", None)
+    monkeypatch.setattr(settings, "ai_embedding_model", None)
     monkeypatch.setattr(httpx, "AsyncClient", MockProviderClient)
     MockProviderClient.last_request = None
     verified_order_email = customer.email
@@ -410,6 +411,7 @@ async def test_uploaded_document_flows_through_assigned_bot_to_scoped_citation(c
     monkeypatch.setattr(settings, "ai_provider_base_url", "http://127.0.0.1:8012/v1")
     monkeypatch.setattr(settings, "ai_model", "test-support-model")
     monkeypatch.setattr(settings, "ai_provider_api_key", None)
+    monkeypatch.setattr(settings, "ai_embedding_model", None)
     monkeypatch.setattr(httpx, "AsyncClient", MockProviderClient)
     queued = await client.post(
         "/api/v1/ai/playground",
@@ -597,7 +599,25 @@ async def test_ai_active_execution_limit_is_enforced_under_concurrent_requests(c
 
 @pytest.mark.anyio
 async def test_playground_missing_order_follow_up_skips_retrieval_and_previews_handoff(client, monkeypatch):
+    from app.features.ai.application.intent_routing.schemas import RoutingDecision
     from app.services.widget_ai import ORDER_VERIFICATION_MESSAGE
+
+    monkeypatch.setattr(settings, "ai_provider_base_url", "http://127.0.0.1:8012/v1")
+    monkeypatch.setattr(settings, "ai_model", "test-support-model")
+
+    async def interpret(message, *_args, **_kwargs):
+        follow_up = (
+            {"relation": "answer_to_question", "confirmation": "affirm", "action_target": "human_support"}
+            if message == "yes"
+            else {"relation": "new_topic", "action_target": "order", "order_reference_status": "unavailable"}
+        )
+        return RoutingDecision.model_validate({
+            "intents": [{"intent": "knowledge", "confidence": 0.99, "requires_knowledge": False, "requires_tools": False}],
+            "reason_code": "order_recovery_preview",
+            "follow_up": {**follow_up, "goal": "none", "confidence": 0.99},
+        }), {}, None, None
+
+    monkeypatch.setattr("app.features.ai.application.intent_routing.service.invoke_llm_intent_router", interpret)
 
     platform = await platform_owner(client)
     owner = await approved_workspace(client, platform, "ai-playground-order-follow-up")
@@ -605,10 +625,9 @@ async def test_playground_missing_order_follow_up_skips_retrieval_and_previews_h
     headers = bearer(owner["access_token"])
 
     async def unexpected(*_args, **_kwargs):
-        pytest.fail("Previewing order reference recovery must not use retrieval or the intent model")
+        pytest.fail("Previewing order reference recovery must not retrieve knowledge")
 
     monkeypatch.setattr("app.features.ai.application.context.search_agent_knowledge", unexpected)
-    monkeypatch.setattr("app.services.ai_worker.resolve_customer_routing", unexpected)
 
     async def ask(question, history):
         queued = await client.post(

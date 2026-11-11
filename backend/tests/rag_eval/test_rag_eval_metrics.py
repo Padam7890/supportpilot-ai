@@ -9,7 +9,10 @@ from app.features.ai.application.rag_eval import (
     precision_at_k,
     recall_at_k,
 )
-from app.features.ai.application.retrieval import build_retrieval_terms, should_skip_semantic_retrieval
+from app.features.ai.application.retrieval import (
+    build_retrieval_terms,
+    should_skip_semantic_retrieval,
+)
 from app.features.ai.application.retrieval_search import reciprocal_rank_fusion
 
 

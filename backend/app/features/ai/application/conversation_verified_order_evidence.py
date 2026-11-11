@@ -4,7 +4,10 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
-from app.features.ai.application.conversation_response_evidence import EvidenceItem, ResponseEvidence
+from app.features.ai.application.conversation_response_evidence import (
+    EvidenceItem,
+    ResponseEvidence,
+)
 from app.schemas.shopify import ShopifyOrderOut
 
 OrderText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]

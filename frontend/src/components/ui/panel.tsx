@@ -23,7 +23,7 @@ export function PanelHeader({
 }) {
   return (
     <CardHeader className="border-b border-border/60 pb-4">
-      <CardTitle className="card-title font-semibold">{title}</CardTitle>
+      <CardTitle role="heading" aria-level={2} className="card-title font-semibold">{title}</CardTitle>
       {description ? <CardDescription className="helper-text">{description}</CardDescription> : null}
       {action ? <CardAction>{action}</CardAction> : null}
     </CardHeader>

@@ -1,10 +1,18 @@
 """Bounded background reconciliation of approved FAQ ingestion and embedding state."""
 from uuid import UUID
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.config import settings
+from app.models.knowledge_document import (
+    DocumentChunk,
+    DocumentEmbedding,
+    DocumentEmbeddingJob,
+    KnowledgeDocument,
+)
 from app.models.knowledge_gap_review import KnowledgeGapReview
-from app.models.knowledge_document import KnowledgeDocument, DocumentChunk, DocumentEmbedding, DocumentEmbeddingJob
+
 
 async def reconcile_review(db: AsyncSession, record: KnowledgeGapReview) -> None:
     document = await db.scalar(select(KnowledgeDocument).where(

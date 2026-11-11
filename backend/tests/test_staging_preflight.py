@@ -24,9 +24,9 @@ def test_accept_https_origin() -> None:
 
 class FakeResponse:
     status = 200
-    headers = {"Content-Type": "application/json"}
 
     def __init__(self, payload: dict) -> None:
+        self.headers = {"Content-Type": "application/json"}
         self.body = json.dumps(payload).encode()
 
     def __enter__(self):

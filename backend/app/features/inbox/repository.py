@@ -20,11 +20,12 @@ from app.models import (
     Customer,
     Message,
     Organization,
-    Ticket,
     Team,
     TeamMember,
+    Ticket,
     User,
 )
+
 
 def _filter_fingerprint(filters: dict[str, str | None]) -> str:
     encoded = json.dumps(filters, sort_keys=True, separators=(",", ":")).encode()

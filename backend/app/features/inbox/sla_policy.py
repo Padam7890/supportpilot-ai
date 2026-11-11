@@ -2,7 +2,6 @@
 
 from sqlalchemy import Integer, case, cast, func
 
-
 DEFAULT_FIRST_RESPONSE_SLA_MINUTES = {
     "low": 1440,
     "normal": 480,

@@ -3,11 +3,13 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
+from app.schemas.commerce_action import CommerceActionCreate
 from app.services.commerce_action_identity import (
     commerce_action_fingerprint as fingerprint,
+)
+from app.services.commerce_action_identity import (
     commerce_idempotency_hash as idempotency_hash,
 )
-from app.schemas.commerce_action import CommerceActionCreate
 from app.services.mock_commerce import MockCommerceService
 
 

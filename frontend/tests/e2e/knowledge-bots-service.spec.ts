@@ -20,17 +20,21 @@ test("knowledge base and bot management persist through the live API and worker"
   const botName = `Service returns bot ${crypto.randomUUID().slice(0, 8)}`;
 
   await page.goto("/dashboard/knowledge");
-  await page.getByLabel("New knowledge base name").fill(baseName);
+  await page.getByRole("button", { name: "New", exact: true }).click();
+  await page.getByLabel("Knowledge base name", { exact: true }).fill(baseName);
   await page.getByRole("button", { name: "Create base" }).click();
-  await expect(page.getByRole("button", { name: baseName, exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: baseName, exact: true })).toBeVisible();
 
-  await page.getByLabel("Choose a PDF, text, or Markdown document").setInputFiles({
+  await page.getByRole("button", { name: "Upload", exact: true }).click();
+  await page.getByLabel("Choose documents to upload").setInputFiles({
     name: documentName,
     mimeType: "text/plain",
     buffer: Buffer.from("Unused products may be returned within 30 days with proof of purchase."),
   });
+  await page.getByRole("button", { name: "Upload files" }).click();
+  await page.getByRole("button", { name: "Done", exact: true }).click();
   await expect(page.getByRole("link", { name: documentName })).toBeVisible();
-  await expect(page.getByText("ready", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("Ready", { exact: true })).toBeVisible({ timeout: 30_000 });
 
   await page.goto("/dashboard/ai/agents");
   await page.getByRole("button", { name: "New bot" }).click();

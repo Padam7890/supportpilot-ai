@@ -2,8 +2,8 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import (
-    Boolean,
     JSON,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,

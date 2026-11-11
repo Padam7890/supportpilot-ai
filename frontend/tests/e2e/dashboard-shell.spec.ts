@@ -140,10 +140,10 @@ test("desktop sidebar keeps grouped navigation and collapse state across routes"
   await page.goto("/dashboard/inbox");
 
   const navigation = page.getByRole("navigation", { name: "Main navigation" });
-  await expect(navigation.getByRole("group", { name: "Workspace" })).toBeVisible();
-  await expect(navigation.getByRole("group", { name: "AI Studio" })).toBeVisible();
-  await expect(navigation.getByRole("group", { name: "Connections" })).toBeVisible();
-  await expect(navigation.getByRole("group", { name: "Administration" })).toBeVisible();
+  await expect(navigation.getByRole("region", { name: "Main", exact: true })).toBeVisible();
+  await expect(navigation.getByRole("region", { name: "AI & automation", exact: true })).toBeVisible();
+  await expect(navigation.getByRole("region", { name: "Insights", exact: true })).toBeVisible();
+  await expect(navigation.getByRole("region", { name: "Workspace", exact: true })).toBeVisible();
   await expect(navigation.getByRole("link", { name: "Inbox" })).toHaveAttribute("aria-current", "page");
 
   await page.getByRole("complementary").getByRole("button", { name: "Collapse sidebar" }).click();
@@ -169,8 +169,8 @@ test("mobile sidebar opens as a drawer and closes after navigation", async ({ pa
   await page.getByRole("button", { name: "Open navigation" }).click();
 
   const navigation = page.getByRole("navigation", { name: "Main navigation" });
-  await expect(navigation.getByRole("link", { name: "Widget" })).toBeVisible();
-  await navigation.getByRole("link", { name: "Widget" }).click();
+  await expect(navigation.getByRole("link", { name: "Channels" })).toBeVisible();
+  await navigation.getByRole("link", { name: "Channels" }).click();
   await expect(page).toHaveURL(/\/dashboard\/widget$/);
   await expect(page.getByRole("button", { name: "Open navigation" })).toBeVisible();
 });

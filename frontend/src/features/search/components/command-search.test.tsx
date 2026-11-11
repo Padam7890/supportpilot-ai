@@ -9,6 +9,7 @@ vi.mock("@/features/auth/api/auth-api", () => ({
   currentUserQueryKey: ["me"],
   getCurrentUser: vi.fn().mockResolvedValue({ id: "user-1", organization_id: "org-1", email: "agent@example.com", full_name: "Agent", role: "owner", is_active: true, organization: { id: "org-1", name: "Support", slug: "support" } }),
 }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock("next/link", () => ({ default: ({ href, children, onClick, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }) => <a href={href} {...props} onClick={(event) => { event.preventDefault(); onClick?.(event); }}>{children}</a> }));
 
 describe("command search", () => {

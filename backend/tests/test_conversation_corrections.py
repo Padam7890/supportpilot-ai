@@ -46,10 +46,15 @@ def test_negated_cancellation_does_not_start_order_action() -> None:
 
 def test_retraction_stops_pending_cancellation() -> None:
     from app.features.ai.application.follow_up import order_verification_question, resolve_follow_up
+    from app.features.ai.application.policy_follow_up import FollowUpInterpretation
 
     follow_up = resolve_follow_up(
         "Wait, don't cancel it", order_verification_question(action="cancel"),
         source_message_id=None,
+        interpretation=FollowUpInterpretation(
+            relation="answer_to_question", goal="none", confirmation="retract",
+            action="cancel", action_target="order", confidence=0.99,
+        ),
     )
     assert follow_up is not None
     assert follow_up.decision == "declined"
@@ -76,11 +81,15 @@ def test_pending_prompt_survives_intervening_customer_turn() -> None:
 
 
 def test_new_explicit_topic_does_not_inherit_old_pending_refund_slot() -> None:
+    import json
     from datetime import UTC, datetime
     from uuid import uuid4
 
-    from app.features.ai.application.follow_up import PENDING_KEY, assess_widget_follow_up, refund_start
-    import json
+    from app.features.ai.application.follow_up import (
+        PENDING_KEY,
+        assess_widget_follow_up,
+        refund_start,
+    )
 
     agent_id = uuid4()
     now = datetime.now(UTC)

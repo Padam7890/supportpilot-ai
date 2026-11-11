@@ -14,6 +14,7 @@ vi.mock("../api/widget-api", () => ({
   createWidgetConfig,
   getWidgetConfig,
   updateWidgetConfig,
+  previewWidgetRouting: vi.fn(),
   widgetConfigKey: ["storefront-widget-config"],
 }));
 vi.mock("@/features/ai/api/ai-agent-api", () => ({
@@ -59,7 +60,10 @@ describe("storefront widget bot configuration", () => {
   it("saves several enabled bots as the widget's routing allowlist", async () => {
     renderCard();
     const shippingBot = await screen.findByRole("checkbox", { name: "Use Shipping bot in widget" });
-    fireEvent.click(shippingBot);
+    const input = shippingBot.parentElement?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    expect(input).toBeTruthy();
+    fireEvent.click(input!);
+    await waitFor(() => expect(shippingBot).toBeChecked());
     fireEvent.click(screen.getByRole("button", { name: "Save widget settings" }));
 
     await waitFor(() => expect(updateWidgetConfig).toHaveBeenCalledWith(expect.objectContaining({

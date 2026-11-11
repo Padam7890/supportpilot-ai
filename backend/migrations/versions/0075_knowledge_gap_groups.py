@@ -1,6 +1,7 @@
 """Durable reviewer-controlled knowledge gap groups."""
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
+
 revision = "0075_knowledge_gap_groups"
 down_revision = "0074_knowledge_gap_reviews"
 branch_labels = None

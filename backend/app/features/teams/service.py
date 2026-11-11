@@ -48,11 +48,8 @@ class TeamService:
                     role=member.role,
                 )
             )
-        ticket_counts = dict(
-            (
-                team_id,
-                int(count),
-            )
+        ticket_counts = {
+            team_id: int(count)
             for team_id, count in (
                 await self.db.execute(
                     select(Ticket.team_id, func.count(Ticket.id))
@@ -64,7 +61,7 @@ class TeamService:
                     .group_by(Ticket.team_id)
                 )
             ).all()
-        )
+        }
         return [
             self._as_output(team, members_by_team[team.id], ticket_counts.get(team.id, 0))
             for team in teams

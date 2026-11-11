@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 
-_LOCATION = re.compile(r"^(?:for|in|to)\s+(.{2,80}?)\s*[?.!]*$", re.I)
+_LOCATION = re.compile(r"^(?:for|in|to)\s+(.{2,80}?)\s*[?.!]*$", re.IGNORECASE)
 
 
 def resolve_retrieval_query(

@@ -1,7 +1,7 @@
 """Persist tenant-scoped notifications, recipient state, preferences, and outbox."""
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "0066_notifications"

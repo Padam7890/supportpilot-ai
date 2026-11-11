@@ -7,17 +7,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, require_roles
 from app.db.session import get_db
 from app.models import KnowledgeBase, KnowledgeBaseAudit, KnowledgeDocument, User
-from app.services.knowledge_base_audit import record_knowledge_base_audit
 from app.schemas.errors import COMMON_ERROR_RESPONSES
 from app.schemas.knowledge_bases import (
-    KnowledgeBaseCreate,
     KnowledgeBaseAuditOut,
     KnowledgeBaseAuditPage,
+    KnowledgeBaseCreate,
     KnowledgeBaseListItem,
     KnowledgeBaseOut,
     KnowledgeBasePage,
     KnowledgeBaseUpdate,
 )
+from app.services.knowledge_base_audit import record_knowledge_base_audit
 
 router = APIRouter(prefix="/knowledge/bases", tags=["knowledge bases"], responses=COMMON_ERROR_RESPONSES)
 

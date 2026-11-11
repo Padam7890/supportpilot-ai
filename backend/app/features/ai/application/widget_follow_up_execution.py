@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from app.features.ai.application.context import load_execution_context
-from app.features.ai.application.follow_up import FollowUp, VERIFY_REFUND
+from app.features.ai.application.follow_up import VERIFY_REFUND, FollowUp
 from app.features.ai.application.widget_orders import refund_verification_is_active
 from app.features.ai.application.widget_replies import finish_widget_reply
 

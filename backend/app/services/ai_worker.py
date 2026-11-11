@@ -50,10 +50,7 @@ from app.features.ai.application.intent_routing import (
     resolve_contextual_policy_turn,
     resolve_customer_routing,
 )
-from app.features.ai.application.intent_routing.service import (
-    resolve_customer_routing,
-    resolve_refund_slot,
-)
+from app.features.ai.application.intent_routing.service import resolve_refund_slot
 from app.features.ai.application.knowledge_inventory import is_knowledge_inventory_question
 from app.features.ai.application.missing_evidence_policy import plan_missing_evidence_reply
 from app.features.ai.application.playground_execution import complete_playground_knowledge_inventory
@@ -627,8 +624,10 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 # Record the confirmed early no-evidence path before returning.
                 # Failure of this analytics write must not block the reply.
                 try:
+                    from app.features.ai.application.knowledge_gap_repository import (
+                        persist_knowledge_gap,
+                    )
                     from app.features.ai.domain.knowledge_gap_policy import detect_knowledge_gap
-                    from app.features.ai.application.knowledge_gap_repository import persist_knowledge_gap
                     signal = detect_knowledge_gap(
                         organization_id=str(organization_id),
                         conversation_id=str(execution.conversation_id),
@@ -719,8 +718,9 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             if gap is not None:
                 # Knowledge analytics must never block the customer-facing reply.
                 try:
-                    from app.db.session import SessionLocal, set_tenant_context
-                    from app.features.ai.application.knowledge_gap_repository import persist_knowledge_gap
+                    from app.features.ai.application.knowledge_gap_repository import (
+                        persist_knowledge_gap,
+                    )
 
                     async with SessionLocal() as gap_db:
                         await set_tenant_context(gap_db, organization_id)

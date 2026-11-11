@@ -1,24 +1,29 @@
 """Review-only knowledge gap API. Never publishes unapproved answers."""
 from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select, update, func
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.api.deps import require_roles
-from app.db.session import get_db
-from app.models import User
-from app.models.knowledge_gap import KnowledgeGap
-from app.models.knowledge_gap_review import KnowledgeGapReview
-from app.models.knowledge_gap_group import KnowledgeGapGroup, KnowledgeGapGroupMember
-from app.models.knowledge_document import KnowledgeDocument, KnowledgeDocumentSource, DocumentIngestionJob, DocumentChunk, DocumentEmbedding, DocumentEmbeddingJob
-from app.models.knowledge_base import KnowledgeBase
-from app.features.ai.domain.content_hash import PENDING_CONTENT_REVISION
 from app.api.routes.knowledge import _resolve_knowledge_base
-from app.services.knowledge_base_audit import record_knowledge_base_audit
-from app.core.observability import current_correlation_id
 from app.core.config import settings
-from app.features.ai.domain.knowledge_gap_policy import faq_suggestion
+from app.core.observability import current_correlation_id
+from app.db.session import get_db
 from app.features.ai.application.knowledge_gap_reconciliation import reconcile_review
+from app.features.ai.domain.content_hash import PENDING_CONTENT_REVISION
+from app.features.ai.domain.knowledge_gap_policy import faq_suggestion
+from app.models import User
+from app.models.knowledge_document import (
+    DocumentIngestionJob,
+    KnowledgeDocument,
+    KnowledgeDocumentSource,
+)
+from app.models.knowledge_gap import KnowledgeGap
+from app.models.knowledge_gap_group import KnowledgeGapGroup, KnowledgeGapGroupMember
+from app.models.knowledge_gap_review import KnowledgeGapReview
+from app.services.knowledge_base_audit import record_knowledge_base_audit
 
 router = APIRouter(prefix="/knowledge/gaps", tags=["knowledge"])
 
@@ -257,7 +262,7 @@ async def publish_reviewed_faq(
     selected_base = await _resolve_knowledge_base(
         db, user.organization_id, payload.knowledge_base_id, require_active=True
     )
-    content = f"# {question}\n\n{answer}\n".encode("utf-8")
+    content = f"# {question}\n\n{answer}\n".encode()
     document = KnowledgeDocument(
         organization_id=user.organization_id,
         name=f"FAQ-{ids[0]}.md",
@@ -432,10 +437,11 @@ async def auto_assign_semantic_groups(
     user: User = Depends(require_roles("owner", "admin")),
 ) -> dict[str, int]:
     """Persist semantic candidates across review pages; never override manual memberships."""
-    from app.features.ai.application.knowledge_gap_grouping import list_semantic_groups, cosine_similarity
+    from app.features.ai.application.knowledge_gap_grouping import (
+        cosine_similarity,
+    )
     from app.features.ai.infrastructure.embedding_gateway import EmbeddingProviderError, embed_texts
     from app.models.knowledge_gap_embedding import KnowledgeGapEmbedding
-    from app.core.config import settings
     # Serialize assignments per tenant without blocking other tenants.
     await db.execute(select(KnowledgeGap).where(
         KnowledgeGap.organization_id == user.organization_id,

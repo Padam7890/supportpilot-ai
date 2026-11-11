@@ -66,12 +66,11 @@ async def test_verified_refund_missing_context_raises_instead_of_leaving_job_run
         patch(
             "app.features.ai.application.widget_follow_up_execution.finish_widget_reply",
             new_callable=AsyncMock,
-        ) as finish,
+        ) as finish,pytest.raises(FollowUpRetrievalUnavailable)
     ):
-        with pytest.raises(FollowUpRetrievalUnavailable):
-            await complete_widget_follow_up(
-                uuid4(), uuid4(), uuid4(),
-                follow_up=FollowUp(decision="refund_review", review=review),
-                delivery_status="sent",
-            )
+        await complete_widget_follow_up(
+            uuid4(), uuid4(), uuid4(),
+            follow_up=FollowUp(decision="refund_review", review=review),
+            delivery_status="sent",
+        )
     finish.assert_not_awaited()

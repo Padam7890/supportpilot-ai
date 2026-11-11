@@ -9,7 +9,6 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.integrations.core.contracts.provider import IntegrationConnectionRef
 from app.integrations.providers.shopify.catalog import ShopifyProductCatalogAdapter
 from app.integrations.providers.shopify.client import ShopifyAPIError
 from app.integrations.providers.shopify.orders import lookup_authorized_order

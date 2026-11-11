@@ -11,9 +11,8 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.workers.domain.lease_policy import CATALOG_JOB_LEASE as JOB_LEASE
-from app.db.session import SessionLocal, set_tenant_context
 from app.core.observability import current_correlation_id
+from app.db.session import SessionLocal, set_tenant_context
 from app.integrations.core.contracts.catalog import CatalogProductSnapshot
 from app.integrations.core.contracts.provider import IntegrationConnectionRef
 from app.integrations.providers.shopify.catalog import ShopifyProductCatalogAdapter
@@ -31,6 +30,7 @@ from app.models import (
     ShopifyInstallation,
 )
 from app.services.integration_connections import sync_shopify_connection
+from app.workers.domain.lease_policy import CATALOG_JOB_LEASE as JOB_LEASE
 from app.workers.domain.retry_policy import retry_delay_seconds
 
 PAGE_SIZE = 20

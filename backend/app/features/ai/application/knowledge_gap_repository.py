@@ -1,7 +1,9 @@
 """Idempotent storage for verified missing-knowledge signals."""
 from uuid import UUID
+
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.features.ai.domain.knowledge_gap_policy import KnowledgeGapSignal
 from app.models.knowledge_gap import KnowledgeGap
 

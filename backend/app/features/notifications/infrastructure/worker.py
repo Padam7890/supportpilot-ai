@@ -13,11 +13,11 @@ from app.core.config import settings
 from app.db.session import SessionLocal, set_tenant_context
 from app.features.notifications.application.events import TicketNotificationPayload
 from app.models import (
+    Conversation,
     Notification,
     NotificationOutbox,
     NotificationPreference,
     NotificationRecipient,
-    Conversation,
     TeamMember,
     Ticket,
     User,
@@ -245,7 +245,7 @@ async def process_notification_outbox(organization_id: UUID, job_id: UUID) -> No
                         await send_notification_email(user.email, title, body, f"/dashboard/tickets/{ticket.id}")
                         recipient.email_sent_at = datetime.now(UTC)
                         recipient.email_last_error = None
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001 - retry failed email delivery
                         recipient.email_last_error = type(exc).__name__[:80]
                         email_delivery_failed = True
                         logger.warning(
@@ -280,7 +280,7 @@ async def process_notification_outbox(organization_id: UUID, job_id: UUID) -> No
                     "notification_outbox_dead_letter",
                     extra={"organization_id": str(organization_id), "job_id": str(job_id)},
                 )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - persist a retry or dead letter for the job
             await db.rollback()
             await set_tenant_context(db, organization_id)
             failed = await db.scalar(select(NotificationOutbox).where(
@@ -302,5 +302,5 @@ async def process_notification_outbox(organization_id: UUID, job_id: UUID) -> No
     if published_id:
         try:
             await _publish(organization_id, published_recipients, published_id)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - fanout is best effort after persistence
             logger.warning("notification_fanout_failed", extra={"organization_id": str(organization_id), "error_type": type(exc).__name__})

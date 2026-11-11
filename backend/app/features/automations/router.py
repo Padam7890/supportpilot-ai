@@ -11,9 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_roles
 from app.db.session import get_db
+from app.features.automations.approvals import (
+    expire_approval,
+    expire_pending_automation_approvals,
+)
+from app.features.automations.capabilities import missing_capabilities, organization_capabilities
 from app.features.automations.contracts import (
-    AutomationErrorCountOut,
     AutomationApprovalQueueItem,
+    AutomationErrorCountOut,
     AutomationExecutionOut,
     AutomationMetricsDayOut,
     AutomationMetricsOut,
@@ -25,25 +30,24 @@ from app.features.automations.contracts import (
     WorkflowDefinition,
     WorkflowOut,
     WorkflowRestoreOut,
+    WorkflowTemplateCreate,
     WorkflowUpdate,
     WorkflowVersionHistoryOut,
     WorkflowVersionOut,
-    WorkflowTemplateCreate,
     default_canvas_layout,
     fit_canvas_layout,
-)
-from app.features.automations.capabilities import missing_capabilities, organization_capabilities
-from app.features.automations.approvals import (
-    expire_approval,
-    expire_pending_automation_approvals,
 )
 from app.features.automations.policy import MAX_TOTAL_EXECUTION_ATTEMPTS, preview_definition
 from app.features.automations.service import (
     validate_assignment_targets,
-    validate_team_assignment_targets,
     validate_definition_targets,
+    validate_team_assignment_targets,
 )
-from app.features.automations.template_catalog import get_template, list_templates, materialize_template
+from app.features.automations.template_catalog import (
+    get_template,
+    list_templates,
+    materialize_template,
+)
 from app.models import (
     AIAgent,
     AutomationExecution,

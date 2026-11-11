@@ -29,12 +29,11 @@ async def test_mismatched_agent_rejected_before_inventory_query() -> None:
         patch(
             "app.features.ai.application.playground_execution.load_knowledge_inventory",
             new_callable=AsyncMock,
-        ) as load_inventory,
+        ) as load_inventory,pytest.raises(ValueError, match="agent mismatch")
     ):
-        with pytest.raises(ValueError, match="agent mismatch"):
-            await complete_playground_knowledge_inventory(
-                uuid4(), uuid4(), ai_agent_id=uuid4()
-            )
+        await complete_playground_knowledge_inventory(
+            uuid4(), uuid4(), ai_agent_id=uuid4()
+        )
     load_inventory.assert_not_awaited()
     db.rollback.assert_awaited_once()
     db.commit.assert_not_awaited()

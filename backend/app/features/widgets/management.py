@@ -15,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import require_roles
 from app.db.session import get_db
 from app.features.ai.application.defaults import get_default_agent
-from app.services.widget_ai import resolve_widget_agent_decision
 from app.models import (
     AIAgent,
     Conversation,
@@ -31,6 +30,7 @@ from app.schemas.widget import (
     WidgetRoutingPreviewIn,
     WidgetRoutingPreviewOut,
 )
+from app.services.widget_ai import resolve_widget_agent_decision
 
 logger = logging.getLogger(__name__)
 VISITOR_SESSION_TTL = timedelta(hours=24)

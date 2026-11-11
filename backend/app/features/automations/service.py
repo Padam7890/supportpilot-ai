@@ -8,8 +8,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.observability import current_correlation_id
 from app.features.automations.capabilities import missing_capabilities, organization_capabilities
-from app.features.automations.contracts import Action, SUPPORTED_TICKET_STATUSES, WorkflowDefinition
-from app.models import AIAgent, AutomationExecution, AutomationWorkflow, AutomationWorkflowVersion, Conversation, IntegrationConnection, Message, Team, User
+from app.features.automations.contracts import SUPPORTED_TICKET_STATUSES, Action, WorkflowDefinition
+from app.models import (
+    AIAgent,
+    AutomationExecution,
+    AutomationWorkflow,
+    AutomationWorkflowVersion,
+    Conversation,
+    IntegrationConnection,
+    Message,
+    Team,
+    User,
+)
 
 
 def _all_actions(definition: WorkflowDefinition) -> list[Action]:
