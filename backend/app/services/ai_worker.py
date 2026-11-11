@@ -717,17 +717,36 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
         if execution.kind == "widget_reply" and execution.source_message_id is not None:
             from app.features.ai.domain.knowledge_gap_policy import detect_knowledge_gap
 
+            # A safe/accepted response may still leave the customer's question
+            # unanswered. Use the structured resolution, not safety acceptance
+            # or the mere presence of retrieved documents.
+            answer_resolution = guarded.answer_resolution
+            retrieval_outcome = (
+                "no_relevant_evidence"
+                if answer_resolution == "no_relevant_evidence"
+                else "insufficient_evidence"
+                if answer_resolution == "insufficient_evidence"
+                else "retrieved"
+                if answer_resolution == "answered"
+                else "unknown"
+            )
             gap = detect_knowledge_gap(
                 organization_id=str(organization_id),
                 conversation_id=str(execution.conversation_id),
                 source_message_id=str(execution.source_message_id),
                 question=execution.question,
                 intent="knowledge" if knowledge_gap_intent else "other",
-                retrieval_outcome=(
-                    "no_relevant_evidence" if requires_store_evidence and not context and not citations
-                    else "retrieved" if citations else "unknown"
-                ),
-                answer_grounded=guarded.accepted,
+                retrieval_outcome=retrieval_outcome,
+                answer_grounded=answer_resolution == "answered",
+            )
+            _log_ai_execution_event(
+                "ai_knowledge_gap_evaluated",
+                execution_id=str(execution_id),
+                correlation_id=correlation_id,
+                answer_resolution=answer_resolution,
+                retrieval_outcome=retrieval_outcome,
+                knowledge_gap_eligible=knowledge_gap_intent,
+                gap_candidate=gap is not None,
             )
             if gap is not None:
                 # Knowledge analytics must never block the customer-facing reply.
