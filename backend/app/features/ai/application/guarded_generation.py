@@ -35,6 +35,7 @@ class GuardedDraft:
     usage: dict[str, int]
     model_name: str | None
     expected_answer: Literal["delivery_date", "contextual"] | None = None
+    answer_resolution: Literal["answered", "insufficient_evidence", "no_relevant_evidence", "needs_clarification"] | None = None
 
 
 async def generate_guarded_draft(
@@ -69,7 +70,7 @@ async def generate_guarded_draft(
         return GuardedDraft(
             _SAFE_FALLBACK, False, "no_verified_evidence", [],
             [*outcomes, {"tool": "claim_grounding", "status": "blocked", "reason": "no_verified_evidence"}],
-            {}, None,
+            {}, None, answer_resolution="no_relevant_evidence",
         )
     agent_input = build_agent_input(question, transcript, channel=execution_kind)
     composed = await compose_natural_answer(agent_input, evidence, instructions=instructions)
@@ -83,7 +84,7 @@ async def generate_guarded_draft(
         return GuardedDraft(
             _SAFE_FALLBACK, False, exc.code, [],
             [*outcomes, {"tool": "claim_grounding", "status": "blocked", "reason": exc.code}],
-            usage, model_name,
+            usage, model_name, answer_resolution="insufficient_evidence",
         )
     for key, value in verification.usage.items():
         usage[key] = usage.get(key, 0) + value
@@ -108,7 +109,7 @@ async def generate_guarded_draft(
     ]
     if not verification.accepted:
         text = f"{order_text}\\n\\n{_SAFE_FALLBACK}" if order_text else _SAFE_FALLBACK
-        return GuardedDraft(text, False, verification.reason, [], outcomes, usage, model_name)
+        return GuardedDraft(text, False, verification.reason, [], outcomes, usage, model_name, answer_resolution="insufficient_evidence")
 
     available = {(str(c["document_id"]), c["chunk_index"]): c for c in citations}
     selected = []
@@ -117,7 +118,7 @@ async def generate_guarded_draft(
         citation = available.get((item.source_id, item.chunk_index))
         if citation is None:
             return GuardedDraft(
-                _SAFE_FALLBACK, False, "missing_source_provenance", [], outcomes, usage, model_name,
+                _SAFE_FALLBACK, False, "missing_source_provenance", [], outcomes, usage, model_name, answer_resolution="insufficient_evidence",
             )
         selected.append(citation)
     # Keep verified provenance in structured citations, not customer-visible text.
@@ -127,4 +128,4 @@ async def generate_guarded_draft(
     text = "\n".join(line.rstrip() for line in text.splitlines()).strip()
     if order_text:
         text = f"{order_text}\n\n{text}"
-    return GuardedDraft(text, True, None, selected, outcomes, usage, model_name, composed.expected_answer)
+    # Safety acceptance is not question resolution. Even a verified, polite\n    # non-answer may have no citations, as in the Pokhara delivery example.\n    # A model cannot mark a knowledge answer resolved without verified provenance.\n    resolution = composed.answer_resolution\n    if requires_evidence and not selected and resolution != "needs_clarification":\n        resolution = "insufficient_evidence"\n    elif requires_evidence and resolution is None:\n        # Older provider plain-text responses lack the structured field.\n        # Do not infer a successful answer from safety acceptance alone.\n        resolution = "insufficient_evidence"\n    return GuardedDraft(\n        text, True, None, selected, outcomes, usage, model_name,\n        composed.expected_answer, resolution,\n    )

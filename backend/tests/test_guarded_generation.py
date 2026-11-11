@@ -136,3 +136,41 @@ async def test_guarded_execution_is_bounded_across_model_outcomes(monkeypatch, c
             "timeout": "review_timeout",
             "budget": "execution_token_budget_exceeded",
         }[review_kind]
+
+
+@pytest.mark.anyio
+async def test_safe_nonanswer_with_retrieved_sources_is_still_unresolved(monkeypatch):
+    monkeypatch.setattr(
+        "app.features.ai.application.guarded_generation.compose_natural_answer",
+        AsyncMock(return_value=ComposedAnswer(
+            "I cannot verify delivery availability to Pokhara.", {}, "test",
+            answer_resolution="insufficient_evidence",
+        )),
+    )
+    monkeypatch.setattr(
+        "app.features.ai.application.guarded_generation.verify_candidate",
+        AsyncMock(return_value=SemanticVerification(True, "verified", ())),
+    )
+    args = _arguments()
+    args["question"] = "Do you deliver your order to Pokhara?"
+    result = await generate_guarded_draft(**args)
+    assert result.accepted
+    assert result.answer_resolution == "insufficient_evidence"
+    assert result.citations == []
+
+
+@pytest.mark.anyio
+async def test_model_cannot_claim_answered_without_cited_evidence(monkeypatch):
+    monkeypatch.setattr(
+        "app.features.ai.application.guarded_generation.compose_natural_answer",
+        AsyncMock(return_value=ComposedAnswer(
+            "I cannot confirm delivery.", {}, "test",
+            answer_resolution="answered",
+        )),
+    )
+    monkeypatch.setattr(
+        "app.features.ai.application.guarded_generation.verify_candidate",
+        AsyncMock(return_value=SemanticVerification(True, "verified", ())),
+    )
+    result = await generate_guarded_draft(**_arguments())
+    assert result.answer_resolution == "insufficient_evidence"
