@@ -88,3 +88,53 @@ async def test_invalid_or_mismatched_source_cannot_be_repaired():
     )
     assert not result.accepted and result.reason == "invalid_citation_index"
     model.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_broad_geographic_policy_supports_known_member_with_source_attribution():
+    evidence = ResponseEvidence(
+        (EvidenceItem("knowledge", "We deliver to Pokhara and all of Nepal.", "doc", 0),),
+        "verified",
+    )
+    model = _review({"index": 1, "verdict": "entailed", "sources": [1]})
+    result = await verify_candidate(
+        "Yes, we deliver to Kathmandu [source 1].",
+        evidence,
+        review_model=model,
+    )
+    assert result.accepted
+    assert result.source_indices == (1,)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(("policy", "verdict", "reason"), [
+    ("We only deliver to Pokhara.", "unsupported", "unsupported_claim"),
+    ("We deliver throughout Nepal except Kathmandu.", "contradicted", "contradicted_claim"),
+    ("We deliver to selected areas of Nepal.", "ambiguous", "ambiguous_claim"),
+])
+async def test_geographic_policy_limitations_must_be_enforced(policy, verdict, reason):
+    evidence = ResponseEvidence((EvidenceItem("knowledge", policy, "doc", 0),), "verified")
+    model = _review({"index": 1, "verdict": verdict, "sources": [1]})
+    result = await verify_candidate(
+        "Yes, we deliver to Kathmandu [source 1].",
+        evidence,
+        review_model=model,
+    )
+    assert not result.accepted
+    assert result.reason == reason
+
+
+@pytest.mark.anyio
+async def test_broad_geographic_policy_does_not_justify_delivery_time():
+    evidence = ResponseEvidence(
+        (EvidenceItem("knowledge", "We deliver throughout Nepal.", "doc", 0),),
+        "verified",
+    )
+    model = _review({"index": 1, "verdict": "entailed", "sources": [1]})
+    result = await verify_candidate(
+        "Delivery to Kathmandu takes 2 days [source 1].",
+        evidence,
+        review_model=model,
+    )
+    assert not result.accepted
+    assert result.reason == "unsupported_numeric_claim"
