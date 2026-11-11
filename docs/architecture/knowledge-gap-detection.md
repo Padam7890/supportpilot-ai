@@ -1,8 +1,8 @@
 # Knowledge gaps: staged implementation
 
 This draft PR introduces the conservative classification and FAQ suggestion
-policy only. **It is not yet connected to the worker, database or dashboard.**
-Do not enable it or claim automatic discovery until those parts are implemented.
+policy only. **It is now connected to the widget worker as a diagnostic event, but not to database persistence or dashboard.**
+The worker emits `ai_knowledge_gap_candidate_detected` for qualifying post-generation outcomes. Early missing-evidence returns are not yet covered. Do not claim automatic collection until persistence and grouping are implemented.
 
 ## Intended workflow
 
@@ -29,8 +29,7 @@ Do not enable it or claim automatic discovery until those parts are implemented.
 
 - Add tenant-scoped persistence, unique occurrence constraints, indexes, and
   RLS policies with Alembic migration.
-- Wire classification to completed widget AI executions with structured
-  retrieval outcomes; no parsing of response wording.
+- Extend the initial worker diagnostic hook to cover early missing-evidence returns and replace the temporary evidence-required intent proxy with a dedicated structured knowledge-intent outcome. No parsing of response wording.
 - Implement tenant-scoped semantic grouping and review APIs.
 - Add the dashboard review and publish workflow.
 - Add PostgreSQL integration tests for tenant isolation, duplicate events,
