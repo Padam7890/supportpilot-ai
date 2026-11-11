@@ -301,6 +301,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
         generic_clarification = None
         requires_store_evidence = True
         knowledge_gap_intent = False  # Set only by structured routing, not evidence requirements.
+        customer_message_act = "unclear"
         if execution.kind == "widget_reply" and policy_follow_up is None:
             # Explicit catalog browsing is a new intent, never an answer to a
             # previous product-selection question. Prevent stale follow-up state
@@ -400,6 +401,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 catalog_request=is_catalog_discovery_request(execution.question),
             )
             requires_store_evidence = route_result.requires_evidence
+            customer_message_act = str(route_result.outcome.get("customer_message_act", "unclear"))
             from app.features.ai.domain.knowledge_gap_policy import (
                 eligible_widget_knowledge_gap,
             )
@@ -409,6 +411,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 has_commerce_follow_up=follow_up is not None,
                 multi_intent=bool(route_result.outcome.get("multi_intent", False)),
                 should_clarify=bool(route_result.outcome.get("should_clarify", False)),
+                customer_message_act=customer_message_act,
             )
             knowledge_gap_exclusion_reason = (
                 "no_evidence_requirement" if not requires_store_evidence
@@ -416,6 +419,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 else "multi_intent" if bool(route_result.outcome.get("multi_intent", False))
                 else "needs_clarification" if bool(route_result.outcome.get("should_clarify", False))
                 else "non_knowledge_route" if turn.route != "knowledge"
+                else "not_information_request" if customer_message_act != "information_request"
                 else None
             )
             _log_ai_execution_event(
@@ -425,6 +429,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 route=turn.route,
                 primary_intent=route_result.outcome.get("primary_intent"),
                 eligible=knowledge_gap_intent,
+                customer_message_act=customer_message_act,
                 exclusion_reason=knowledge_gap_exclusion_reason,
                 router_mode=route_result.outcome.get("mode"),
             )
@@ -764,6 +769,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 answer_resolution=answer_resolution,
                 retrieval_outcome=retrieval_outcome,
                 knowledge_gap_eligible=knowledge_gap_intent,
+                customer_message_act=customer_message_act,
                 gap_candidate=gap is not None,
             )
             if gap is not None:
