@@ -61,7 +61,7 @@ _SYSTEM = (
     "or null if you did not ask a question. This field records the question only. "
     "Never include actions, authorization, identity or verification in this field. "
     "Also return answer_resolution: answered only when the customer\x27s actual question is "
-    "answered by explicit store evidence, insufficient_evidence when you cannot "
+    "answered by store evidence, including sound logical entailment from verified policy scope, insufficient_evidence when you cannot "
     "confirm the requested fact even if you found related documents, or "
     "needs_clarification when the customer must clarify. This describes question "
     "resolution, not whether the reply is safe. Include it as a JSON field. "
@@ -74,6 +74,7 @@ def build_answer_messages(
     evidence: ResponseEvidence,
     *,
     instructions: str | None = None,
+    reconsideration: bool = False,
 ) -> list[dict[str, str]]:
     if any(item.kind == "verified_order" for item in evidence.items):
         raise ValueError("Verified order evidence is restricted to deterministic rendering")
@@ -90,6 +91,13 @@ def build_answer_messages(
     # Evidence and conversation history remain lower-trust content.
     configured = (instructions or "").strip()[:4000]
     system = _SYSTEM + (f"\nWorkspace bot instructions:\n{configured}" if configured else "")
+    if reconsideration:
+        system += ("\nReconsider whether a verified universal or category-wide policy logically "
+                   "covers the customer\x27s requested member. Do not demand the member be "
+                   "named explicitly. Do not assume membership when uncertain, and honor "
+                   "all restrictions, exceptions and conflicting evidence. If coverage "
+                   "is entailed, answer directly with a source citation. Otherwise "
+                   "explain the missing evidence. Do not invent store policies.")
     return [
         {"role": "system", "content": system},
         *history,
@@ -106,9 +114,10 @@ async def compose_natural_answer(
     evidence: ResponseEvidence,
     *,
     instructions: str | None = None,
+    reconsideration: bool = False,
 ) -> ComposedAnswer:
     text, usage, model = await generate_completion(
-        build_answer_messages(agent_input, evidence, instructions=instructions),
+        build_answer_messages(agent_input, evidence, instructions=instructions, reconsideration=reconsideration),
         max_tokens=400,
     )
     envelope = text.strip()
