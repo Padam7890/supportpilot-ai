@@ -10,6 +10,7 @@ class KnowledgeGap(UUIDPrimaryKey, TimestampMixin, Base):
     __tablename__ = "knowledge_gaps"
     __table_args__ = (
         UniqueConstraint("organization_id", "source_message_id", name="uq_knowledge_gap_source"),
+        UniqueConstraint("organization_id", "id", name="uq_knowledge_gaps_org_id"),
         ForeignKeyConstraint(
             ["organization_id", "source_message_id"],
             ["messages.organization_id", "messages.id"],
