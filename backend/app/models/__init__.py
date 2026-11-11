@@ -33,6 +33,7 @@ from app.models.knowledge_document import (
     KnowledgeDocument,
     KnowledgeDocumentSource,
 )
+from app.models.knowledge_gap import KnowledgeGap
 from app.models.message import Message
 from app.models.organization import Organization
 from app.models.notification import Notification, NotificationOutbox, NotificationPreference, NotificationRecipient
@@ -93,6 +94,7 @@ __all__ = [
     "KnowledgeBaseAudit",
     "KnowledgeDocument",
     "KnowledgeDocumentSource",
+    "KnowledgeGap",
     "Message",
     "Organization",
     "Notification",
@@ -121,3 +123,9 @@ __all__ = [
     "WidgetOrderVerification",
     "WidgetSubmission",
 ]
+
+from app.models.knowledge_gap_embedding import KnowledgeGapEmbedding
+
+from app.models.knowledge_gap_review import KnowledgeGapReview
+
+from app.models.knowledge_gap_group import KnowledgeGapGroup, KnowledgeGapGroupMember

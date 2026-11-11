@@ -5,7 +5,6 @@
 import hmac
 import logging
 import re
-import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 from uuid import UUID
@@ -260,21 +259,24 @@ async def start_widget_conversation(
     customer_email = (
         str(payload.visitor_email).strip().casefold()
         if payload.visitor_email
-        else f"visitor+{secrets.token_hex(12)}@widget.invalid"
+        else None
     )
     customer_name = (
         payload.visitor_name
         if payload.contact_consent and payload.visitor_name
-        else "Store visitor"
+        else None
     )
     customer = Customer(
-        organization_id=widget.organization_id, name=customer_name, email=customer_email
+        organization_id=widget.organization_id, name=customer_name or "Anonymous visitor", email=customer_email
     )
     db.add(customer)
     await db.flush()
+    if customer_name is None:
+        # Stable, distinct label without collecting personal information.
+        customer.name = f"Visitor #{customer.id.hex[:8].upper()}"
 
     first_line = " ".join(payload.content.split())
-    subject = first_line[:237].rstrip() + ("…" if len(first_line) > 237 else "")
+    subject = first_line[:100].rstrip() + ("…" if len(first_line) > 100 else "")
     ticket = Ticket(
         organization_id=widget.organization_id,
         customer_id=customer.id,

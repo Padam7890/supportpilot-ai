@@ -11,6 +11,8 @@ from uuid import UUID
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.services.catalog import enqueue_reconciliation
+from app.db.session import SessionLocal, set_tenant_context
+from app.features.ai.application.knowledge_gap_reconciliation import reconcile_organization
 from app.workers.application.contracts import ClaimedJob, JobHandler
 from app.workers.application.scheduler import FairScheduler
 from app.workers.handlers.ai import AIExecutionHandler
@@ -66,6 +68,7 @@ class WorkerDispatcher:
         self._dispatch_lock = asyncio.Lock()
         self.scheduler = FairScheduler()
         self._next_reconciliation_due: dict[UUID, float] = {}
+        self._next_gap_review_due: dict[UUID, float] = {}
         self._next_dead_letter_report: dict[UUID, float] = {}
         self._metrics: Counter[tuple[str, str]] = Counter()
 
@@ -76,6 +79,7 @@ class WorkerDispatcher:
             if not organizations:
                 return False
             await self._reconcile_if_due(organizations)
+            await self._reconcile_gap_reviews_if_due(organizations)
             for organization_id in organizations:
                 await self._report_dead_letters_if_due(organization_id)
             claimed = await self._claim_fairly(organizations)
@@ -222,6 +226,24 @@ class WorkerDispatcher:
                     "next_check_in_seconds": RECONCILIATION_INTERVAL.total_seconds(),
                 },
             )
+
+    async def _reconcile_gap_reviews_if_due(self, organizations: list[UUID]) -> None:
+        """Periodic bounded tenant-scoped reconciliation, independent of dashboard reads."""
+        now = time.monotonic()
+        for organization_id in organizations:
+            if now < self._next_gap_review_due.get(organization_id, 0):
+                continue
+            try:
+                async with SessionLocal() as db:
+                    await set_tenant_context(db, organization_id)
+                    count = await reconcile_organization(db, organization_id, limit=100)
+                    await db.commit()
+                self._next_gap_review_due[organization_id] = now + (30 if count == 100 else 120)
+            except Exception:
+                self._next_gap_review_due[organization_id] = now + 60
+                logger.exception("worker_knowledge_gap_reconciliation_failed", extra={
+                    "organization_id": str(organization_id),
+                })
 
     async def _report_dead_letters_if_due(self, organization_id: UUID) -> None:
         now = time.monotonic()

@@ -16,6 +16,22 @@ from app.features.ai.application.follow_up import (
 from app.features.ai.application.policy_follow_up import FollowUpInterpretation
 
 _ITEM = FollowUpInterpretation(relation="answer_to_question", goal="refund_item", confidence=0.99)
+_DAMAGED = FollowUpInterpretation(
+    relation="answer_to_question", goal="refund_reason", refund_reason="damaged", confidence=0.99,
+)
+_MISSING_ORDER = FollowUpInterpretation(
+    relation="answer_to_question", goal="none", action_target="order",
+    order_reference_status="unavailable", confidence=0.99,
+)
+_NEW_MISSING_ORDER = _MISSING_ORDER.model_copy(update={"relation": "new_topic"})
+_CONFIRM_REFUND = FollowUpInterpretation(
+    relation="answer_to_question", goal="none", confirmation="affirm",
+    action_target="refund_request", confidence=0.99,
+)
+_CONFIRM_HANDOFF = FollowUpInterpretation(
+    relation="answer_to_question", goal="none", confirmation="affirm",
+    action_target="human_support", confidence=0.99,
+)
 
 
 def test_refund_context_survives_serialization_and_requires_verification():
@@ -39,10 +55,10 @@ def test_refund_context_survives_serialization_and_requires_verification():
         now,
     )
     assert state is not None
-    item = resolve_follow_up("Two blue mugs", state, source_message_id=item_message_id, interpretation=_ITEM)
+    item = resolve_follow_up("Two blue mugs", state, source_message_id=item_message_id, interpretation=_ITEM.model_copy(update={"item_text": "Two blue mugs"}))
     assert item and item.pending and item.pending.item_message_id == item_message_id
     assert item.pending.verification_status == "required"
-    premature_yes = resolve_follow_up("yes", item.pending, source_message_id=uuid4())
+    premature_yes = resolve_follow_up("yes", item.pending, source_message_id=uuid4(), interpretation=_CONFIRM_REFUND)
     assert premature_yes and premature_yes.review is None
     assert resolve_follow_up("123456", item.pending, source_message_id=uuid4()) is None
 
@@ -54,9 +70,12 @@ def test_refund_context_survives_serialization_and_requires_verification():
             "verification_id": verification_id,
         }
     )
-    review = resolve_follow_up("yes", review_state, source_message_id=uuid4())
+    review = resolve_follow_up("yes", review_state, source_message_id=uuid4(), interpretation=_CONFIRM_REFUND)
     assert review and review.review == review_state
-    declined = resolve_follow_up("cancel it", review_state, source_message_id=uuid4())
+    declined = resolve_follow_up(
+        "cancel it", review_state, source_message_id=uuid4(),
+        interpretation=_CONFIRM_REFUND.model_copy(update={"confirmation": "retract"}),
+    )
     assert declined and declined.decision == "declined" and declined.review is None
 
 
@@ -73,12 +92,14 @@ def test_follow_up_uses_state_independently_of_assistant_wording(prompt):
     }
     result, reason = assess_widget_follow_up(
         "damaged", [turn], agent_id=bot_id, source_message_id=uuid4(), now=now,
+        interpretation=_DAMAGED,
     )
     assert result and result.decision == "refund_reason"
     assert reason == "resolved"
     turn.pop(PENDING_KEY)
     assert assess_widget_follow_up(
         "damaged", [turn], agent_id=bot_id, source_message_id=uuid4(), now=now,
+        interpretation=_DAMAGED,
     )[0] is None
 
 
@@ -94,7 +115,7 @@ def test_follow_up_uses_state_independently_of_assistant_wording(prompt):
 )
 def test_unrelated_turn_does_not_fill_pending_refund_item(message):
     now, bot_id = datetime.now(UTC), uuid4()
-    result = resolve_follow_up("damaged", refund_start(), source_message_id=uuid4())
+    result = resolve_follow_up("damaged", refund_start(), source_message_id=uuid4(), interpretation=_DAMAGED)
     assert result and result.pending
     turn = {"sender": "assistant", PENDING_KEY: json.dumps(result.pending.attached_to(bot_id, now))}
     assert (
@@ -133,7 +154,8 @@ def test_multi_word_delivery_synonym_is_encoded_as_a_phrase():
 )
 def test_missing_order_reference_starts_with_recovery_and_support(question):
     result, reason = assess_widget_follow_up(
-        question, [], agent_id=uuid4(), source_message_id=uuid4(), now=datetime.now(UTC)
+        question, [], agent_id=uuid4(), source_message_id=uuid4(), now=datetime.now(UTC),
+        interpretation=_NEW_MISSING_ORDER,
     )
     assert reason == "started"
     assert result and result.pending and result.pending.order_number_unavailable
@@ -157,11 +179,15 @@ def test_persisted_order_slot_resolves_short_reply():
     ]
     answer = "sorry i forget number"
     assert (
-        assess_widget_follow_up(answer, [], agent_id=bot_id, source_message_id=None, now=now)[0]
+        assess_widget_follow_up(
+            answer, [], agent_id=bot_id, source_message_id=None, now=now,
+            interpretation=_MISSING_ORDER,
+        )[0]
         is None
     )
     result, reason = assess_widget_follow_up(
-        answer, history, agent_id=bot_id, source_message_id=None, now=now
+        answer, history, agent_id=bot_id, source_message_id=None, now=now,
+        interpretation=_MISSING_ORDER,
     )
     assert result and result.pending and result.pending.order_number_unavailable
     assert reason == "resolved"
@@ -171,9 +197,12 @@ def test_persisted_order_slot_resolves_short_reply():
 def test_missing_order_state_handles_decline_repeated_request_and_correction():
     from app.features.ai.application.follow_up import resolve_order_support
 
-    initial = resolve_order_support("I lost my order number")
+    initial = resolve_order_support("I lost my order number", interpretation=_NEW_MISSING_ORDER)
     assert initial and initial.pending
-    declined = resolve_follow_up("no", initial.pending, source_message_id=uuid4())
+    declined = resolve_follow_up(
+        "no", initial.pending, source_message_id=uuid4(),
+        interpretation=_CONFIRM_HANDOFF.model_copy(update={"confirmation": "deny"}),
+    )
     assert declined and declined.pending and declined.pending.handoff_status == "declined"
     repeated = resolve_follow_up(
         "what is my order status", declined.pending, source_message_id=uuid4()
@@ -182,9 +211,11 @@ def test_missing_order_state_handles_decline_repeated_request_and_correction():
     assert repeated.draft and "Enter the order number" not in repeated.draft
     for message in ("What is your refund policy?", "Recommend a blue mug"):
         assert resolve_follow_up(message, repeated.pending, source_message_id=uuid4()) is None
-    handoff = resolve_follow_up("yes", repeated.pending, source_message_id=uuid4())
+    handoff = resolve_follow_up("yes", repeated.pending, source_message_id=uuid4(), interpretation=_CONFIRM_HANDOFF)
     assert handoff and handoff.pending and handoff.handoff
-    again = resolve_follow_up("sorry i forget number", handoff.pending, source_message_id=uuid4())
+    again = resolve_follow_up(
+        "sorry i forget number", handoff.pending, source_message_id=uuid4(), interpretation=_MISSING_ORDER,
+    )
     assert again and not again.handoff
     reference_message_id = uuid4()
     corrected = resolve_follow_up(
@@ -198,18 +229,23 @@ def test_missing_order_state_handles_decline_repeated_request_and_correction():
 
 def test_interrupted_refund_verification_preserves_collected_item_and_reason():
     item_id = uuid4()
-    damaged = resolve_follow_up("damaged", refund_start(), source_message_id=uuid4())
+    damaged = resolve_follow_up("damaged", refund_start(), source_message_id=uuid4(), interpretation=_DAMAGED)
     assert damaged and damaged.pending
-    item = resolve_follow_up("Blue mug", damaged.pending, source_message_id=item_id, interpretation=_ITEM)
+    item = resolve_follow_up("Blue mug", damaged.pending, source_message_id=item_id, interpretation=_ITEM.model_copy(update={"item_text": "Blue mug"}))
     assert item and item.pending
-    interrupted = resolve_follow_up("My code expired", item.pending, source_message_id=uuid4())
+    interrupted = resolve_follow_up(
+        "My code expired", item.pending, source_message_id=uuid4(),
+        interpretation=FollowUpInterpretation(relation="unclear", goal="none", confidence=0.99),
+    )
     assert interrupted and interrupted.pending == item.pending
     assert interrupted.draft and "fresh code" in interrupted.draft
     missing = resolve_follow_up(
-        "I cannot find my order number", item.pending, source_message_id=uuid4()
+        "I cannot find my order number", item.pending, source_message_id=uuid4(),
+        interpretation=_MISSING_ORDER,
     )
     assert missing and missing.pending and missing.pending.order_number_unavailable
     assert missing.pending.refund_reason == "damaged" and missing.pending.item_message_id == item_id
-    resumed = resolve_follow_up("Actually, I found it", missing.pending, source_message_id=uuid4())
+    assert resolve_follow_up("Actually, I found it", missing.pending, source_message_id=uuid4()) is None
+    resumed = resolve_follow_up("Actually, I found it: #1001", missing.pending, source_message_id=uuid4())
     assert resumed and resumed.pending and resumed.pending.stage == "refund_verification"
     assert resumed.pending.verification_status == "required"

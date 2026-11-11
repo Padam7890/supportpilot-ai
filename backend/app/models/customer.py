@@ -18,7 +18,7 @@ class Customer(UUIDPrimaryKey, TimestampMixin, Base):
         Uuid(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False
     )
     name: Mapped[str] = mapped_column(String(160), nullable=False)
-    email: Mapped[str] = mapped_column(String(320), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(320), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(40))
     external_reference: Mapped[str | None] = mapped_column(String(120))
 

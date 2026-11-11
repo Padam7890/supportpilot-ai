@@ -64,7 +64,9 @@ def plan_playground_turn(
     )
     if understanding.negated_action:
         return _negated_action_plan()
-    order_follow_up = resolve_order_support(" ".join(question.strip().split()))
+    order_follow_up = resolve_order_support(
+        " ".join(question.strip().split()), interpretation=interpretation,
+    )
     if order_follow_up and order_follow_up.draft:
         return CustomerTurnPlan(
             route="direct",

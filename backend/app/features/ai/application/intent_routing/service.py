@@ -20,7 +20,12 @@ from app.features.ai.application.conversation_understanding import (
     read_policy_conversation,
     understand_conversation_turn,
 )
-from app.features.ai.application.follow_up import FollowUp, read_pending_turn, resolve_follow_up
+from app.features.ai.application.follow_up import (
+    FollowUp,
+    read_pending_turn,
+    resolve_follow_up,
+    resolve_order_support,
+)
 from app.features.ai.application.intent_routing.deterministic import assess_deterministic_route
 from app.features.ai.application.intent_routing.llm_router import invoke_llm_intent_router
 from app.features.ai.application.intent_routing.metrics import (
@@ -143,6 +148,9 @@ async def resolve_customer_routing(
         resolution.clarify = True
     # Standalone negations and context-free references are deterministic;
     # an extra model call cannot authorize an action or invent missing context.
+    interpret_commerce = (
+        for_generation and settings.ai_intent_router_enabled and assessment.requires_tools
+    )
     invoke = allow_model and ConversationInterpretationPolicy(
         model_first=(
             for_generation
@@ -157,7 +165,7 @@ async def resolve_customer_routing(
             understanding.correction
             or understanding.contextual_follow_up
             or interpret_follow_up
-            or (for_generation and assessment.requires_tools)
+            or interpret_commerce
         ),
         legacy_router_would_invoke=(
             interpret_follow_up or should_invoke_llm_router(assessment, message)
@@ -172,12 +180,12 @@ async def resolve_customer_routing(
             message, transcript, assessment,
             **({"max_attempts": 1, "channel": channel} if for_generation else {}),
             **({"follow_up_topic": follow_up_topic} if interpret_follow_up else {}),
-            "require_follow_up": (
+            require_follow_up=(
                 interpret_follow_up
                 or understanding.negated_action
                 or understanding.correction
                 or understanding.contextual_follow_up
-                or (for_generation and assessment.requires_tools)
+                or interpret_commerce
             ),
         )
         if decision is not None and not assessment.requires_tools and any(
