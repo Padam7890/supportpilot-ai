@@ -615,6 +615,28 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 intent_router_outcome=intent_router_outcome,
                 delivery_status=delivery_status if execution.kind == "widget_reply" else "sent",
             )
+            if execution.kind == "widget_reply" and execution.source_message_id is not None:
+                # Record the confirmed early no-evidence path before returning.
+                # Failure of this analytics write must not block the reply.
+                try:
+                    from app.features.ai.domain.knowledge_gap_policy import detect_knowledge_gap
+                    from app.features.ai.application.knowledge_gap_repository import persist_knowledge_gap
+                    signal = detect_knowledge_gap(
+                        organization_id=str(organization_id),
+                        conversation_id=str(execution.conversation_id),
+                        source_message_id=str(execution.source_message_id),
+                        question=execution.question,
+                        intent="knowledge",
+                        retrieval_outcome="no_relevant_evidence",
+                        answer_grounded=False,
+                    )
+                    if signal is not None:
+                        async with SessionLocal() as gap_db:
+                            await set_tenant_context(gap_db, organization_id)
+                            await persist_knowledge_gap(gap_db, signal)
+                            await gap_db.commit()
+                except Exception:
+                    logger.exception("knowledge_gap_early_persistence_failed", extra={"execution_id": str(execution_id)})
             if execution.kind == "widget_reply":
                 await finish_widget_reply(
                     organization_id,
