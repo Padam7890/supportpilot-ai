@@ -107,13 +107,6 @@ async def review_group(
     return {"updated": len(rows)}
 
 
-class FAQPublicationRecord(BaseModel):
-    gap_ids: list[UUID] = Field(min_length=1, max_length=100)
-    document_id: UUID
-    question: str = Field(min_length=1, max_length=1000)
-    answer: str = Field(min_length=1, max_length=10000)
-
-
 class FAQReviewOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
@@ -123,55 +116,6 @@ class FAQReviewOut(BaseModel):
     question: str
     answer: str
     status: str
-
-
-@router.post("/groups/publications", response_model=list[FAQReviewOut])
-async def record_faq_publication(
-    payload: FAQPublicationRecord,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_roles("owner", "admin")),
-) -> list[FAQReviewOut]:
-    ids = set(payload.gap_ids)
-    document = await db.scalar(select(KnowledgeDocument).where(
-        KnowledgeDocument.organization_id == user.organization_id,
-        KnowledgeDocument.id == payload.document_id,
-        KnowledgeDocument.uploaded_by_user_id == user.id,
-        KnowledgeDocument.deleted_at.is_(None),
-    ))
-    if document is None:
-        raise HTTPException(status_code=404, detail="Uploaded FAQ document not found")
-    gaps = (await db.scalars(select(KnowledgeGap).where(
-        KnowledgeGap.organization_id == user.organization_id,
-        KnowledgeGap.id.in_(ids),
-    ).with_for_update())).all()
-    if len(gaps) != len(ids):
-        raise HTTPException(status_code=404, detail="One or more knowledge gaps not found")
-    # A gap with an already linked FAQ cannot be silently uploaded again.
-    previously_linked = (await db.scalars(select(KnowledgeGapReview).where(
-        KnowledgeGapReview.organization_id == user.organization_id,
-        KnowledgeGapReview.gap_id.in_(ids),
-        KnowledgeGapReview.document_id != document.id,
-    ))).all()
-    if previously_linked:
-        raise HTTPException(status_code=409, detail="A knowledge gap already has a linked FAQ document")
-    existing = (await db.scalars(select(KnowledgeGapReview).where(
-        KnowledgeGapReview.organization_id == user.organization_id,
-        KnowledgeGapReview.document_id == document.id,
-        KnowledgeGapReview.gap_id.in_(ids),
-    ))).all()
-    by_gap = {record.gap_id: record for record in existing}
-    for gap in gaps:
-        if gap.id not in by_gap:
-            record = KnowledgeGapReview(
-                organization_id=user.organization_id, gap_id=gap.id,
-                document_id=document.id, reviewer_id=user.id,
-                question=payload.question.strip(), answer=payload.answer.strip(),
-                status="pending_ingestion",
-            )
-            db.add(record)
-            by_gap[gap.id] = record
-    await db.flush()
-    return [FAQReviewOut.model_validate(by_gap[gap_id]) for gap_id in ids]
 
 
 @router.get("/reviews", response_model=list[FAQReviewOut])
