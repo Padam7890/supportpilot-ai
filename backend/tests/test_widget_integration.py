@@ -1470,6 +1470,7 @@ async def test_widget_refund_follow_up_persists_through_otp_and_hands_off(client
 
 @pytest.mark.anyio
 async def test_widget_forgotten_order_number_pauses_verification_and_offers_handoff(client, monkeypatch):
+    monkeypatch.setattr(settings, "ai_intent_router_enabled", True)
     origin = "https://store-missing-reference.example"
     _, organization_id, public_id = await setup_widget(
         client, "widget-missing-reference", origin, ai_enabled=True, ai_reply_mode="auto_reply",

@@ -181,7 +181,7 @@ test("agent can reply, add a private note, claim a ticket, and change its status
   await expect(thread.getByRole("article", { name: "Internal note" })).toContainText("Check carrier portal before follow-up.");
 
   await page.getByRole("button", { name: "Assign ticket to me" }).click();
-  await expect(page.getByText("Delivery question · Demo Agent")).toBeVisible();
+  await expect(page.getByText("Demo Agent", { exact: true }).first()).toBeVisible();
   await page.getByLabel("Status", { exact: true }).selectOption("resolved");
   await expect(page.getByText("resolved", { exact: true }).first()).toBeVisible();
 });

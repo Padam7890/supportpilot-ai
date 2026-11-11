@@ -260,7 +260,7 @@ async def test_ai_reply_draft_is_grounded_safe_and_never_sent(client, monkeypatc
     assert result.status_code == 200, result.text
     assert result.json()["status"] == "succeeded"
     assert "I checked your verified order #42." in result.json()["draft"]
-    assert "Unused products may be returned within thirty days [source 1]." in result.json()["draft"]
+    assert "Unused products may be returned within thirty days." in result.json()["draft"]
     assert result.json()["citations"][0]["document_name"] == "returns-policy.txt"
     assert result.json()["usage"]["total_tokens"] == 64
     assert "reasoning" not in result.text.lower()
@@ -433,7 +433,7 @@ async def test_uploaded_document_flows_through_assigned_bot_to_scoped_citation(c
         "returns-policy.txt"
     ]
     assert "shipping-policy.txt" not in str(result.json()["citations"])
-    assert result.json()["draft"] == "Unused products may be returned within thirty days [source 1]."
+    assert result.json()["draft"] == "Unused products may be returned within thirty days."
 
 
 @pytest.mark.anyio

@@ -137,9 +137,10 @@ export function AppSidebar({
                 <span className="flex-1">{group.label}</span>{groupClosed ? <ChevronRight size={13}/> : <ChevronDown size={13}/>}
               </button>}
               {!groupClosed && group.links.map((link) => {
-                const active = isDashboardNavigationLinkActive(pathname, link);
+                const active = isDashboardNavigationLinkActive(pathname, link)
+                  && !group.links.some((child) => child.parentHref === link.href && isDashboardNavigationLinkActive(pathname, child));
                 const route = link.href.split("#", 1)[0];
-                const linkNode = <Link key={link.href} href={link.href} onClick={onNavigate} title={isCollapsed ? link.label : undefined} aria-label={isCollapsed ? link.label : undefined} aria-current={active ? "page" : undefined} className={`relative flex min-h-9 items-center gap-2.5 rounded-md px-2 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/40 ${isCollapsed ? "justify-center px-0" : ""} ${active ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
+                const linkNode = <Link key={link.href} href={link.href} onClick={onNavigate} title={isCollapsed ? link.label : undefined} aria-label={isCollapsed ? link.label : undefined} aria-current={active ? "page" : undefined} className={`relative flex min-h-9 items-center gap-2.5 rounded-md px-2 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/40 ${isCollapsed ? "justify-center px-0" : link.parentHref ? "ml-4 min-h-8 border-l border-border pl-3 text-xs" : ""} ${active ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
                   {active && <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-primary" aria-hidden="true"/>}
                   <link.icon size={16} strokeWidth={active ? 2.2 : 1.9} className="shrink-0" aria-hidden="true"/>
                   {!isCollapsed && <span className="min-w-0 flex-1 truncate">{link.label}</span>}
