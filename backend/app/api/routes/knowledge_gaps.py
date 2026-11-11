@@ -173,6 +173,14 @@ async def review_gap(
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Knowledge gap not found")
+    if payload.status == "resolved":
+        pending = await db.scalar(select(KnowledgeGapReview).where(
+            KnowledgeGapReview.organization_id == user.organization_id,
+            KnowledgeGapReview.gap_id == gap_id,
+            KnowledgeGapReview.status != "ready",
+        ))
+        if pending is not None:
+            raise HTTPException(status_code=409, detail="FAQ ingestion must be ready before resolving linked gaps")
     row.status = payload.status
     await db.flush()
     return GapOut.model_validate(row)
