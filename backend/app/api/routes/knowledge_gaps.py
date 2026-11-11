@@ -17,6 +17,7 @@ from app.services.knowledge_base_audit import record_knowledge_base_audit
 from app.core.observability import current_correlation_id
 from app.core.config import settings
 from app.features.ai.domain.knowledge_gap_policy import faq_suggestion
+from app.features.ai.application.knowledge_gap_reconciliation import reconcile_review
 
 router = APIRouter(prefix="/knowledge/gaps", tags=["knowledge"])
 
@@ -173,44 +174,6 @@ async def record_faq_publication(
     return [FAQReviewOut.model_validate(by_gap[gap_id]) for gap_id in ids]
 
 
-async def _reconcile_review_readiness(db: AsyncSession, record: KnowledgeGapReview) -> None:
-    """Check actual ingestion and versioned embedding coverage before marking ready."""
-    document = await db.scalar(select(KnowledgeDocument).where(
-        KnowledgeDocument.organization_id == record.organization_id,
-        KnowledgeDocument.id == record.document_id,
-        KnowledgeDocument.deleted_at.is_(None),
-    ))
-    if document is None or document.status == "failed":
-        record.status = "failed"
-        return
-    if document.status != "ready":
-        record.status = "pending_ingestion"
-        return
-    total_chunks = await db.scalar(select(func.count()).select_from(DocumentChunk).where(
-        DocumentChunk.organization_id == record.organization_id,
-        DocumentChunk.document_id == record.document_id,
-    ))
-    if not total_chunks:
-        record.status = "pending_embeddings"
-        return
-    job = await db.scalar(select(DocumentEmbeddingJob).where(
-        DocumentEmbeddingJob.organization_id == record.organization_id,
-        DocumentEmbeddingJob.document_id == record.document_id,
-        DocumentEmbeddingJob.embedding_model == settings.ai_embedding_model,
-        DocumentEmbeddingJob.embedding_version == settings.ai_embedding_version,
-    ))
-    if job is None or job.status != "succeeded":
-        record.status = "failed" if job is not None and job.status == "failed" else "pending_embeddings"
-        return
-    embedded_chunks = await db.scalar(select(func.count()).select_from(DocumentEmbedding).where(
-        DocumentEmbedding.organization_id == record.organization_id,
-        DocumentEmbedding.document_id == record.document_id,
-        DocumentEmbedding.embedding_model == settings.ai_embedding_model,
-        DocumentEmbedding.embedding_version == settings.ai_embedding_version,
-    ))
-    record.status = "ready" if embedded_chunks == total_chunks else "pending_embeddings"
-
-
 @router.get("/reviews", response_model=list[FAQReviewOut])
 async def list_faq_reviews(
     limit: int = Query(default=50, ge=1, le=100),
@@ -221,7 +184,7 @@ async def list_faq_reviews(
         KnowledgeGapReview.organization_id == user.organization_id,
     ).order_by(KnowledgeGapReview.created_at.desc()).limit(limit))).all()
     for record in records:
-        await _reconcile_review_readiness(db, record)
+        await reconcile_review(db, record)
     await db.flush()
     return [FAQReviewOut.model_validate(record) for record in records]
 
