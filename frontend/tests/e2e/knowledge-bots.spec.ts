@@ -303,6 +303,66 @@ test("admin can manage knowledge bases and bots on mobile", async ({ page }) => 
   expect(accessibility.violations.filter((violation) => ["critical", "serious"].includes(violation.impact ?? ""))).toEqual([]);
 });
 
+test("customer questions open from the Knowledge submenu", async ({ page }) => {
+  await mockRoleWorkspace(page, "admin");
+  await page.goto("/dashboard/knowledge");
+  await expect(page.getByRole("heading", { name: "Knowledge bases" })).toBeVisible();
+  await expect(page.getByText("Unanswered customer questions", { exact: true })).toHaveCount(0);
+
+  const nav = page.getByRole("navigation", { name: "Main navigation" });
+  const questions = nav.getByRole("link", { name: "Customer questions" });
+  await questions.click();
+  await expect(questions).toHaveAttribute("aria-current", "page");
+  await expect(nav.getByRole("link", { name: "Knowledge", exact: true })).not.toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("heading", { name: "Customer questions", exact: true })).toBeVisible();
+  await expect(page.getByText("No unanswered questions", { exact: true })).toBeVisible();
+});
+
+test("customer questions open, save, and publish an answer in a right-side drawer", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 840 });
+  await mockRoleWorkspace(page, "admin");
+  await page.route("**/api/knowledge/gaps/dashboard?**", (route) => route.fulfill({
+    json: {
+      counts: { total: 2, open: 2, resolved: 0, grouped: 2, groups: 1 },
+      items: [{ id: "group-1", representative: "Returns & refunds", questions: [
+        { id: "gap-1", question: "How can I return an item?", created_at: now },
+        { id: "gap-2", question: "Can I send an item back?", created_at: now },
+      ] }],
+      has_more: false,
+    },
+  }));
+  await page.route("**/api/knowledge/gaps/groups/publish", (route) => route.fulfill({
+    json: { document_id: "faq-1", status: "queued", already_submitted: false },
+  }));
+  await page.goto("/dashboard/knowledge/customer-questions");
+  await expect(page.getByRole("button", { name: "All questions 2" })).toBeVisible();
+  const create = page.getByRole("button", { name: "Create answer" });
+  await create.click();
+  const drawer = page.getByRole("dialog", { name: "Returns & refunds" });
+  await expect(drawer.getByText("This answer will cover 2 questions")).toBeVisible();
+  await expect.poll(() => drawer.evaluate((element) => Math.round(element.getBoundingClientRect().right))).toBe(390);
+  await page.keyboard.press("Escape");
+  await expect(drawer).toBeHidden();
+  await expect(create).toBeFocused();
+  await create.click();
+  await drawer.getByRole("textbox", { name: "Verified answer" }).fill("Contact support to request a return.");
+  await drawer.getByRole("button", { name: "Save draft" }).click();
+  await expect(drawer).toBeHidden();
+  await expect(page.getByText("Draft saved for this visit.")).toBeVisible();
+  await create.click();
+  await expect(drawer.getByRole("textbox", { name: "Verified answer" })).toHaveValue("Contact support to request a return.");
+  const submission = page.waitForRequest("**/api/knowledge/gaps/groups/publish");
+  await drawer.getByRole("button", { name: "Publish answer" }).click();
+  expect((await submission).postDataJSON()).toMatchObject({
+    gap_ids: ["gap-1", "gap-2"],
+    knowledge_base_id: defaultBase.id,
+    answer: "Contact support to request a return.",
+  });
+  await expect(drawer).toBeHidden();
+  await expect(page.getByText(/Answer submitted/)).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+});
+
 async function mockRoleWorkspace(page: import("@playwright/test").Page, role: "admin" | "agent" | "viewer") {
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
@@ -318,6 +378,10 @@ async function mockRoleWorkspace(page: import("@playwright/test").Page, role: "a
       await route.fulfill({ status: 200, json: { items: [defaultBase], total: 1, limit: 100, offset: 0 } });
       return;
     }
+    if (url.pathname === `/api/knowledge/bases/${defaultBase.id}/audit`) {
+      await route.fulfill({ status: 200, json: { items: [], total: 0, limit: 10, offset: 0 } });
+      return;
+    }
     if (url.pathname === "/api/knowledge/documents") {
       await route.fulfill({ status: 200, json: { items: [{ id: "doc-1", organization_id: organizationId, knowledge_base_id: defaultBase.id, name: "returns-policy.txt", content_type: "text/plain", size_bytes: 80, status: "ready", uploaded_by_user_id: "owner-1", deleted_at: null, created_at: now, updated_at: now, jobs: [] }], total: 1, limit: 50, offset: 0 } });
       return;
@@ -331,7 +395,9 @@ async function mockRoleWorkspace(page: import("@playwright/test").Page, role: "a
       return;
     }
     if (new URL(route.request().url()).pathname.startsWith("/api/knowledge/gaps")) {
-      await route.fulfill({ status: 200, json: new URL(route.request().url()).pathname.endsWith("/durable-groups") ? [] : { items: [], has_more: false } });
+      await route.fulfill({ status: 200, json: url.pathname.endsWith("/dashboard")
+        ? { items: [], counts: { total: 0, open: 0, resolved: 0, grouped: 0, groups: 0 }, has_more: false }
+        : [] });
       return;
     }
     await route.fulfill({ status: 200, json: {} });

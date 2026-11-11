@@ -23,7 +23,6 @@ import { assignTicketToMe, updateTicket } from "@/features/tickets/api/ticket-ap
 import { ShopifyCancellationPanel } from "@/features/commerce-actions/components/shopify-cancellation-panel";
 import { formatInboxRequestError } from "../utils/request-error";
 import { inboxQueryRetryDelay, shouldRetryInboxQuery } from "../utils/query-retry";
-import { activeTeamsQueryKey, listActiveTeams } from "@/features/organization/api/team-api";
 import { listSavedReplies, savedRepliesQueryKey } from "@/features/saved-replies/api/saved-replies-api";
 import { conversationAttachmentsKey, deleteConversationAttachment, downloadConversationAttachment, listConversationAttachments, uploadConversationAttachment } from "@/features/attachments/api/conversation-attachment-api";
 import { expandSavedReplyAtCursor } from "@/features/saved-replies/utils/expand-shortcut";
@@ -204,7 +203,6 @@ export function InboxWorkspace({ initialOverdueOnly = false, initialSlaStatus, i
   const [composeMode, setComposeMode] = useState<"reply" | "note">("reply");
   const [draftExecutionId, setDraftExecutionId] = useState<string>();
   const me = useQuery({ queryKey: ["me"], queryFn: getCurrentUser });
-  const teams = useQuery({ queryKey: activeTeamsQueryKey, queryFn: listActiveTeams });
   const inbox = useInfiniteQuery({
     queryKey: inboxQueryKeys.page(filters),
     queryFn: ({ pageParam }) => getInbox(filters, pageParam),
@@ -283,14 +281,15 @@ export function InboxWorkspace({ initialOverdueOnly = false, initialSlaStatus, i
     refetchInterval: () => typeof document !== "undefined" && document.visibilityState === "visible" ? 10_000 : false,
     refetchIntervalInBackground: false,
   });
-  const latestMessage = useMemo(() => (messages.data ?? []).reduce<NonNullable<typeof messages.data>[number] | null>(
+  const threadMessages = messages.data;
+  const latestMessage = useMemo(() => (threadMessages ?? []).reduce<NonNullable<typeof threadMessages>[number] | null>(
     (latest, message) => !latest
       || message.created_at > latest.created_at
       || (message.created_at === latest.created_at && message.id > latest.id)
       ? message
       : latest,
     null,
-  ), [messages.data]);
+  ), [threadMessages]);
   const isWidgetConversation = conversations.data?.some((item) => item.id === activeConversationId && item.channel === "shopify_widget") ?? false;
   const selectedThread = conversations.data?.find((item) => item.id === activeConversationId);
   const aiAgents = useQuery({ queryKey: aiAgentsKey, queryFn: listAIAgents, enabled: isWidgetConversation, staleTime: 60_000 });
@@ -332,10 +331,11 @@ export function InboxWorkspace({ initialOverdueOnly = false, initialSlaStatus, i
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const followLatestMessage = useRef(true);
   const lastTranscriptConversation = useRef("");
+  const latestMessageId = latestMessage?.id;
   useEffect(() => {
     const markLatestAsRead = () => {
-      if (!activeConversationId || !latestMessage || document.visibilityState !== "visible") return;
-      const cursor = `${activeConversationId}:${latestMessage.id}`;
+      if (!activeConversationId || !latestMessageId || document.visibilityState !== "visible") return;
+      const cursor = `${activeConversationId}:${latestMessageId}`;
       if (lastReadCursor.current === cursor) return;
       lastReadCursor.current = cursor;
       read.mutate(activeConversationId);
@@ -343,7 +343,7 @@ export function InboxWorkspace({ initialOverdueOnly = false, initialSlaStatus, i
     markLatestAsRead();
     document.addEventListener("visibilitychange", markLatestAsRead);
     return () => document.removeEventListener("visibilitychange", markLatestAsRead);
-  }, [activeConversationId, latestMessage?.id, read]);
+  }, [activeConversationId, latestMessageId, read]);
   useEffect(() => {
     if (!activeConversationId) return;
     if (lastTranscriptConversation.current !== activeConversationId) {

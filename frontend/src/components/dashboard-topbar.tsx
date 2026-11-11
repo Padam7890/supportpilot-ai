@@ -37,13 +37,18 @@ type DashboardTopbarProps = {
 
 function breadcrumbs(pathname: string, role: string) {
   const links = getDashboardNavigation(role).flatMap((group) => group.links);
-  const current = links.find((link) => {
+  const current = links.find((link) => link.href === pathname) ?? links.find((link) => {
     const route = link.href.split("#", 1)[0];
     return pathname === route || pathname.startsWith(`${route}/`);
   });
   if (!current || pathname === "/dashboard") return [{ label: "Workspace", href: "/dashboard" }, { label: "Overview" }];
   const path = current.href.split("#", 1)[0];
-  const items = [{ label: "Workspace", href: "/dashboard" }, { label: current.label, href: path }];
+  const parent = links.find((link) => link.href === current.parentHref);
+  const items = [
+    { label: "Workspace", href: "/dashboard" },
+    ...(parent ? [{ label: parent.label, href: parent.href }] : []),
+    { label: current.label, href: path },
+  ];
   if (pathname !== path) items.push({ label: "Details", href: "" });
   return items;
 }

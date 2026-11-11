@@ -2108,6 +2108,223 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/knowledge/gaps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Gaps */
+        get: operations["list_gaps_api_v1_knowledge_gaps_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/knowledge/gaps/dashboard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Customer Question Dashboard */
+        get: operations["customer_question_dashboard_api_v1_knowledge_gaps_dashboard_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/knowledge/gaps/durable-groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Durable Groups */
+        get: operations["list_durable_groups_api_v1_knowledge_gaps_durable_groups_get"];
+        put?: never;
+        /** Create Durable Group */
+        post: operations["create_durable_group_api_v1_knowledge_gaps_durable_groups_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/knowledge/gaps/durable-groups/auto-assign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Auto Assign Semantic Groups
+         * @description Persist semantic candidates across review pages; never override manual memberships.
+         */
+        post: operations["auto_assign_semantic_groups_api_v1_knowledge_gaps_durable_groups_auto_assign_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/knowledge/gaps/durable-groups/{group_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Durable Group
+         * @description Delete a review grouping without deleting the underlying gaps.
+         */
+        delete: operations["delete_durable_group_api_v1_knowledge_gaps_durable_groups__group_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/knowledge/gaps/durable-groups/{group_id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Move Durable Group Members */
+        post: operations["move_durable_group_members_api_v1_knowledge_gaps_durable_groups__group_id__members_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/knowledge/gaps/groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Grouped Gaps */
+        get: operations["list_grouped_gaps_api_v1_knowledge_gaps_groups_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/knowledge/gaps/groups/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Publish Reviewed Faq
+         * @description Create the FAQ document, source, ingestion job and review links atomically.
+         *
+         *     The tenant's gap rows are locked to serialize competing submissions. A retry
+         *     with the same group returns the existing document; partial overlap is a conflict.
+         */
+        post: operations["publish_reviewed_faq_api_v1_knowledge_gaps_groups_publish_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/knowledge/gaps/groups/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Review Group */
+        post: operations["review_group_api_v1_knowledge_gaps_groups_review_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/knowledge/gaps/reviews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Faq Reviews */
+        get: operations["list_faq_reviews_api_v1_knowledge_gaps_reviews_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/knowledge/gaps/{gap_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Review Gap */
+        patch: operations["review_gap_api_v1_knowledge_gaps__gap_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/knowledge/gaps/{gap_id}/faq-suggestion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Suggest Faq */
+        get: operations["suggest_faq_api_v1_knowledge_gaps__gap_id__faq_suggestion_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/notifications": {
         parameters: {
             query?: never;
@@ -3642,6 +3859,32 @@ export interface components {
              */
             value: boolean;
         };
+        /** AtomicFAQPublish */
+        AtomicFAQPublish: {
+            /** Answer */
+            answer: string;
+            /** Gap Ids */
+            gap_ids: string[];
+            /**
+             * Knowledge Base Id
+             * Format: uuid
+             */
+            knowledge_base_id: string;
+            /** Question */
+            question: string;
+        };
+        /** AtomicFAQResult */
+        AtomicFAQResult: {
+            /** Already Submitted */
+            already_submitted: boolean;
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /** Status */
+            status: string;
+        };
         /** AuthChallengeToken */
         AuthChallengeToken: {
             /** Challenge Token */
@@ -4692,7 +4935,7 @@ export interface components {
              */
             created_at: string;
             /** Email */
-            email: string;
+            email?: string | null;
             /** External Reference */
             external_reference: string | null;
             /**
@@ -4736,6 +4979,43 @@ export interface components {
             name?: string | null;
             /** Phone */
             phone?: string | null;
+        };
+        /** DashboardCounts */
+        DashboardCounts: {
+            /** Grouped */
+            grouped: number;
+            /** Groups */
+            groups: number;
+            /** Open */
+            open: number;
+            /** Resolved */
+            resolved: number;
+            /** Total */
+            total: number;
+        };
+        /** DashboardGroup */
+        DashboardGroup: {
+            /** Id */
+            id: string | null;
+            /** Questions */
+            questions: components["schemas"]["DashboardQuestion"][];
+            /** Representative */
+            representative: string;
+        };
+        /** DashboardQuestion */
+        DashboardQuestion: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Question */
+            question: string;
         };
         /** DocumentEmbeddingBackfillOut */
         DocumentEmbeddingBackfillOut: {
@@ -4805,6 +5085,28 @@ export interface components {
              */
             updated_at: string;
         };
+        /** DurableGroupCreate */
+        DurableGroupCreate: {
+            /** Gap Ids */
+            gap_ids: string[];
+        };
+        /** DurableGroupMove */
+        DurableGroupMove: {
+            /** Gap Ids */
+            gap_ids: string[];
+        };
+        /** DurableGroupOut */
+        DurableGroupOut: {
+            /** Gap Ids */
+            gap_ids: string[];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Representative */
+            representative: string;
+        };
         /** ExecutionActionOut */
         ExecutionActionOut: {
             /** Action */
@@ -4818,6 +5120,44 @@ export interface components {
              * @enum {string}
              */
             outcome: "applied" | "skipped" | "waiting_approval" | "approved" | "rejected" | "expired";
+        };
+        /** FAQReviewOut */
+        FAQReviewOut: {
+            /** Answer */
+            answer: string;
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /**
+             * Gap Id
+             * Format: uuid
+             */
+            gap_id: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Question */
+            question: string;
+            /**
+             * Reviewer Id
+             * Format: uuid
+             */
+            reviewer_id: string;
+            /** Status */
+            status: string;
+        };
+        /** FAQSuggestion */
+        FAQSuggestion: {
+            /** Question */
+            question: string;
+            /** Status */
+            status: string;
+            /** Suggested Answer */
+            suggested_answer: string | null;
         };
         /** FailedBackgroundJobOut */
         FailedBackgroundJobOut: {
@@ -4915,6 +5255,53 @@ export interface components {
             normal: number;
             /** Urgent */
             urgent: number;
+        };
+        /** GapOut */
+        GapOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Question */
+            question: string;
+            /** Reason */
+            reason: string;
+            /** Status */
+            status: string;
+        };
+        /** GapPage */
+        GapPage: {
+            /** Items */
+            items: components["schemas"]["GapOut"][];
+        };
+        /** GapReview */
+        GapReview: {
+            /** Status */
+            status: string;
+        };
+        /** GroupOut */
+        GroupOut: {
+            /** Count */
+            count: number;
+            /** Gap Ids */
+            gap_ids: string[];
+            /** Representative */
+            representative: string;
+        };
+        /** GroupPage */
+        GroupPage: {
+            /** Has More */
+            has_more: boolean;
+            /** Items */
+            items: components["schemas"]["GroupOut"][];
+        };
+        /** GroupReview */
+        GroupReview: {
+            /** Gap Ids */
+            gap_ids: string[];
+            /** Status */
+            status: string;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -5699,6 +6086,14 @@ export interface components {
             offset: number;
             /** Total */
             total: number;
+        };
+        /** KnowledgeGapDashboard */
+        KnowledgeGapDashboard: {
+            counts: components["schemas"]["DashboardCounts"];
+            /** Has More */
+            has_more: boolean;
+            /** Items */
+            items: components["schemas"]["DashboardGroup"][];
         };
         /** KnowledgeSearchPage */
         KnowledgeSearchPage: {
@@ -6726,6 +7121,19 @@ export interface components {
              * @description Optional regex with one capture group for the search phrase; defaults to message tail.
              */
             query_regex?: string | null;
+        };
+        /** SemanticGroupAssignment */
+        SemanticGroupAssignment: {
+            /**
+             * Limit
+             * @default 100
+             */
+            limit: number;
+            /**
+             * Threshold
+             * @default 0.86
+             */
+            threshold: number;
         };
         /** SessionOut */
         SessionOut: {
@@ -19852,6 +20260,436 @@ export interface operations {
                 };
                 content: {
                     "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    list_gaps_api_v1_knowledge_gaps_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GapPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    customer_question_dashboard_api_v1_knowledge_gaps_dashboard_get: {
+        parameters: {
+            query?: {
+                period?: "7" | "30" | "90" | "all";
+                view?: "all" | "grouped" | "ungrouped";
+                search?: string;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeGapDashboard"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_durable_groups_api_v1_knowledge_gaps_durable_groups_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableGroupOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_durable_group_api_v1_knowledge_gaps_durable_groups_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DurableGroupCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DurableGroupOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auto_assign_semantic_groups_api_v1_knowledge_gaps_durable_groups_auto_assign_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SemanticGroupAssignment"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: number;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_durable_group_api_v1_knowledge_gaps_durable_groups__group_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    move_durable_group_members_api_v1_knowledge_gaps_durable_groups__group_id__members_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DurableGroupMove"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: number;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_grouped_gaps_api_v1_knowledge_gaps_groups_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+                threshold?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    publish_reviewed_faq_api_v1_knowledge_gaps_groups_publish_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AtomicFAQPublish"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AtomicFAQResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    review_group_api_v1_knowledge_gaps_groups_review_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GroupReview"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: number;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_faq_reviews_api_v1_knowledge_gaps_reviews_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FAQReviewOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    review_gap_api_v1_knowledge_gaps__gap_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                gap_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GapReview"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GapOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    suggest_faq_api_v1_knowledge_gaps__gap_id__faq_suggestion_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                gap_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FAQSuggestion"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

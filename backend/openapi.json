@@ -1560,6 +1560,69 @@
         "title": "AssigneePresentCondition",
         "type": "object"
       },
+      "AtomicFAQPublish": {
+        "properties": {
+          "answer": {
+            "maxLength": 10000,
+            "minLength": 1,
+            "title": "Answer",
+            "type": "string"
+          },
+          "gap_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Gap Ids",
+            "type": "array"
+          },
+          "knowledge_base_id": {
+            "format": "uuid",
+            "title": "Knowledge Base Id",
+            "type": "string"
+          },
+          "question": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Question",
+            "type": "string"
+          }
+        },
+        "required": [
+          "gap_ids",
+          "knowledge_base_id",
+          "question",
+          "answer"
+        ],
+        "title": "AtomicFAQPublish",
+        "type": "object"
+      },
+      "AtomicFAQResult": {
+        "properties": {
+          "already_submitted": {
+            "title": "Already Submitted",
+            "type": "boolean"
+          },
+          "document_id": {
+            "format": "uuid",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document_id",
+          "status",
+          "already_submitted"
+        ],
+        "title": "AtomicFAQResult",
+        "type": "object"
+      },
       "AuthChallengeToken": {
         "properties": {
           "challenge_token": {
@@ -4283,10 +4346,16 @@
             "type": "string"
           },
           "email": {
-            "maxLength": 320,
-            "minLength": 1,
-            "title": "Email",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 320,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
           },
           "external_reference": {
             "anyOf": [
@@ -4336,7 +4405,6 @@
           "updated_at",
           "organization_id",
           "name",
-          "email",
           "phone",
           "external_reference"
         ],
@@ -4427,6 +4495,98 @@
           }
         },
         "title": "CustomerUpdate",
+        "type": "object"
+      },
+      "DashboardCounts": {
+        "properties": {
+          "grouped": {
+            "title": "Grouped",
+            "type": "integer"
+          },
+          "groups": {
+            "title": "Groups",
+            "type": "integer"
+          },
+          "open": {
+            "title": "Open",
+            "type": "integer"
+          },
+          "resolved": {
+            "title": "Resolved",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "open",
+          "resolved",
+          "grouped",
+          "groups"
+        ],
+        "title": "DashboardCounts",
+        "type": "object"
+      },
+      "DashboardGroup": {
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/DashboardQuestion"
+            },
+            "title": "Questions",
+            "type": "array"
+          },
+          "representative": {
+            "title": "Representative",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "representative",
+          "questions"
+        ],
+        "title": "DashboardGroup",
+        "type": "object"
+      },
+      "DashboardQuestion": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "question": {
+            "title": "Question",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "question",
+          "created_at"
+        ],
+        "title": "DashboardQuestion",
         "type": "object"
       },
       "DocumentEmbeddingBackfillOut": {
@@ -4614,6 +4774,72 @@
         "title": "DocumentEmbeddingJobOut",
         "type": "object"
       },
+      "DurableGroupCreate": {
+        "properties": {
+          "gap_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Gap Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "gap_ids"
+        ],
+        "title": "DurableGroupCreate",
+        "type": "object"
+      },
+      "DurableGroupMove": {
+        "properties": {
+          "gap_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Gap Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "gap_ids"
+        ],
+        "title": "DurableGroupMove",
+        "type": "object"
+      },
+      "DurableGroupOut": {
+        "properties": {
+          "gap_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Gap Ids",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "representative": {
+            "title": "Representative",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "representative",
+          "gap_ids"
+        ],
+        "title": "DurableGroupOut",
+        "type": "object"
+      },
       "ExecutionActionOut": {
         "additionalProperties": false,
         "properties": {
@@ -4656,6 +4882,83 @@
           "detail"
         ],
         "title": "ExecutionActionOut",
+        "type": "object"
+      },
+      "FAQReviewOut": {
+        "properties": {
+          "answer": {
+            "title": "Answer",
+            "type": "string"
+          },
+          "document_id": {
+            "format": "uuid",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "gap_id": {
+            "format": "uuid",
+            "title": "Gap Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "question": {
+            "title": "Question",
+            "type": "string"
+          },
+          "reviewer_id": {
+            "format": "uuid",
+            "title": "Reviewer Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "gap_id",
+          "document_id",
+          "reviewer_id",
+          "question",
+          "answer",
+          "status"
+        ],
+        "title": "FAQReviewOut",
+        "type": "object"
+      },
+      "FAQSuggestion": {
+        "properties": {
+          "question": {
+            "title": "Question",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "suggested_answer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suggested Answer"
+          }
+        },
+        "required": [
+          "question",
+          "suggested_answer",
+          "status"
+        ],
+        "title": "FAQSuggestion",
         "type": "object"
       },
       "FailedBackgroundJobOut": {
@@ -4914,6 +5217,138 @@
           "urgent"
         ],
         "title": "FirstResponseSlaPolicy",
+        "type": "object"
+      },
+      "GapOut": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "question": {
+            "title": "Question",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "question",
+          "reason",
+          "status"
+        ],
+        "title": "GapOut",
+        "type": "object"
+      },
+      "GapPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/GapOut"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "GapPage",
+        "type": "object"
+      },
+      "GapReview": {
+        "properties": {
+          "status": {
+            "pattern": "^(dismissed|resolved|open)$",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "GapReview",
+        "type": "object"
+      },
+      "GroupOut": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "gap_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Gap Ids",
+            "type": "array"
+          },
+          "representative": {
+            "title": "Representative",
+            "type": "string"
+          }
+        },
+        "required": [
+          "representative",
+          "count",
+          "gap_ids"
+        ],
+        "title": "GroupOut",
+        "type": "object"
+      },
+      "GroupPage": {
+        "properties": {
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/GroupOut"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "has_more"
+        ],
+        "title": "GroupPage",
+        "type": "object"
+      },
+      "GroupReview": {
+        "properties": {
+          "gap_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Gap Ids",
+            "type": "array"
+          },
+          "status": {
+            "pattern": "^(dismissed|resolved|open)$",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "gap_ids",
+          "status"
+        ],
+        "title": "GroupReview",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -6856,6 +7291,31 @@
           "offset"
         ],
         "title": "KnowledgeDocumentPage",
+        "type": "object"
+      },
+      "KnowledgeGapDashboard": {
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/DashboardCounts"
+          },
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DashboardGroup"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "counts",
+          "has_more"
+        ],
+        "title": "KnowledgeGapDashboard",
         "type": "object"
       },
       "KnowledgeSearchPage": {
@@ -9362,6 +9822,26 @@
           "kind"
         ],
         "title": "SearchShopifyCatalogAction",
+        "type": "object"
+      },
+      "SemanticGroupAssignment": {
+        "properties": {
+          "limit": {
+            "default": 100,
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "threshold": {
+            "default": 0.86,
+            "exclusiveMinimum": 0.0,
+            "maximum": 1.0,
+            "title": "Threshold",
+            "type": "number"
+          }
+        },
+        "title": "SemanticGroupAssignment",
         "type": "object"
       },
       "SessionOut": {
@@ -28716,6 +29196,754 @@
           }
         ],
         "summary": "Preview Document Source",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/knowledge/gaps": {
+      "get": {
+        "operationId": "list_gaps_api_v1_knowledge_gaps_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GapPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Gaps",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/knowledge/gaps/dashboard": {
+      "get": {
+        "operationId": "customer_question_dashboard_api_v1_knowledge_gaps_dashboard_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "period",
+            "required": false,
+            "schema": {
+              "default": "30",
+              "enum": [
+                "7",
+                "30",
+                "90",
+                "all"
+              ],
+              "title": "Period",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "view",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "enum": [
+                "all",
+                "grouped",
+                "ungrouped"
+              ],
+              "title": "View",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 200,
+              "title": "Search",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeGapDashboard"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Customer Question Dashboard",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/knowledge/gaps/durable-groups": {
+      "get": {
+        "operationId": "list_durable_groups_api_v1_knowledge_gaps_durable_groups_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DurableGroupOut"
+                  },
+                  "title": "Response List Durable Groups Api V1 Knowledge Gaps Durable Groups Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Durable Groups",
+        "tags": [
+          "knowledge"
+        ]
+      },
+      "post": {
+        "operationId": "create_durable_group_api_v1_knowledge_gaps_durable_groups_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DurableGroupCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DurableGroupOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Durable Group",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/knowledge/gaps/durable-groups/auto-assign": {
+      "post": {
+        "description": "Persist semantic candidates across review pages; never override manual memberships.",
+        "operationId": "auto_assign_semantic_groups_api_v1_knowledge_gaps_durable_groups_auto_assign_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SemanticGroupAssignment"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "integer"
+                  },
+                  "title": "Response Auto Assign Semantic Groups Api V1 Knowledge Gaps Durable Groups Auto Assign Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Auto Assign Semantic Groups",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/knowledge/gaps/durable-groups/{group_id}": {
+      "delete": {
+        "description": "Delete a review grouping without deleting the underlying gaps.",
+        "operationId": "delete_durable_group_api_v1_knowledge_gaps_durable_groups__group_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Group Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Durable Group",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/knowledge/gaps/durable-groups/{group_id}/members": {
+      "post": {
+        "operationId": "move_durable_group_members_api_v1_knowledge_gaps_durable_groups__group_id__members_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Group Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DurableGroupMove"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "integer"
+                  },
+                  "title": "Response Move Durable Group Members Api V1 Knowledge Gaps Durable Groups  Group Id  Members Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Move Durable Group Members",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/knowledge/gaps/groups": {
+      "get": {
+        "operationId": "list_grouped_gaps_api_v1_knowledge_gaps_groups_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 10000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "threshold",
+            "required": false,
+            "schema": {
+              "default": 0.86,
+              "exclusiveMinimum": 0.0,
+              "maximum": 1.0,
+              "title": "Threshold",
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Grouped Gaps",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/knowledge/gaps/groups/publish": {
+      "post": {
+        "description": "Create the FAQ document, source, ingestion job and review links atomically.\n\nThe tenant's gap rows are locked to serialize competing submissions. A retry\nwith the same group returns the existing document; partial overlap is a conflict.",
+        "operationId": "publish_reviewed_faq_api_v1_knowledge_gaps_groups_publish_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AtomicFAQPublish"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AtomicFAQResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Publish Reviewed Faq",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/knowledge/gaps/groups/review": {
+      "post": {
+        "operationId": "review_group_api_v1_knowledge_gaps_groups_review_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupReview"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "integer"
+                  },
+                  "title": "Response Review Group Api V1 Knowledge Gaps Groups Review Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Review Group",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/knowledge/gaps/reviews": {
+      "get": {
+        "operationId": "list_faq_reviews_api_v1_knowledge_gaps_reviews_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FAQReviewOut"
+                  },
+                  "title": "Response List Faq Reviews Api V1 Knowledge Gaps Reviews Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Faq Reviews",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/knowledge/gaps/{gap_id}": {
+      "patch": {
+        "operationId": "review_gap_api_v1_knowledge_gaps__gap_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "gap_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Gap Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GapReview"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GapOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Review Gap",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/knowledge/gaps/{gap_id}/faq-suggestion": {
+      "get": {
+        "operationId": "suggest_faq_api_v1_knowledge_gaps__gap_id__faq_suggestion_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "gap_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Gap Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FAQSuggestion"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Suggest Faq",
         "tags": [
           "knowledge"
         ]

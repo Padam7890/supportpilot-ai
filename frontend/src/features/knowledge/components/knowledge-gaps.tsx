@@ -1,149 +1,252 @@
 "use client";
 
-import { useState } from "react";
+import { ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Plus, RotateCw, Search } from "lucide-react";
+import { useDeferredValue, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api/client";
-import { knowledgeBaseKey, listKnowledgeBases } from "../api/knowledge-base-api";
-import { knowledgeKeys } from "../api/knowledge-api";
+import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
+import {
+  listCustomerQuestions, listQuestionGroups, listQuestionReviews, questionActions, questionKeys,
+  type AnswerDraft, type DashboardCounts, type QuestionGroup, type QuestionPeriod, type QuestionView,
+} from "../api/knowledge-gap-api";
+import { CustomerQuestionAnswerDrawer } from "./customer-question-answer-drawer";
+import { CustomerQuestionListItem } from "./customer-question-list";
 
-type Group = { representative: string; count: number; gap_ids: string[] };
-type GroupPage = { items: Group[]; has_more: boolean };
-type DurableGroup = { id: string; representative: string; gap_ids: string[] };
-type Draft = { group: Group; question: string; answer: string; knowledgeBaseId: string };
+const pageSize = 50;
+const periods = { "7": "Last 7 days", "30": "Last 30 days", "90": "Last 90 days", all: "All time" } satisfies Record<QuestionPeriod, string>;
+const views = [
+  { id: "all", label: "All questions" }, { id: "grouped", label: "Grouped" }, { id: "ungrouped", label: "Ungrouped" },
+] as const;
 
-export function KnowledgeGaps() {
+export function KnowledgeGaps({ heading }: { heading: ReactNode }) {
   const queryClient = useQueryClient();
-  const [draft, setDraft] = useState<Draft | null>(null);
-  const [notice, setNotice] = useState("");
+  const [period, setPeriod] = useState<QuestionPeriod>("30");
+  const [view, setView] = useState<QuestionView>("all");
+  const [search, setSearch] = useState("");
+  const querySearch = useDeferredValue(search.trim());
   const [page, setPage] = useState(0);
-  const pageSize = 50;
-  const [targetGroupId, setTargetGroupId] = useState("");
-  const [selectedGapIds, setSelectedGapIds] = useState<string[]>([]);
   const [threshold, setThreshold] = useState(0.86);
-  const durable = useQuery({ queryKey: ["knowledge-gap-durable"], queryFn: () => api<DurableGroup[]>("/knowledge/gaps/durable-groups?limit=100") });
-  const refreshGroups = async () => { await Promise.all([queryClient.invalidateQueries({ queryKey: ["knowledge-gap-durable"] }), queryClient.invalidateQueries({ queryKey: ["knowledge-gap-groups"] })]); };
-  const assign = useMutation({ mutationFn: () => api<{assigned:number;created:number}>("/knowledge/gaps/durable-groups/auto-assign", { method:"POST", body:JSON.stringify({limit:100,threshold}) }), onSuccess: async (result) => { setNotice(`Assigned ${result.assigned} questions and created ${result.created} groups.`); await refreshGroups(); } });
-  const move = useMutation({ mutationFn: () => api<{moved:number}>(`/knowledge/gaps/durable-groups/${targetGroupId}/members`, { method:"POST", body:JSON.stringify({gap_ids:selectedGapIds}) }), onSuccess: async () => { setSelectedGapIds([]); setNotice("Selected questions moved."); await refreshGroups(); } });
-  const split = useMutation({ mutationFn: () => api<DurableGroup>("/knowledge/gaps/durable-groups", { method:"POST", body:JSON.stringify({gap_ids:selectedGapIds}) }), onSuccess: async () => { setSelectedGapIds([]); setNotice("New group created."); await refreshGroups(); } });
-  const remove = useMutation({ mutationFn: (id:string) => api<void>(`/knowledge/gaps/durable-groups/${id}`, { method:"DELETE" }), onSuccess: async () => { setNotice("Group deleted; questions retained."); await refreshGroups(); } });
-  const bases = useQuery({ queryKey: knowledgeBaseKey, queryFn: listKnowledgeBases });
-  const activeBases = bases.data?.items.filter((base) => base.status === "active") ?? [];
-  const review = useMutation({
-    mutationFn: ({ gap_ids, status }: { gap_ids: string[]; status: "resolved" | "dismissed" }) =>
-      api<{ updated: number }>("/knowledge/gaps/groups/review", { method: "POST", body: JSON.stringify({ gap_ids, status }) }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["knowledge-gap-groups"] }),
-  });
-  const publish = useMutation({
-    mutationFn: async (item: Draft) => {
-      const question = item.question.trim();
-      const answer = item.answer.trim();
-      if (!question || !answer || !item.knowledgeBaseId) throw new Error("Enter a verified answer and select a knowledge base.");
-      if (question.length > 1000 || answer.length > 10000) throw new Error("FAQ content is too long.");
-      return api<{ document_id: string; status: string; already_submitted: boolean }>("/knowledge/gaps/groups/publish", {
-        method: "POST",
-        body: JSON.stringify({
-          gap_ids: item.group.gap_ids,
-          knowledge_base_id: item.knowledgeBaseId,
-          question,
-          answer,
-        }),
-      });
-    },
-    onSuccess: async (document) => {
-      setNotice(document.already_submitted ? "This FAQ was already submitted. Check its ingestion status before resolving." : `FAQ submitted atomically with its review history (status: ${document.status}). Verify processing before resolving.`);
-      setDraft(null);
-      await Promise.all([queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents }), queryClient.invalidateQueries({ queryKey: ["knowledge-gap-reviews"] })]);
-    },
-  });
-  const reviews = useQuery({
-    queryKey: ["knowledge-gap-reviews"],
-    queryFn: () => api<Array<{ gap_id: string; document_id: string; status: string }>>("/knowledge/gaps/reviews"),
-  });
-  const groups = useQuery({
-    queryKey: ["knowledge-gap-groups", page],
-    queryFn: () => api<GroupPage>(`/knowledge/gaps/groups?limit=${pageSize}&offset=${page * pageSize}`),
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [editor, setEditor] = useState<QuestionGroup | null>(null);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const answerTrigger = useRef<HTMLElement | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, AnswerDraft>>({});
+  const [notice, setNotice] = useState("");
+  const filters = { period, view, search: querySearch, offset: page * pageSize };
+  const dashboard = useQuery({
+    queryKey: [...questionKeys.dashboard, filters],
+    queryFn: ({ signal }) => listCustomerQuestions(filters, signal),
     retry: false,
   });
-  const openDraft = (group: Group) => {
-    setNotice("");
-    setDraft({
-      group,
-      question: group.representative,
-      answer: "",
-      knowledgeBaseId: activeBases.find((base) => base.is_default)?.id ?? activeBases[0]?.id ?? "",
+  const durable = useQuery({ queryKey: questionKeys.groups, queryFn: listQuestionGroups, enabled: selected.size > 0 });
+  const reviews = useQuery({
+    queryKey: questionKeys.reviews,
+    queryFn: listQuestionReviews,
+    refetchInterval: (query) => query.state.data?.some((item) => ["pending_ingestion", "pending_embeddings"].includes(item.status)) ? 5000 : false,
+  });
+  const operation = useMutation({
+    mutationFn: (action: () => Promise<string>) => action(),
+    onMutate: () => setNotice(""),
+    onSuccess: async (message) => {
+      setNotice(message);
+      setSelected(new Set());
+      setPage(0);
+      await Promise.all([questionKeys.dashboard, questionKeys.groups].map((queryKey) => queryClient.invalidateQueries({ queryKey })));
+    },
+  });
+
+  function openEditor(group: QuestionGroup) {
+    answerTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setEditor(group);
+    setEditorOpen(true);
+  }
+
+  function resetSelection() {
+    setPage(0);
+    setSelected(new Set());
+  }
+
+  function select(id: string, checked: boolean) {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
     });
-  };
+  }
+
+  const groups = dashboard.data?.items ?? [];
+  const counts = dashboard.data?.counts;
+  const selectedQuestions = groups.flatMap((group) => group.questions).filter((item) => selected.has(item.id));
+  const selectedIds = selectedQuestions.map((item) => item.id);
+  const draftKey = editor?.questions.map((item) => item.id).sort().join(",") ?? "";
+  const readyReviews = reviews.data?.filter((item) => item.status === "ready").length ?? 0;
+
   return (
-    <section className="rounded-xl border border-border p-5 space-y-3">
-      <h2 className="text-lg font-semibold">Unanswered customer questions</h2>
-      <p className="text-sm text-muted-foreground">
-        Review similar customer questions and publish only answers you have verified.
-      </p>
-      <div className="space-y-3 rounded-lg border border-border p-3">
-        <h3 className="text-sm font-semibold">Persistent semantic groups</h3>
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          <label>Similarity threshold <input aria-label="Similarity threshold" type="number" min="0.01" max="1" step="0.01" value={threshold} onChange={(event) => setThreshold(Number(event.target.value))} className="w-20 rounded border border-border bg-background px-2 py-1" /></label>
-          <button type="button" disabled={assign.isPending || threshold <= 0 || threshold > 1} onClick={() => assign.mutate()} className="rounded border border-border px-3 py-1 disabled:opacity-50">Auto-group next 100 questions</button>
+    <div className="space-y-5">
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        {heading}
+        <div className="flex flex-wrap gap-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger render={<Button variant="outline" className="bg-card" />} aria-label="Date range">
+              {periods[period]} <ChevronDown />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-max">
+              {(Object.keys(periods) as QuestionPeriod[]).map((value) => (
+                <DropdownMenuItem key={value} onClick={() => { setPeriod(value); resetSelection(); }}>{periods[value]}</DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button disabled={!selectedQuestions.length} title={selectedQuestions.length ? undefined : "Select questions to create an answer"} onClick={() => openEditor({
+            id: null, representative: selectedQuestions[0].question, questions: selectedQuestions,
+          })}><Plus />Add answer</Button>
         </div>
-        <p className="text-xs text-muted-foreground">Select individual questions to split into another group, or select all questions in a group to merge them into the target group.</p>
-        {durable.data?.map((group) => <div key={group.id} className="rounded border border-border p-2 text-sm space-y-2">
-          <div className="flex flex-wrap justify-between gap-2"><span className="font-medium">{group.representative} ({group.gap_ids.length})</span><button type="button" disabled={remove.isPending} onClick={() => { if (window.confirm("Delete this group? The questions will be kept.")) remove.mutate(group.id); }} className="rounded border border-border px-2 py-1 text-xs">Delete group</button></div>
-          <button type="button" className="text-xs underline" onClick={() => setSelectedGapIds(group.gap_ids)}>Select all questions in this group</button>
-          <div className="flex flex-wrap gap-2">{group.gap_ids.map((id) => <label key={id} className="flex items-center gap-1 text-xs"><input type="checkbox" checked={selectedGapIds.includes(id)} onChange={(event) => setSelectedGapIds((old) => event.target.checked ? [...old.filter((value) => value !== id), id] : old.filter((value) => value !== id))} />{id.slice(0,8)}</label>)}</div>
-        </div>)}
-        <div className="flex flex-wrap gap-2 items-center"><select aria-label="Target group" className="rounded border border-border bg-background px-2 py-1 text-sm" value={targetGroupId} onChange={(event) => setTargetGroupId(event.target.value)}><option value="">Choose target group</option>{durable.data?.map((group) => <option key={group.id} value={group.id}>{group.representative.slice(0,65)}</option>)}</select><button type="button" disabled={!targetGroupId || !selectedGapIds.length || move.isPending} onClick={() => move.mutate()} className="rounded border border-border px-3 py-1 text-sm disabled:opacity-50">Move selected questions</button><button type="button" disabled={!selectedGapIds.length || split.isPending} onClick={() => split.mutate()} className="rounded border border-border px-3 py-1 text-sm disabled:opacity-50">Create new group from unassigned questions</button></div>
-        {(assign.isError || move.isError || split.isError || remove.isError || durable.isError) && <p role="alert" className="text-sm text-destructive">Could not update persistent groups. Refresh and retry.</p>}
-      </div>
-      {groups.isLoading && <p className="text-sm">Grouping unanswered questions…</p>}
-      {groups.isError && <p role="alert" className="text-sm text-destructive">Semantic grouping is unavailable. Check embedding provider configuration.</p>}
-      {groups.data?.items.length === 0 && <p className="text-sm text-muted-foreground">No knowledge gaps recorded yet.</p>}
-      {review.isError && <p role="alert" className="text-sm text-destructive">Could not update question status.</p>}
-      {notice && <p role="status" className="text-sm text-muted-foreground">{notice}</p>}
-      {reviews.data && reviews.data.length > 0 && <p className="text-xs text-muted-foreground">FAQ submissions: {reviews.data.filter((r) => r.status === "ready").length} ready, {reviews.data.filter((r) => r.status !== "ready").length} pending or failed. Status is refreshed when this page loads.</p>}
-      <ul className="divide-y divide-border">
-        {groups.data?.items.map((group) => (
-          <li key={group.gap_ids[0]} className="py-3 flex flex-wrap items-start justify-between gap-3">
-            <p className="text-sm font-medium">{group.representative}</p>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="shrink-0 text-xs text-muted-foreground">{group.count} {group.count === 1 ? "question" : "questions"}</span>
-              <button type="button" onClick={() => openDraft(group)} className="rounded border border-border px-2 py-1 text-xs hover:bg-accent">Review FAQ</button>
-              <button type="button" disabled={review.isPending} onClick={() => review.mutate({ gap_ids: group.gap_ids, status: "resolved" })} className="rounded border border-border px-2 py-1 text-xs hover:bg-accent disabled:opacity-50">Resolve</button>
-              <button type="button" disabled={review.isPending} onClick={() => review.mutate({ gap_ids: group.gap_ids, status: "dismissed" })} className="rounded border border-border px-2 py-1 text-xs hover:bg-accent disabled:opacity-50">Dismiss</button>
-            </div>
-          </li>
-        ))}
-      </ul>
-      <div className="flex items-center justify-between gap-3 text-sm">
-        <button type="button" disabled={page === 0 || groups.isFetching} onClick={() => setPage((current) => Math.max(0, current - 1))} className="rounded border border-border px-3 py-1 disabled:opacity-50">Previous</button>
-        <span>Page {page + 1}</span>
-        <button type="button" disabled={groups.isFetching || !groups.data?.has_more} onClick={() => setPage((current) => current + 1)} className="rounded border border-border px-3 py-1 disabled:opacity-50">Next</button>
-      </div>
-      {draft && (
-        <div className="space-y-3 rounded-lg border border-border bg-card p-4" aria-label="FAQ review editor">
-          <h3 className="font-semibold">Review and publish FAQ</h3>
-          <p className="text-xs text-muted-foreground">Answers are never AI-generated here. Confirm facts against store policies before submitting.</p>
-          <label className="block space-y-1 text-sm">
-            <span>Question</span>
-            <textarea maxLength={1000} rows={2} value={draft.question} onChange={(event) => setDraft({ ...draft, question: event.target.value })} className="w-full rounded border border-border bg-background p-2" />
-          </label>
-          <label className="block space-y-1 text-sm">
-            <span>Verified answer</span>
-            <textarea maxLength={10000} rows={5} value={draft.answer} onChange={(event) => setDraft({ ...draft, answer: event.target.value })} placeholder="Enter the approved store policy or answer" className="w-full rounded border border-border bg-background p-2" />
-          </label>
-          <label className="block space-y-1 text-sm">
-            <span>Knowledge base</span>
-            <select value={draft.knowledgeBaseId} onChange={(event) => setDraft({ ...draft, knowledgeBaseId: event.target.value })} className="w-full rounded border border-border bg-background p-2">
-              <option value="">Select knowledge base</option>
-              {activeBases.map((base) => <option key={base.id} value={base.id}>{base.name}</option>)}
-            </select>
-          </label>
-          {publish.isError && <p role="alert" className="text-sm text-destructive">{publish.error instanceof Error ? publish.error.message : "FAQ upload failed"}</p>}
-          <div className="flex gap-2">
-            <button type="button" disabled={publish.isPending || !draft.question.trim() || !draft.answer.trim() || !draft.knowledgeBaseId} onClick={() => publish.mutate(draft)} className="rounded bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50">Approve and submit to knowledge base</button>
-            <button type="button" disabled={publish.isPending} onClick={() => setDraft(null)} className="rounded border border-border px-3 py-2 text-sm">Cancel</button>
+      </header>
+
+      <QuestionMetrics counts={counts} />
+
+      <section aria-label="Semantic grouping" className="flex flex-wrap items-center gap-x-5 gap-y-3 rounded-xl border bg-card px-4 py-3">
+        <h2 className="text-sm font-semibold">Semantic grouping</h2>
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:min-w-52">
+          <label htmlFor="question-similarity" className="text-sm">Similarity</label>
+          <span className="hidden text-xs text-muted-foreground sm:inline">Broad</span>
+          <input id="question-similarity" type="range" min="0.5" max="1" step="0.01" value={threshold}
+            onChange={(event) => setThreshold(event.currentTarget.valueAsNumber)}
+            className="min-w-16 flex-1 accent-primary focus-visible:outline-2 focus-visible:outline-ring" />
+          <span className="hidden text-xs text-muted-foreground sm:inline">Strict</span>
+          <output htmlFor="question-similarity" className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">{threshold.toFixed(2)}</output>
+        </div>
+        <Button variant="outline" disabled={operation.isPending} onClick={() => operation.mutate(async () => {
+          const result = await questionActions.assign(threshold);
+          return result.assigned ? `Grouped ${result.assigned} questions and created ${result.created} groups.` : "There are no ungrouped questions to assign.";
+        })}><RotateCw />Group questions</Button>
+      </section>
+
+      {notice && <p role="status" className="rounded-lg border bg-card px-4 py-2.5 text-sm">{notice}</p>}
+      {operation.isError && <p role="alert" className="rounded-lg border border-destructive/30 px-4 py-2.5 text-sm text-destructive">{operation.error.message}</p>}
+
+      <section aria-label="Questions needing review" className="overflow-hidden rounded-xl border bg-card">
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b px-4 pt-2 pb-2">
+          <div role="group" aria-label="Question view" className="flex flex-wrap gap-x-3">
+            {views.map(({ id, label }) => (
+              <button key={id} type="button" aria-pressed={view === id}
+                onClick={() => { setView(id); resetSelection(); }}
+                className={cn("border-b-2 border-transparent px-1 py-2 text-sm font-semibold text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring", view === id && "border-primary text-primary")}>
+                {label}{counts && ` ${id === "all" ? counts.open : id === "grouped" ? counts.grouped : counts.open - counts.grouped}`}
+              </button>
+            ))}
+          </div>
+          <div className="relative w-full sm:max-w-60">
+            <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input type="search" aria-label="Search questions" placeholder="Search questions" maxLength={200} value={search}
+              onChange={(event) => { setSearch(event.target.value); resetSelection(); }} className="h-9 pl-9" />
           </div>
         </div>
+        {selectedIds.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 border-b bg-primary/8 px-4 py-2.5">
+            <span className="mr-1 text-sm font-semibold text-primary">{selectedIds.length} selected</span>
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button size="sm" variant="outline" className="bg-card" />} disabled={operation.isPending || durable.isPending}>
+                Move to group <ChevronDown />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-60">
+                {durable.data?.map((group) => (
+                  <DropdownMenuItem key={group.id} className="break-words" onClick={() => operation.mutate(async () => {
+                    const result = await questionActions.move(group.id, selectedIds);
+                    return `Moved ${result.moved} questions.`;
+                  })}>{group.representative}</DropdownMenuItem>
+                ))}
+                {!durable.data?.length && <DropdownMenuItem disabled>{durable.isError ? "Could not load groups" : "No saved groups"}</DropdownMenuItem>}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button size="sm" variant="outline" className="bg-card" disabled={operation.isPending || groups.some((group) => group.id && group.questions.some((item) => selected.has(item.id)))}
+              onClick={() => operation.mutate(async () => { await questionActions.createGroup(selectedIds); return "New group created."; })}><Plus />New group from selected</Button>
+            <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>Clear selection</Button>
+          </div>
+        )}
+        {dashboard.isPending ? <p role="status" className="px-4 py-10 text-center text-sm text-muted-foreground">Loading customer questions…</p>
+          : dashboard.isError ? (
+            <div role="alert" className="space-y-3 px-4 py-10 text-center">
+              <p className="text-sm text-destructive">Could not load customer questions.</p>
+              <Button variant="outline" size="sm" onClick={() => void dashboard.refetch()}>Try again</Button>
+            </div>
+          ) : groups.length === 0 ? (
+            <div className="grid justify-items-center gap-2 px-4 py-12 text-center">
+              <CircleHelp className="mb-1 size-6 text-muted-foreground" />
+              <p className="text-sm font-semibold">{search ? "No matching questions" : "No unanswered questions"}</p>
+              <p className="text-sm text-muted-foreground">{search ? "Try a different search or date range." : "Questions that need review will appear here."}</p>
+            </div>
+          ) : (
+            <ul className="divide-y divide-border">
+              {groups.map((group) => (
+                <CustomerQuestionListItem key={group.id ?? group.questions[0].id} group={group} selected={selected} pending={operation.isPending}
+                  onSelect={select} onAnswer={openEditor}
+                  onReview={(ids, status) => operation.mutate(async () => {
+                    await questionActions.review(ids, status);
+                    return status === "resolved" ? "Questions resolved." : "Questions dismissed.";
+                  })}
+                  onDelete={(id) => {
+                    if (window.confirm("Delete this group? Its questions will be kept.")) {
+                      operation.mutate(async () => { await questionActions.deleteGroup(id); return "Group deleted. Its questions were kept."; });
+                    }
+                  }} />
+              ))}
+            </ul>
+          )}
+        {(page > 0 || dashboard.data?.has_more) && (
+          <div className="flex items-center justify-between border-t px-4 py-2">
+            <span className="text-xs text-muted-foreground">Page {page + 1}</span>
+            <div className="flex gap-1">
+              <Button aria-label="Previous page" variant="ghost" size="icon-sm" disabled={page === 0 || dashboard.isFetching} onClick={() => { setSelected(new Set()); setPage(page - 1); }}><ChevronLeft /></Button>
+              <Button aria-label="Next page" variant="ghost" size="icon-sm" disabled={!dashboard.data?.has_more || dashboard.isFetching} onClick={() => { setSelected(new Set()); setPage(page + 1); }}><ChevronRight /></Button>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {!!reviews.data?.length && (
+        <p className="text-xs text-muted-foreground">Recent answer submissions · {readyReviews} ready · {reviews.data.length - readyReviews} pending or failed</p>
       )}
-    </section>
+      {editor && (
+        <CustomerQuestionAnswerDrawer key={draftKey} title={editor.representative} questions={editor.questions} savedDraft={drafts[draftKey]}
+          open={editorOpen} finalFocus={answerTrigger}
+          onClose={() => setEditorOpen(false)} onCloseComplete={() => setEditor(null)}
+          onSave={(draft) => { setDrafts((current) => ({ ...current, [draftKey]: draft })); setNotice("Draft saved for this visit."); setEditorOpen(false); }}
+          onPublished={(alreadySubmitted) => {
+            setDrafts((current) => {
+              const remaining = { ...current };
+              delete remaining[draftKey];
+              return remaining;
+            });
+            setNotice(alreadySubmitted ? "This answer was already submitted. Check processing before resolving the questions." : "Answer submitted. Resolve the questions once the knowledge base finishes processing it.");
+            setEditorOpen(false);
+          }} />
+      )}
+    </div>
+  );
+}
+
+function QuestionMetrics({ counts }: { counts?: DashboardCounts }) {
+  const metrics = [
+    { label: "Total questions", value: counts?.total },
+    { label: "Needs an answer", value: counts?.open },
+    { label: "Resolved", value: counts?.resolved },
+    { label: "Semantic groups", value: counts?.groups },
+  ];
+  return (
+    <dl className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {metrics.map(({ label, value }) => (
+        <div key={label} className={cn("min-w-0 rounded-xl border bg-card p-4", label === "Needs an answer" && "border-amber-500/35 bg-amber-500/6")}>
+          <dt className="text-sm font-medium text-muted-foreground">{label}</dt>
+          <dd className="mt-1 text-2xl font-semibold tracking-tight tabular-nums">{value?.toLocaleString() ?? "—"}</dd>
+          {label === "Resolved" && counts && counts.total > 0 && (
+            <progress aria-label="Share of questions resolved" value={counts.resolved} max={counts.total}
+              className="block h-1.5 w-full overflow-hidden rounded-full accent-emerald-600" />
+          )}
+        </div>
+      ))}
+    </dl>
   );
 }

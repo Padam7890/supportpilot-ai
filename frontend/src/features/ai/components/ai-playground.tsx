@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { BookOpen, Clipboard, LoaderCircle, RotateCcw, Send, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -44,7 +44,6 @@ export function AIPlayground() {
   const [pendingQuestion, setPendingQuestion] = useState<string>();
   const [copied, setCopied] = useState(false);
   const appendedExecutionId = useRef<string | undefined>(undefined);
-  const lastRequest = useRef<AIPlaygroundRequest | undefined>(undefined);
   const user = useQuery({ queryKey: ["me"], queryFn: getCurrentUser });
   const agents = useQuery({ queryKey: aiAgentsKey, queryFn: listAIAgents });
   const bases = useQuery({ queryKey: knowledgeBaseKey, queryFn: listKnowledgeBases });
@@ -95,17 +94,16 @@ export function AIPlayground() {
   const canRun = ["owner", "admin", "agent"].includes(user.data?.role ?? "");
   const canManageBots = ["owner", "admin"].includes(user.data?.role ?? "");
   const busy = run.isPending || execution.data?.status === "queued" || execution.data?.status === "running";
-  const selectedAgentId = form.watch("ai_agent_id");
+  const selectedAgentId = useWatch({ control: form.control, name: "ai_agent_id" });
   const selectedAgent = agents.data?.items.find((agent) => agent.id === selectedAgentId)
     ?? agents.data?.items.find((agent) => agent.is_default && agent.status === "active");
   const selectedBases = bases.data?.items.filter((base) => base.status === "active" && (selectedAgent?.knowledge_base_ids ?? []).includes(base.id)) ?? [];
   const selectedReadyDocuments = selectedBases.reduce((total, base) => total + base.ready_document_count, 0);
-  const currentQuestion = form.watch("question");
+  const currentQuestion = useWatch({ control: form.control, name: "question" });
   const previousAgentId = useRef<string | undefined>(selectedAgentId);
   useEffect(() => {
     if (previousAgentId.current === selectedAgentId) return;
     previousAgentId.current = selectedAgentId;
-    lastRequest.current = undefined;
     setConversation([]);
     setExecutionId(undefined);
     setPendingQuestion(undefined);
@@ -138,7 +136,6 @@ export function AIPlayground() {
               conversation_history: conversation.slice(-6),
               ...(values.ai_agent_id ? { ai_agent_id: values.ai_agent_id } : {}),
             };
-            lastRequest.current = request;
             setExecutionId(undefined);
             run.mutate({ request, retry: false }, { onSuccess: () => form.setValue("question", "") });
           })}>
@@ -153,7 +150,7 @@ export function AIPlayground() {
               <Textarea id="ai-playground-question" placeholder="Ask a follow-up question…" className="min-h-24" disabled={!canRun || busy} aria-invalid={Boolean(form.formState.errors.question)} {...form.register("question", { onChange: () => retrievalPreview.reset() })}/>
               {form.formState.errors.question && <p role="alert" className="mt-1 text-sm text-red-700">{form.formState.errors.question.message}</p>}
             </div>
-            <Button type="button" size="sm" variant="secondary" disabled={conversation.length === 0 || busy} onClick={() => { setConversation([]); setExecutionId(undefined); setPendingQuestion(undefined); lastRequest.current = undefined; appendedExecutionId.current = undefined; run.reset(); retrievalPreview.reset(); form.reset({ question: "", ai_agent_id: selectedAgentId || undefined }); }}><RotateCcw size={14}/>New chat</Button>
+            <Button type="button" size="sm" variant="secondary" disabled={conversation.length === 0 || busy} onClick={() => { setConversation([]); setExecutionId(undefined); setPendingQuestion(undefined); appendedExecutionId.current = undefined; run.reset(); retrievalPreview.reset(); form.reset({ question: "", ai_agent_id: selectedAgentId || undefined }); }}><RotateCcw size={14}/>New chat</Button>
             <Button type="button" size="sm" variant="secondary" disabled={!canRun || busy || currentQuestion.trim().length < 4 || retrievalPreview.isPending} onClick={() => retrievalPreview.mutate({ question: currentQuestion.trim(), conversation_history: conversation.slice(-6), ...(selectedAgentId ? { ai_agent_id: selectedAgentId } : {}) })}>
               {retrievalPreview.isPending ? <><LoaderCircle size={15} className="animate-spin"/>Checking sources…</> : <><BookOpen size={15}/>Check source matches</>}
             </Button>
@@ -188,7 +185,7 @@ export function AIPlayground() {
           {!executionId && <p className="text-sm text-slate-500">{retrievalPreview.data ? "Run the AI after reviewing this preview to see its final answer grounding details." : "Send a message or check source matches to inspect this bot’s grounding."}</p>}
           {executionId && execution.isPending && <div className="space-y-3"><div className="h-4 w-2/3 animate-pulse rounded bg-slate-100"/><div className="h-24 animate-pulse rounded-xl bg-slate-100"/></div>}
           {execution.data && ["queued", "running"].includes(execution.data.status) && <p role="status" className="flex items-center gap-2 text-sm text-slate-600"><LoaderCircle size={16} className="animate-spin"/>The assistant is checking relevant documents…</p>}
-          {execution.data?.status === "failed" && <div role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800"><p>{failureMessage(execution.data.error_code)}</p>{execution.data.correlation_id && <p className="mt-1 text-xs">Support reference: <SupportTraceLink correlationId={execution.data.correlation_id} /></p>}<Button type="button" size="sm" variant="secondary" className="mt-3" disabled={run.isPending || !lastRequest.current} onClick={() => { const request = lastRequest.current; if (!request) return; setExecutionId(undefined); run.reset(); run.mutate({ request, retry: true }); }}><RotateCcw size={14}/>{run.isPending ? "Retrying…" : "Retry this question"}</Button></div>}
+          {execution.data?.status === "failed" && <div role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800"><p>{failureMessage(execution.data.error_code)}</p>{execution.data.correlation_id && <p className="mt-1 text-xs">Support reference: <SupportTraceLink correlationId={execution.data.correlation_id} /></p>}<Button type="button" size="sm" variant="secondary" className="mt-3" disabled={run.isPending || !run.variables?.request} onClick={() => { const request = run.variables?.request; if (!request) return; setExecutionId(undefined); run.reset(); run.mutate({ request, retry: true }); }}><RotateCcw size={14}/>{run.isPending ? "Retrying…" : "Retry this question"}</Button></div>}
           {execution.data?.status === "succeeded" && <>
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500"><span>Draft only · bot configuration v{execution.data.ai_agent_config_version} · {execution.data.usage.total_tokens ?? 0} tokens</span><Button size="sm" variant="secondary" onClick={copyDraft}><Clipboard size={14}/>{copied ? "Copied" : "Copy latest answer"}</Button></div>
             {execution.data.citations.length > 0 ? <section className="mt-5" aria-label="Sources"><h2 className="text-sm font-semibold text-slate-800">Sources</h2><ul className="mt-2 space-y-2">{execution.data.citations.map((citation) => <li key={`${citation.document_id}-${citation.chunk_index}`} className="rounded-xl border border-slate-200 p-3"><div className="flex flex-wrap items-start justify-between gap-2"><Link href={`/dashboard/knowledge/${encodeURIComponent(citation.document_id)}`} className="text-xs font-semibold text-blue-700 hover:underline">{citation.knowledge_base_name ? `${citation.knowledge_base_name} · ` : ""}{citation.document_name} · section {citation.chunk_index + 1}</Link>{citation.match_basis && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">{citation.match_basis === "chunk_content" ? "Matched passage text" : "Matched source title"}</span>}</div><p className="mt-1 text-sm leading-5 text-slate-600">{citation.excerpt}</p></li>)}</ul></section> : <p className="mt-4 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">No matching knowledge sources were found. Verify the answer before using it.</p>}

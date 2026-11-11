@@ -8,6 +8,7 @@ import {
   Building2,
   Inbox,
   MessageCircle,
+  MessageSquareText,
   PackageSearch,
   Sparkles,
   Users,
@@ -19,6 +20,7 @@ export type DashboardNavigationLink = {
   label: string;
   icon: LucideIcon;
   exact?: boolean;
+  parentHref?: string;
 };
 
 export type DashboardNavigationGroup = {
@@ -40,6 +42,7 @@ const groups: DashboardNavigationGroup[] = [
     links: [
       { href: "/dashboard/ai/agents", label: "AI Agents", icon: Bot },
       { href: "/dashboard/knowledge", label: "Knowledge", icon: BookOpen },
+      { href: "/dashboard/knowledge/customer-questions", label: "Customer questions", icon: MessageSquareText, parentHref: "/dashboard/knowledge" },
       { href: "/dashboard/automations", label: "Automations", icon: Workflow },
       { href: "/dashboard/ai", label: "AI Playground", icon: Sparkles },
     ],
@@ -68,7 +71,8 @@ export function getDashboardNavigation(role: string): DashboardNavigationGroup[]
   return groups.map((group) => ({
     ...group,
     links: group.links
-      .filter((link) => link.href !== "/dashboard/operations" || role !== "viewer")
+      .filter((link) => (link.href !== "/dashboard/operations" || role !== "viewer")
+        && (link.href !== "/dashboard/knowledge/customer-questions" || isWorkspaceManager))
       .map((link) => link.href === "/dashboard/settings" && !link.href.includes("#")
         ? { ...link, label: isWorkspaceManager ? "Settings & team" : "Settings" }
         : link),

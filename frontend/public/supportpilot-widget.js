@@ -370,11 +370,6 @@
     thread.appendChild(row);
   }
 
-  function containsOrderIntent(messages) {
-    const latestCustomer = [...messages].reverse().find((item) => item.sender_type === "customer")?.content || "";
-    return /\b(order|track|tracking|shipment|shipped)\b/i.test(latestCustomer);
-  }
-
   function containsCancellationIntent(messages) {
     const latestCustomer = [...messages].reverse().find((item) => item.sender_type === "customer")?.content || "";
     const latest = messages.at(-1);

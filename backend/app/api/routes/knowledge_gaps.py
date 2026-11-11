@@ -1,4 +1,5 @@
 """Review-only knowledge gap API. Never publishes unapproved answers."""
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -11,6 +12,11 @@ from app.api.routes.knowledge import _resolve_knowledge_base
 from app.core.config import settings
 from app.core.observability import current_correlation_id
 from app.db.session import get_db
+from app.features.ai.application.knowledge_gap_dashboard import (
+    KnowledgeGapDashboard,
+    QuestionView,
+    load_knowledge_gap_dashboard,
+)
 from app.features.ai.application.knowledge_gap_reconciliation import reconcile_review
 from app.features.ai.domain.content_hash import PENDING_CONTENT_REVISION
 from app.features.ai.domain.knowledge_gap_policy import faq_suggestion
@@ -57,6 +63,22 @@ async def list_gaps(
         .order_by(KnowledgeGap.created_at.desc()).limit(limit)
     )).all()
     return GapPage(items=[GapOut.model_validate(row) for row in rows])
+
+
+@router.get("/dashboard", response_model=KnowledgeGapDashboard)
+async def customer_question_dashboard(
+    period: Literal["7", "30", "90", "all"] = "30",
+    view: QuestionView = "all",
+    search: str = Query(default="", max_length=200),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_roles("owner", "admin")),
+) -> KnowledgeGapDashboard:
+    return await load_knowledge_gap_dashboard(
+        db, user.organization_id, days=None if period == "all" else int(period),
+        view=view, search=search.strip(), limit=limit, offset=offset,
+    )
 
 
 class GroupOut(BaseModel):

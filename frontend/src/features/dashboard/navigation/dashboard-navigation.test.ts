@@ -23,6 +23,21 @@ describe("dashboard navigation", () => {
     expect(viewerRoutes.some((link) => link.href === "/dashboard/operations")).toBe(false);
   });
 
+  it("nests customer questions under Knowledge for workspace managers", () => {
+    const route = "/dashboard/knowledge/customer-questions";
+    for (const role of ["owner", "admin"]) {
+      const links = getDashboardNavigation(role).flatMap((group) => group.links);
+      expect(links.find((link) => link.href === route)).toMatchObject({
+        label: "Customer questions",
+        parentHref: "/dashboard/knowledge",
+      });
+    }
+    for (const role of ["agent", "viewer"]) {
+      const links = getDashboardNavigation(role).flatMap((group) => group.links);
+      expect(links.some((link) => link.href === route)).toBe(false);
+    }
+  });
+
   it("uses role-aware settings labels", () => {
     const managerSettings = getDashboardNavigation("admin")
       .flatMap((group) => group.links)
