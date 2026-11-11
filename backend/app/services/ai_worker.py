@@ -403,7 +403,13 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 catalog_request=is_catalog_discovery_request(execution.question),
             )
             requires_store_evidence = route_result.requires_evidence
-            knowledge_gap_intent = turn.route == "knowledge" and policy_follow_up is None and follow_up is None
+            knowledge_gap_intent = (
+                turn.route == "knowledge"
+                and policy_follow_up is None
+                and follow_up is None
+                and not route_result.outcome.get("multi_intent", False)
+                and not route_result.outcome.get("should_clarify", False)
+            )
             intent_router_outcome = route_result.outcome
             semantic_interpretation = route_result.interpretation or semantic_interpretation
             if route_result.model_router_invoked:
