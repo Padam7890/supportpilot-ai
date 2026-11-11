@@ -127,3 +127,5 @@ __all__ = [
 from app.models.knowledge_gap_embedding import KnowledgeGapEmbedding
 
 from app.models.knowledge_gap_review import KnowledgeGapReview
+
+from app.models.knowledge_gap_group import KnowledgeGapGroup, KnowledgeGapGroupMember
