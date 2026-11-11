@@ -74,6 +74,21 @@ async def generate_guarded_draft(
         )
     agent_input = build_agent_input(question, transcript, channel=execution_kind)
     composed = await compose_natural_answer(agent_input, evidence, instructions=instructions)
+    # A safe non-answer can miss an entailed policy scope. Reconsider once,
+    # then subject the replacement to the same independent grounding verifier.
+    # Never force a positive answer or override exceptions in the evidence.
+    generation_attempts = 1
+    if (
+        requires_evidence
+        and evidence.items
+        and composed.answer_resolution == "insufficient_evidence"
+    ):
+        reconsidered = await compose_natural_answer(
+            agent_input, evidence, instructions=instructions, reconsideration=True,
+        )
+        generation_attempts = 2
+        if reconsidered.answer_resolution == "answered":
+            composed = reconsidered
     model_name = composed.model_name[:120] if composed.model_name else None
     usage = dict(composed.usage)
     try:
@@ -89,9 +104,9 @@ async def generate_guarded_draft(
     for key, value in verification.usage.items():
         usage[key] = usage.get(key, 0) + value
     logger.info(
-        "rag_grounding execution_id=%s generation_attempts=1 accepted=%s reason=%s "
+        "rag_grounding execution_id=%s generation_attempts=%d accepted=%s reason=%s "
         "evidence_count=%d citations_recovered=%d",
-        execution_id, verification.accepted, verification.reason, len(evidence.items),
+        execution_id, generation_attempts, verification.accepted, verification.reason, len(evidence.items),
         verification.citations_recovered,
     )
     log_generation_metrics(
