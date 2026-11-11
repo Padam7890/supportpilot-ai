@@ -2,14 +2,15 @@
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select, update
+from sqlalchemy import select, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import require_roles
 from app.db.session import get_db
 from app.models import User
 from app.models.knowledge_gap import KnowledgeGap
 from app.models.knowledge_gap_review import KnowledgeGapReview
-from app.models.knowledge_document import KnowledgeDocument
+from app.models.knowledge_document import KnowledgeDocument, DocumentChunk, DocumentEmbedding, DocumentEmbeddingJob
+from app.core.config import settings
 from app.features.ai.domain.knowledge_gap_policy import faq_suggestion
 
 router = APIRouter(prefix="/knowledge/gaps", tags=["knowledge"])
@@ -172,6 +173,14 @@ async def record_faq_publication(
     ).with_for_update())).all()
     if len(gaps) != len(ids):
         raise HTTPException(status_code=404, detail="One or more knowledge gaps not found")
+    # A gap with an already linked FAQ cannot be silently uploaded again.
+    previously_linked = (await db.scalars(select(KnowledgeGapReview).where(
+        KnowledgeGapReview.organization_id == user.organization_id,
+        KnowledgeGapReview.gap_id.in_(ids),
+        KnowledgeGapReview.document_id != document.id,
+    ))).all()
+    if previously_linked:
+        raise HTTPException(status_code=409, detail="A knowledge gap already has a linked FAQ document")
     existing = (await db.scalars(select(KnowledgeGapReview).where(
         KnowledgeGapReview.organization_id == user.organization_id,
         KnowledgeGapReview.document_id == document.id,
@@ -192,6 +201,44 @@ async def record_faq_publication(
     return [FAQReviewOut.model_validate(by_gap[gap_id]) for gap_id in ids]
 
 
+async def _reconcile_review_readiness(db: AsyncSession, record: KnowledgeGapReview) -> None:
+    """Check actual ingestion and versioned embedding coverage before marking ready."""
+    document = await db.scalar(select(KnowledgeDocument).where(
+        KnowledgeDocument.organization_id == record.organization_id,
+        KnowledgeDocument.id == record.document_id,
+        KnowledgeDocument.deleted_at.is_(None),
+    ))
+    if document is None or document.status == "failed":
+        record.status = "failed"
+        return
+    if document.status != "ready":
+        record.status = "pending_ingestion"
+        return
+    total_chunks = await db.scalar(select(func.count()).select_from(DocumentChunk).where(
+        DocumentChunk.organization_id == record.organization_id,
+        DocumentChunk.document_id == record.document_id,
+    ))
+    if not total_chunks:
+        record.status = "pending_embeddings"
+        return
+    job = await db.scalar(select(DocumentEmbeddingJob).where(
+        DocumentEmbeddingJob.organization_id == record.organization_id,
+        DocumentEmbeddingJob.document_id == record.document_id,
+        DocumentEmbeddingJob.embedding_model == settings.ai_embedding_model,
+        DocumentEmbeddingJob.embedding_version == settings.ai_embedding_version,
+    ))
+    if job is None or job.status != "succeeded":
+        record.status = "failed" if job is not None and job.status == "failed" else "pending_embeddings"
+        return
+    embedded_chunks = await db.scalar(select(func.count()).select_from(DocumentEmbedding).where(
+        DocumentEmbedding.organization_id == record.organization_id,
+        DocumentEmbedding.document_id == record.document_id,
+        DocumentEmbedding.embedding_model == settings.ai_embedding_model,
+        DocumentEmbedding.embedding_version == settings.ai_embedding_version,
+    ))
+    record.status = "ready" if embedded_chunks == total_chunks else "pending_embeddings"
+
+
 @router.get("/reviews", response_model=list[FAQReviewOut])
 async def list_faq_reviews(
     limit: int = Query(default=50, ge=1, le=100),
@@ -201,4 +248,7 @@ async def list_faq_reviews(
     records = (await db.scalars(select(KnowledgeGapReview).where(
         KnowledgeGapReview.organization_id == user.organization_id,
     ).order_by(KnowledgeGapReview.created_at.desc()).limit(limit))).all()
+    for record in records:
+        await _reconcile_review_readiness(db, record)
+    await db.flush()
     return [FAQReviewOut.model_validate(record) for record in records]
