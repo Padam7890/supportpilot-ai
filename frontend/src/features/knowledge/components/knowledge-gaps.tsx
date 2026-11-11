@@ -7,7 +7,7 @@ import { knowledgeBaseKey, listKnowledgeBases } from "../api/knowledge-base-api"
 import { knowledgeKeys } from "../api/knowledge-api";
 
 type Group = { representative: string; count: number; gap_ids: string[] };
-type GroupPage = { items: Group[] };
+type GroupPage = { items: Group[]; has_more: boolean };
 type Draft = { group: Group; question: string; answer: string; knowledgeBaseId: string };
 
 export function KnowledgeGaps() {
@@ -91,7 +91,7 @@ export function KnowledgeGaps() {
       <div className="flex items-center justify-between gap-3 text-sm">
         <button type="button" disabled={page === 0 || groups.isFetching} onClick={() => setPage((current) => Math.max(0, current - 1))} className="rounded border border-border px-3 py-1 disabled:opacity-50">Previous</button>
         <span>Page {page + 1}</span>
-        <button type="button" disabled={groups.isFetching || !groups.data?.items.length} onClick={() => setPage((current) => current + 1)} className="rounded border border-border px-3 py-1 disabled:opacity-50">Next</button>
+        <button type="button" disabled={groups.isFetching || !groups.data?.has_more} onClick={() => setPage((current) => current + 1)} className="rounded border border-border px-3 py-1 disabled:opacity-50">Next</button>
       </div>
       {draft && (
         <div className="space-y-3 rounded-lg border border-border bg-card p-4" aria-label="FAQ review editor">
