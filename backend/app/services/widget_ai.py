@@ -132,12 +132,31 @@ def widget_request_needs_human(message: str) -> bool:
     return bool(SENSITIVE_REQUEST.search(message))
 
 
+# This is a conservative *private lookup* gate, not a general order-topic
+# classifier. Unclear messages should go through semantic routing/knowledge
+# retrieval rather than opening an identity-verification form.
+PRIVATE_ORDER_LOOKUP = re.compile(
+    r"\b(?:"
+    r"(?:where(?:'s| is)?|track|tracking|locate|find|check|status(?: of)?|"
+    r"update(?: on)?|what happened to|when will|when is|has|did)\b"
+    r".{0,55}\b(?:my|our)\s+(?:order|package|parcel|shipment|delivery)\b|"
+    r"(?:my|our)\s+(?:order|package|parcel|shipment|delivery)\b"
+    r".{0,55}\b(?:status|tracking|track|shipped|arriv(?:e|ed|ing)|"
+    r"deliver(?:ed|y)?|where|update|late|missing|lost)\b|"
+    r"(?:tracking\s+(?:number|link|details)|order\s+status)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
 def widget_request_needs_order_verification(message: str) -> bool:
-    return bool(
-        re.search(
-            r"\b(order|tracking|track|shipment|shipped|package|parcel)\b", message, re.IGNORECASE
-        )
-    )
+    """Only request verification for explicit private order lookup requests.
+
+    Mentions of 'order', 'shipping' or 'delivery' alone are not authorization
+    requirements; generic store-policy questions must reach knowledge search.
+    Ambiguous personal requests may be clarified by semantic orchestration.
+    """
+    return bool(PRIVATE_ORDER_LOOKUP.search(message))
 
 
 def widget_is_cancellation_request(message: str) -> bool:
