@@ -19,6 +19,7 @@ def upgrade() -> None:
         sa.Column("status", sa.String(30), nullable=False, server_default="pending_ingestion"),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.UniqueConstraint("organization_id", "gap_id", name="uq_gap_review_single_publication"),
         sa.ForeignKeyConstraint(["organization_id", "gap_id"], ["knowledge_gaps.organization_id", "knowledge_gaps.id"], ondelete="CASCADE", name="fk_gap_review_gap"),
         sa.ForeignKeyConstraint(["organization_id", "document_id"], ["knowledge_documents.organization_id", "knowledge_documents.id"], ondelete="RESTRICT", name="fk_gap_review_document"),
         sa.ForeignKeyConstraint(["organization_id", "reviewer_id"], ["users.organization_id", "users.id"], name="fk_gap_review_reviewer"),
