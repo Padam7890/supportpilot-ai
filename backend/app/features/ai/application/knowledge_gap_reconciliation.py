@@ -12,6 +12,7 @@ from app.models.knowledge_document import (
     KnowledgeDocument,
 )
 from app.models.knowledge_gap_review import KnowledgeGapReview
+from app.models.knowledge_gap import KnowledgeGap
 
 
 async def reconcile_review(db: AsyncSession, record: KnowledgeGapReview) -> None:
@@ -50,9 +51,18 @@ async def reconcile_review(db: AsyncSession, record: KnowledgeGapReview) -> None
         DocumentEmbedding.embedding_version == job.embedding_version,
     ))
     record.status = "ready" if covered == count else "pending_embeddings"
+    if record.status == "ready":
+        # Only resolve the explicitly linked, tenant-owned gap after approved
+        # FAQ ingestion and embeddings have succeeded.
+        gap = await db.scalar(select(KnowledgeGap).where(
+            KnowledgeGap.organization_id == record.organization_id,
+            KnowledgeGap.id == record.gap_id,
+        ).with_for_update())
+        if gap is not None and gap.status == "open":
+            gap.status = "resolved"
 
 async def reconcile_organization(db: AsyncSession, organization_id: UUID, *, limit: int = 100) -> int:
-    """Safe to repeat; never automatically resolve or publish an unverified gap."""
+    """Safe to repeat; resolve only gaps linked to ready, approved FAQs."""
     records = (await db.scalars(select(KnowledgeGapReview).where(
         KnowledgeGapReview.organization_id == organization_id,
         KnowledgeGapReview.status.in_(("pending_ingestion", "pending_embeddings")),
