@@ -143,7 +143,8 @@ PRIVATE_ORDER_LOOKUP = re.compile(
     r"(?:my|our)\s+(?:order|package|parcel|shipment|delivery)\b"
     r".{0,55}\b(?:status|tracking|track|shipped|arriv(?:e|ed|ing)|"
     r"deliver(?:ed|y)?|where|update|late|missing|lost)\b|"
-    r"(?:tracking\s+(?:number|link|details)|order\s+status)\b"\n    r"|(?:where(?: is|\x27s)?|check|track|status of)\\s+(?:the\\s+)?order\\s+(?:number\\s+)?#?\\d+\\b"
+    r"(?:tracking\s+(?:number|link|details)|order\s+status)\b|"
+    r"(?:where(?: is|'s)?|check|track|status of)\s+(?:the\s+)?order\s+(?:number\s+)?#?\d+\b"
     r")",
     re.IGNORECASE,
 )
