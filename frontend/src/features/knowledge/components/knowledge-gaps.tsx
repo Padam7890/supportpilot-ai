@@ -14,6 +14,8 @@ export function KnowledgeGaps() {
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState<Draft | null>(null);
   const [notice, setNotice] = useState("");
+  const [page, setPage] = useState(0);
+  const pageSize = 50;
   const bases = useQuery({ queryKey: knowledgeBaseKey, queryFn: listKnowledgeBases });
   const activeBases = bases.data?.items.filter((base) => base.status === "active") ?? [];
   const review = useMutation({
@@ -48,8 +50,8 @@ export function KnowledgeGaps() {
     queryFn: () => api<Array<{ gap_id: string; document_id: string; status: string }>>("/knowledge/gaps/reviews"),
   });
   const groups = useQuery({
-    queryKey: ["knowledge-gap-groups"],
-    queryFn: () => api<GroupPage>("/knowledge/gaps/groups"),
+    queryKey: ["knowledge-gap-groups", page],
+    queryFn: () => api<GroupPage>(`/knowledge/gaps/groups?limit=${pageSize}&offset=${page * pageSize}`),
     retry: false,
   });
   const openDraft = (group: Group) => {
@@ -86,6 +88,11 @@ export function KnowledgeGaps() {
           </li>
         ))}
       </ul>
+      <div className="flex items-center justify-between gap-3 text-sm">
+        <button type="button" disabled={page === 0 || groups.isFetching} onClick={() => setPage((current) => Math.max(0, current - 1))} className="rounded border border-border px-3 py-1 disabled:opacity-50">Previous</button>
+        <span>Page {page + 1}</span>
+        <button type="button" disabled={groups.isFetching || (groups.data?.items.length ?? 0) < pageSize} onClick={() => setPage((current) => current + 1)} className="rounded border border-border px-3 py-1 disabled:opacity-50">Next</button>
+      </div>
       {draft && (
         <div className="space-y-3 rounded-lg border border-border bg-card p-4" aria-label="FAQ review editor">
           <h3 className="font-semibold">Review and publish FAQ</h3>
