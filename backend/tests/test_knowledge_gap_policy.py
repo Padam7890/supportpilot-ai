@@ -1,5 +1,6 @@
 from app.features.ai.domain.knowledge_gap_policy import (
-    detect_knowledge_gap, eligible_widget_knowledge_gap, faq_suggestion,\n)
+    detect_knowledge_gap, eligible_widget_knowledge_gap, faq_suggestion,
+)
 
 BASE = {
     "organization_id": "tenant-a",
