@@ -61,3 +61,25 @@ def faq_suggestion(question: str, approved_evidence: str | None = None) -> dict[
         "suggested_answer": approved_evidence.strip() if approved_evidence and approved_evidence.strip() else None,
         "status": "needs_review",
     }
+
+
+def eligible_widget_knowledge_gap(
+    *,
+    route: str | None,
+    requires_evidence: bool,
+    policy_follow_up_kind: str | None = None,
+    has_commerce_follow_up: bool = False,
+    should_clarify: bool = False,
+    multi_intent: bool = False,
+) -> bool:
+    """Determine whether a widget turn is a store-knowledge question.
+
+    Use the resolved structured route and evidence requirement, not keyword
+    matching or the wording of the generated reply. Only policy-question
+    follow-ups qualify; order/refund/date workflows are deliberately excluded.
+    """
+    if not requires_evidence or has_commerce_follow_up or should_clarify or multi_intent:
+        return False
+    if policy_follow_up_kind is not None:
+        return policy_follow_up_kind == "policy_question"
+    return route == "knowledge"
