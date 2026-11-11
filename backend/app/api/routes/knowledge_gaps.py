@@ -61,6 +61,7 @@ class GroupOut(BaseModel):
 
 class GroupPage(BaseModel):
     items: list[GroupOut]
+    has_more: bool
 
 
 @router.get("/groups", response_model=GroupPage)
@@ -77,7 +78,14 @@ async def list_grouped_gaps(
         groups = await list_semantic_groups(db, organization_id=user.organization_id, limit=limit, offset=offset, threshold=threshold)
     except EmbeddingProviderError as exc:
         raise HTTPException(status_code=503, detail="Semantic grouping is temporarily unavailable") from exc
-    return GroupPage(items=[GroupOut(representative=g.representative, count=g.count, gap_ids=list(g.gap_ids)) for g in groups])
+    total_open = await db.scalar(select(func.count()).select_from(KnowledgeGap).where(
+        KnowledgeGap.organization_id == user.organization_id,
+        KnowledgeGap.status == "open",
+    ))
+    return GroupPage(
+        items=[GroupOut(representative=g.representative, count=g.count, gap_ids=list(g.gap_ids)) for g in groups],
+        has_more=offset + limit < (total_open or 0),
+    )
 
 
 class GapReview(BaseModel):
