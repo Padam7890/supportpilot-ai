@@ -234,6 +234,10 @@ async def publish_reviewed_faq(
     )).all()
     if len(gaps) != len(ids):
         raise HTTPException(status_code=404, detail="One or more knowledge gaps not found")
+    # Security: only currently open, tenant-owned questions can be used to
+    # create a new FAQ. Prevent publishing stale, dismissed or resolved gaps.
+    if any(gap.status != "open" for gap in gaps):
+        raise HTTPException(status_code=409, detail="Only open knowledge gaps can be published")
     existing = (await db.scalars(select(KnowledgeGapReview).where(
         KnowledgeGapReview.organization_id == user.organization_id,
         KnowledgeGapReview.gap_id.in_(ids),
