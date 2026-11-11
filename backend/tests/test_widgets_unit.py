@@ -22,6 +22,7 @@ from app.services.widget_ai import (
     widget_missing_knowledge_reply,
     widget_purchase_reply,
     widget_request_needs_human,
+    widget_request_needs_order_verification,
     widget_sensitive_reply,
 )
 
@@ -214,3 +215,36 @@ def test_widget_order_verification_requires_order_email_and_six_digit_code():
     assert WidgetOrderVerificationCode(code="042681").code == "042681"
     with pytest.raises(ValidationError):
         WidgetOrderVerificationCode(code="123")
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "do you deliver your order to pokhara?",
+        "Do you deliver orders to Pokhara?",
+        "How much does shipping cost?",
+        "Do you ship internationally?",
+        "Can I place an order?",
+        "What is your order policy?",
+        "Do you deliver to Kathmandu?",
+    ],
+)
+def test_general_delivery_and_purchase_questions_never_request_order_otp(message):
+    assert not widget_request_needs_order_verification(message)
+    assert widget_sensitive_reply(message) is None
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Where is my order #1001?",
+        "Track my package",
+        "What is my order status?",
+        "Has my order shipped?",
+        "Where is order #1004?",
+        "Check order number 1004",
+    ],
+)
+def test_private_order_lookup_requires_verification(message):
+    assert widget_request_needs_order_verification(message)
+    assert widget_sensitive_reply(message)[0] == ORDER_VERIFICATION_MESSAGE
