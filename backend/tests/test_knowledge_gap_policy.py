@@ -89,3 +89,21 @@ def test_ambiguous_or_multi_intent_questions_are_not_recorded():
     assert not eligible_widget_knowledge_gap(
         route="knowledge", requires_evidence=False,
     )
+
+
+def test_insufficient_evidence_creates_gap_even_when_safe_reply_was_accepted():
+    gap = detect_knowledge_gap(**{
+        **BASE,
+        "retrieval_outcome": "insufficient_evidence",
+        "answer_grounded": True,
+    })
+    assert gap is not None
+    assert gap.reason == "insufficient_evidence"
+
+
+def test_answered_question_does_not_create_gap():
+    assert detect_knowledge_gap(**{
+        **BASE,
+        "retrieval_outcome": "retrieved",
+        "answer_grounded": True,
+    }) is None
