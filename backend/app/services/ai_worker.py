@@ -687,21 +687,25 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 answer_grounded=guarded.accepted,
             )
             if gap is not None:
-                from app.db.session import SessionLocal, set_tenant_context
-                from app.features.ai.application.knowledge_gap_repository import persist_knowledge_gap
+                # Knowledge analytics must never block the customer-facing reply.
+                try:
+                    from app.db.session import SessionLocal, set_tenant_context
+                    from app.features.ai.application.knowledge_gap_repository import persist_knowledge_gap
 
-                async with SessionLocal() as gap_db:
-                    await set_tenant_context(gap_db, organization_id)
-                    await persist_knowledge_gap(gap_db, gap)
-                    await gap_db.commit()
-                _log_ai_execution_event(
-                    "ai_knowledge_gap_candidate_detected",
-                    execution_id=str(execution_id),
-                    correlation_id=correlation_id,
-                    execution_kind=execution_kind,
-                    ai_agent_id=str(ai_agent_id) if ai_agent_id else None,
-                    gap_reason=gap.reason.value,
-                )
+                    async with SessionLocal() as gap_db:
+                        await set_tenant_context(gap_db, organization_id)
+                        await persist_knowledge_gap(gap_db, gap)
+                        await gap_db.commit()
+                    _log_ai_execution_event(
+                        "ai_knowledge_gap_candidate_detected",
+                        execution_id=str(execution_id),
+                        correlation_id=correlation_id,
+                        execution_kind=execution_kind,
+                        ai_agent_id=str(ai_agent_id) if ai_agent_id else None,
+                        gap_reason=gap.reason.value,
+                    )
+                except Exception:
+                    logger.exception("knowledge_gap_persistence_failed", extra={"execution_id": str(execution_id)})
         if execution.kind == "widget_reply":
             remembered_policy = policy_follow_up.state if policy_follow_up else None
             if guarded.accepted and citations and guarded.expected_answer:
