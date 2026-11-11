@@ -66,13 +66,15 @@ class GroupPage(BaseModel):
 @router.get("/groups", response_model=GroupPage)
 async def list_grouped_gaps(
     limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0, le=10000),
+    threshold: float = Query(default=0.86, gt=0.0, le=1.0),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_roles("owner", "admin")),
 ) -> GroupPage:
     from app.features.ai.application.knowledge_gap_grouping import list_semantic_groups
     from app.features.ai.infrastructure.embedding_gateway import EmbeddingProviderError
     try:
-        groups = await list_semantic_groups(db, organization_id=user.organization_id, limit=limit)
+        groups = await list_semantic_groups(db, organization_id=user.organization_id, limit=limit, offset=offset, threshold=threshold)
     except EmbeddingProviderError as exc:
         raise HTTPException(status_code=503, detail="Semantic grouping is temporarily unavailable") from exc
     return GroupPage(items=[GroupOut(representative=g.representative, count=g.count, gap_ids=list(g.gap_ids)) for g in groups])
