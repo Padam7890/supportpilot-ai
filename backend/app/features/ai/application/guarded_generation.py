@@ -128,4 +128,14 @@ async def generate_guarded_draft(
     text = "\n".join(line.rstrip() for line in text.splitlines()).strip()
     if order_text:
         text = f"{order_text}\n\n{text}"
-    # Safety acceptance is not question resolution. Even a verified, polite\n    # non-answer may have no citations, as in the Pokhara delivery example.\n    # A model cannot mark a knowledge answer resolved without verified provenance.\n    resolution = composed.answer_resolution\n    if requires_evidence and not selected and resolution != "needs_clarification":\n        resolution = "insufficient_evidence"\n    elif requires_evidence and resolution is None:\n        # Older provider plain-text responses lack the structured field.\n        # Do not infer a successful answer from safety acceptance alone.\n        resolution = "insufficient_evidence"\n    return GuardedDraft(\n        text, True, None, selected, outcomes, usage, model_name,\n        composed.expected_answer, resolution,\n    )
+    # Safety acceptance is not question resolution. Even a verified, polite
+    # non-answer may have no citations, as in the Pokhara delivery example.
+    # A model cannot mark a knowledge answer resolved without verified provenance.
+    resolution = composed.answer_resolution
+    if requires_evidence and not selected and resolution != "needs_clarification":
+        resolution = "insufficient_evidence"
+    elif requires_evidence and resolution is None:
+        # Older provider plain-text responses lack the structured field.
+        # Do not infer a successful answer from safety acceptance alone.
+        resolution = "insufficient_evidence"
+    return GuardedDraft(\n        text, True, None, selected, outcomes, usage, model_name,\n        composed.expected_answer, resolution,\n    )
