@@ -31,8 +31,8 @@ def upgrade() -> None:
     op.execute("ALTER TABLE knowledge_gaps FORCE ROW LEVEL SECURITY")
     op.execute("""
         CREATE POLICY knowledge_gaps_tenant_isolation ON knowledge_gaps
-        USING (organization_id = NULLIF(current_setting('app.current_organization_id', true), '')::uuid)
-        WITH CHECK (organization_id = NULLIF(current_setting('app.current_organization_id', true), '')::uuid)
+        USING (organization_id = NULLIF(current_setting('app.current_tenant', true), '')::uuid)
+        WITH CHECK (organization_id = NULLIF(current_setting('app.current_tenant', true), '')::uuid)
     """)
 
 
