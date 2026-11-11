@@ -22,6 +22,8 @@ class ConversationInterpretationPolicy:
         legacy_router_would_invoke: bool,
         semantic_signal: bool = False,
     ) -> bool:
+        if not settings.ai_intent_router_enabled:
+            return False
         # A deterministic negation signal is only a reason to ask the shared
         # interpreter; it is never itself the final semantic decision.
         if negated_action:

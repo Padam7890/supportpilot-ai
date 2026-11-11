@@ -53,7 +53,9 @@ class FollowUpInterpretation(BaseModel):
     goal: Literal["delivery_date", "replacement", "refund", "next_step", "policy_question", "refund_reason", "refund_item", "none"]
     confirmation: Literal["affirm", "deny", "retract", "unclear", "not_applicable"] = "not_applicable"
     action: Literal["cancel", "refund", "return", "exchange", "replace", "track", "information", "none"] = "none"
-    action_target: Literal["order", "refund_request", "item", "none"] = "none"
+    action_target: Literal["order", "refund_request", "item", "human_support", "none"] = "none"
+    order_reference_status: Literal["provided", "unavailable", "not_provided", "not_applicable"] = "not_applicable"
+    handoff_requested: bool = False
     topic: str | None = Field(default=None, max_length=160)
     retrieval_query: str | None = Field(default=None, max_length=240)
     refund_reason: RefundReason | None = None

@@ -157,6 +157,7 @@ async def resolve_customer_routing(
             understanding.correction
             or understanding.contextual_follow_up
             or interpret_follow_up
+            or (for_generation and assessment.requires_tools)
         ),
         legacy_router_would_invoke=(
             interpret_follow_up or should_invoke_llm_router(assessment, message)
@@ -176,6 +177,7 @@ async def resolve_customer_routing(
                 or understanding.negated_action
                 or understanding.correction
                 or understanding.contextual_follow_up
+                or (for_generation and assessment.requires_tools)
             ),
         )
         if decision is not None and not assessment.requires_tools and any(
@@ -237,7 +239,18 @@ def apply_routing_to_widget_plan(
     if resolution.llm is None:
         intent_set = set(resolution.deterministic.candidate_intents)
 
-    if Intent.ORDER in intent_set and resolution.deterministic.requires_tools:
+    follow_up = resolution.llm.follow_up if resolution.llm else None
+    information_only = bool(
+        follow_up
+        and follow_up.confidence >= settings.ai_intent_router_high_confidence
+        and follow_up.action == "information"
+        and follow_up.confirmation != "retract"
+    )
+    if (
+        Intent.ORDER in intent_set
+        and resolution.deterministic.requires_tools
+        and not information_only
+    ):
         sensitive = widget_ai.widget_sensitive_reply(message)
         if sensitive is not None:
             draft, safe_summary = sensitive
