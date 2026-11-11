@@ -410,6 +410,24 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 multi_intent=bool(route_result.outcome.get("multi_intent", False)),
                 should_clarify=bool(route_result.outcome.get("should_clarify", False)),
             )
+            knowledge_gap_exclusion_reason = (
+                "no_evidence_requirement" if not requires_store_evidence
+                else "commerce_follow_up" if follow_up is not None
+                else "multi_intent" if bool(route_result.outcome.get("multi_intent", False))
+                else "needs_clarification" if bool(route_result.outcome.get("should_clarify", False))
+                else "non_knowledge_route" if turn.route != "knowledge"
+                else None
+            )
+            _log_ai_execution_event(
+                "ai_knowledge_gap_eligibility",
+                execution_id=str(execution_id),
+                correlation_id=correlation_id,
+                route=turn.route,
+                primary_intent=route_result.outcome.get("primary_intent"),
+                eligible=knowledge_gap_intent,
+                exclusion_reason=knowledge_gap_exclusion_reason,
+                router_mode=route_result.outcome.get("mode"),
+            )
             intent_router_outcome = route_result.outcome
             semantic_interpretation = route_result.interpretation or semantic_interpretation
             if route_result.model_router_invoked:
