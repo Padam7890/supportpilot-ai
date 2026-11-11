@@ -47,20 +47,6 @@ async def list_gaps(
     return GapPage(items=[GapOut.model_validate(row) for row in rows])
 
 
-@router.get("/{gap_id}/faq-suggestion", response_model=FAQSuggestion)
-async def suggest_faq(
-    gap_id: UUID,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_roles("owner", "admin")),
-) -> FAQSuggestion:
-    row = await db.scalar(select(KnowledgeGap).where(
-        KnowledgeGap.organization_id == user.organization_id, KnowledgeGap.id == gap_id
-    ))
-    if row is None:
-        raise HTTPException(status_code=404, detail="Knowledge gap not found")
-    return FAQSuggestion(**faq_suggestion(row.question))
-
-
 class GroupOut(BaseModel):
     representative: str
     count: int
@@ -88,25 +74,6 @@ async def list_grouped_gaps(
 
 class GapReview(BaseModel):
     status: str = Field(pattern="^(dismissed|resolved|open)$")
-
-
-@router.patch("/{gap_id}", response_model=GapOut)
-async def review_gap(
-    gap_id: UUID,
-    payload: GapReview,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_roles("owner", "admin")),
-) -> GapOut:
-    row = await db.scalar(
-        select(KnowledgeGap)
-        .where(KnowledgeGap.organization_id == user.organization_id, KnowledgeGap.id == gap_id)
-        .with_for_update()
-    )
-    if row is None:
-        raise HTTPException(status_code=404, detail="Knowledge gap not found")
-    row.status = payload.status
-    await db.flush()
-    return GapOut.model_validate(row)
 
 
 class GroupReview(BaseModel):
@@ -252,3 +219,38 @@ async def list_faq_reviews(
         await _reconcile_review_readiness(db, record)
     await db.flush()
     return [FAQReviewOut.model_validate(record) for record in records]
+
+@router.get("/{gap_id}/faq-suggestion", response_model=FAQSuggestion)
+async def suggest_faq(
+    gap_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_roles("owner", "admin")),
+) -> FAQSuggestion:
+    row = await db.scalar(select(KnowledgeGap).where(
+        KnowledgeGap.organization_id == user.organization_id, KnowledgeGap.id == gap_id
+    ))
+    if row is None:
+        raise HTTPException(status_code=404, detail="Knowledge gap not found")
+    return FAQSuggestion(**faq_suggestion(row.question))
+
+
+
+@router.patch("/{gap_id}", response_model=GapOut)
+async def review_gap(
+    gap_id: UUID,
+    payload: GapReview,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_roles("owner", "admin")),
+) -> GapOut:
+    row = await db.scalar(
+        select(KnowledgeGap)
+        .where(KnowledgeGap.organization_id == user.organization_id, KnowledgeGap.id == gap_id)
+        .with_for_update()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Knowledge gap not found")
+    row.status = payload.status
+    await db.flush()
+    return GapOut.model_validate(row)
+
+
