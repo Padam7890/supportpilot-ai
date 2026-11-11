@@ -8,6 +8,7 @@ import { knowledgeKeys } from "../api/knowledge-api";
 
 type Group = { representative: string; count: number; gap_ids: string[] };
 type GroupPage = { items: Group[]; has_more: boolean };
+type DurableGroup = { id: string; representative: string; gap_ids: string[] };
 type Draft = { group: Group; question: string; answer: string; knowledgeBaseId: string };
 
 export function KnowledgeGaps() {
@@ -16,6 +17,14 @@ export function KnowledgeGaps() {
   const [notice, setNotice] = useState("");
   const [page, setPage] = useState(0);
   const pageSize = 50;
+  const [targetGroupId, setTargetGroupId] = useState("");
+  const [selectedGapIds, setSelectedGapIds] = useState<string[]>([]);
+  const [threshold, setThreshold] = useState(0.86);
+  const durable = useQuery({ queryKey: ["knowledge-gap-durable"], queryFn: () => api<DurableGroup[]>("/knowledge/gaps/durable-groups?limit=100") });
+  const refreshGroups = async () => { await Promise.all([queryClient.invalidateQueries({ queryKey: ["knowledge-gap-durable"] }), queryClient.invalidateQueries({ queryKey: ["knowledge-gap-groups"] })]); };
+  const assign = useMutation({ mutationFn: () => api<{assigned:number;created:number}>("/knowledge/gaps/durable-groups/auto-assign", { method:"POST", body:JSON.stringify({limit:100,threshold}) }), onSuccess: async (result) => { setNotice(`Assigned ${result.assigned} questions and created ${result.created} groups.`); await refreshGroups(); } });
+  const move = useMutation({ mutationFn: () => api<{moved:number}>(`/knowledge/gaps/durable-groups/${targetGroupId}/members`, { method:"POST", body:JSON.stringify({gap_ids:selectedGapIds}) }), onSuccess: async () => { setSelectedGapIds([]); setNotice("Selected questions moved."); await refreshGroups(); } });
+  const remove = useMutation({ mutationFn: (id:string) => api<void>(`/knowledge/gaps/durable-groups/${id}`, { method:"DELETE" }), onSuccess: async () => { setNotice("Group deleted; questions retained."); await refreshGroups(); } });
   const bases = useQuery({ queryKey: knowledgeBaseKey, queryFn: listKnowledgeBases });
   const activeBases = bases.data?.items.filter((base) => base.status === "active") ?? [];
   const review = useMutation({
@@ -69,6 +78,21 @@ export function KnowledgeGaps() {
       <p className="text-sm text-muted-foreground">
         Review similar customer questions and publish only answers you have verified.
       </p>
+      <div className="space-y-3 rounded-lg border border-border p-3">
+        <h3 className="text-sm font-semibold">Persistent semantic groups</h3>
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <label>Similarity threshold <input aria-label="Similarity threshold" type="number" min="0.01" max="1" step="0.01" value={threshold} onChange={(event) => setThreshold(Number(event.target.value))} className="w-20 rounded border border-border bg-background px-2 py-1" /></label>
+          <button type="button" disabled={assign.isPending || threshold <= 0 || threshold > 1} onClick={() => assign.mutate()} className="rounded border border-border px-3 py-1 disabled:opacity-50">Auto-group next 100 questions</button>
+        </div>
+        <p className="text-xs text-muted-foreground">Select individual questions to split into another group, or select all questions in a group to merge them into the target group.</p>
+        {durable.data?.map((group) => <div key={group.id} className="rounded border border-border p-2 text-sm space-y-2">
+          <div className="flex flex-wrap justify-between gap-2"><span className="font-medium">{group.representative} ({group.gap_ids.length})</span><button type="button" disabled={remove.isPending} onClick={() => { if (window.confirm("Delete this group? The questions will be kept.")) remove.mutate(group.id); }} className="rounded border border-border px-2 py-1 text-xs">Delete group</button></div>
+          <button type="button" className="text-xs underline" onClick={() => setSelectedGapIds(group.gap_ids)}>Select all questions in this group</button>
+          <div className="flex flex-wrap gap-2">{group.gap_ids.map((id) => <label key={id} className="flex items-center gap-1 text-xs"><input type="checkbox" checked={selectedGapIds.includes(id)} onChange={(event) => setSelectedGapIds((old) => event.target.checked ? [...old.filter((value) => value !== id), id] : old.filter((value) => value !== id))} />{id.slice(0,8)}</label>)}</div>
+        </div>)}
+        <div className="flex flex-wrap gap-2 items-center"><select aria-label="Target group" className="rounded border border-border bg-background px-2 py-1 text-sm" value={targetGroupId} onChange={(event) => setTargetGroupId(event.target.value)}><option value="">Choose target group</option>{durable.data?.map((group) => <option key={group.id} value={group.id}>{group.representative.slice(0,65)}</option>)}</select><button type="button" disabled={!targetGroupId || !selectedGapIds.length || move.isPending} onClick={() => move.mutate()} className="rounded border border-border px-3 py-1 text-sm disabled:opacity-50">Move selected questions</button></div>
+        {(assign.isError || move.isError || remove.isError || durable.isError) && <p role="alert" className="text-sm text-destructive">Could not update persistent groups. Refresh and retry.</p>}
+      </div>
       {groups.isLoading && <p className="text-sm">Grouping unanswered questions…</p>}
       {groups.isError && <p role="alert" className="text-sm text-destructive">Semantic grouping is unavailable. Check embedding provider configuration.</p>}
       {groups.data?.items.length === 0 && <p className="text-sm text-muted-foreground">No knowledge gaps recorded yet.</p>}
