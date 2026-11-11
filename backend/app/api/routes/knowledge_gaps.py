@@ -414,3 +414,102 @@ async def delete_durable_group(
     ))
     await db.delete(group)
     await db.flush()
+
+
+class SemanticGroupAssignment(BaseModel):
+    limit: int = Field(default=100, ge=1, le=100)
+    threshold: float = Field(default=0.86, gt=0.0, le=1.0)
+
+
+@router.post("/durable-groups/auto-assign")
+async def auto_assign_semantic_groups(
+    payload: SemanticGroupAssignment,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_roles("owner", "admin")),
+) -> dict[str, int]:
+    """Persist semantic candidates across review pages; never override manual memberships."""
+    from app.features.ai.application.knowledge_gap_grouping import list_semantic_groups, cosine_similarity
+    from app.features.ai.infrastructure.embedding_gateway import EmbeddingProviderError, embed_texts
+    from app.models.knowledge_gap_embedding import KnowledgeGapEmbedding
+    from app.core.config import settings
+    # Serialize assignments per tenant without blocking other tenants.
+    await db.execute(select(KnowledgeGap).where(
+        KnowledgeGap.organization_id == user.organization_id,
+        KnowledgeGap.status == "open",
+    ).order_by(KnowledgeGap.id).limit(payload.limit).with_for_update())
+    existing = (await db.scalars(select(KnowledgeGapGroup).where(
+        KnowledgeGapGroup.organization_id == user.organization_id,
+    ).order_by(KnowledgeGapGroup.id).with_for_update())).all()
+    assigned = set((await db.scalars(select(KnowledgeGapGroupMember.gap_id).where(
+        KnowledgeGapGroupMember.organization_id == user.organization_id,
+    ))).all())
+    # Scan a bounded source window; exclude already assigned gaps before embedding.
+    gaps = (await db.scalars(select(KnowledgeGap).where(
+        KnowledgeGap.organization_id == user.organization_id,
+        KnowledgeGap.status == "open",
+        KnowledgeGap.id.not_in(assigned) if assigned else True,
+    ).order_by(KnowledgeGap.created_at, KnowledgeGap.id).limit(payload.limit).with_for_update())).all()
+    if not gaps:
+        return {"assigned": 0, "created": 0}
+    model, version = settings.ai_embedding_model, settings.ai_embedding_version
+    if not model:
+        raise HTTPException(status_code=503, detail="Embedding model is not configured")
+    from hashlib import sha256
+    cached = (await db.scalars(select(KnowledgeGapEmbedding).where(
+        KnowledgeGapEmbedding.organization_id == user.organization_id,
+        KnowledgeGapEmbedding.gap_id.in_([gap.id for gap in gaps]),
+        KnowledgeGapEmbedding.model == model,
+        KnowledgeGapEmbedding.version == version,
+    ))).all()
+    cache = {item.gap_id: item for item in cached}
+    vectors = {}
+    missing = []
+    for gap in gaps:
+        item = cache.get(gap.id)
+        if item is not None and item.question_hash == sha256(gap.question.encode()).hexdigest() and len(item.values) == item.dimensions:
+            vectors[gap.id] = item.values
+        else:
+            missing.append(gap)
+    try:
+        for start in range(0, len(missing), max(1, settings.ai_embedding_batch_size)):
+            batch = missing[start:start + max(1, settings.ai_embedding_batch_size)]
+            results = await embed_texts([gap.question for gap in batch], model=model)
+            if len(results) != len(batch):
+                raise ValueError("Embedding provider returned wrong vector count")
+            from sqlalchemy.dialects.postgresql import insert
+            for gap, result in zip(batch, results, strict=True):
+                vectors[gap.id] = result.values
+                stmt = insert(KnowledgeGapEmbedding).values(
+                    organization_id=user.organization_id, gap_id=gap.id, model=model,
+                    version=version, question_hash=sha256(gap.question.encode()).hexdigest(),
+                    dimensions=len(result.values), values=result.values,
+                ).on_conflict_do_update(
+                    index_elements=["organization_id", "gap_id", "model", "version"],
+                    set_={"question_hash": sha256(gap.question.encode()).hexdigest(),
+                          "dimensions": len(result.values), "values": result.values},
+                )
+                await db.execute(stmt)
+        representative_vectors = {}
+        for group in existing:
+            result = await embed_texts([group.representative], model=model)
+            representative_vectors[group.id] = result[0].values
+    except EmbeddingProviderError as exc:
+        raise HTTPException(status_code=503, detail="Semantic grouping unavailable") from exc
+    created = 0
+    for gap in gaps:
+        vector = vectors[gap.id]
+        matches = [(cosine_similarity(vector, representative_vectors[group.id]), group)
+                   for group in existing if len(vector) == len(representative_vectors[group.id])]
+        score, target = max(matches, key=lambda item: item[0]) if matches else (0.0, None)
+        if target is None or score < payload.threshold:
+            target = KnowledgeGapGroup(organization_id=user.organization_id, representative=gap.question)
+            db.add(target)
+            await db.flush()
+            existing.append(target)
+            representative_vectors[target.id] = vector
+            created += 1
+        db.add(KnowledgeGapGroupMember(
+            organization_id=user.organization_id, group_id=target.id, gap_id=gap.id,
+        ))
+    await db.flush()
+    return {"assigned": len(gaps), "created": created}
