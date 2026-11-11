@@ -303,6 +303,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
             )
         generic_clarification = None
         requires_store_evidence = True
+        knowledge_gap_intent = False  # Set only by structured routing, not evidence requirements.
         if execution.kind == "widget_reply" and policy_follow_up is None:
             # Explicit catalog browsing is a new intent, never an answer to a
             # previous product-selection question. Prevent stale follow-up state
@@ -402,6 +403,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 catalog_request=is_catalog_discovery_request(execution.question),
             )
             requires_store_evidence = route_result.requires_evidence
+            knowledge_gap_intent = turn.route == "knowledge"
             intent_router_outcome = route_result.outcome
             semantic_interpretation = route_result.interpretation or semantic_interpretation
             if route_result.model_router_invoked:
@@ -626,7 +628,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                         conversation_id=str(execution.conversation_id),
                         source_message_id=str(execution.source_message_id),
                         question=execution.question,
-                        intent="knowledge",
+                        intent="knowledge" if knowledge_gap_intent else "other",
                         retrieval_outcome="no_relevant_evidence",
                         answer_grounded=False,
                     )
@@ -701,7 +703,7 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 conversation_id=str(execution.conversation_id),
                 source_message_id=str(execution.source_message_id),
                 question=execution.question,
-                intent="knowledge" if requires_store_evidence else "other",
+                intent="knowledge" if knowledge_gap_intent else "other",
                 retrieval_outcome=(
                     "no_relevant_evidence" if requires_store_evidence and not context and not citations
                     else "retrieved" if citations else "unknown"
