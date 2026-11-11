@@ -377,16 +377,18 @@ async def move_durable_group_members(
     ).order_by(KnowledgeGap.id).with_for_update())).all()
     if len(gaps) != len(ids):
         raise HTTPException(status_code=404, detail="Open gaps not found")
-    await db.execute(update(KnowledgeGapGroupMember).where(
+    # Lock existing memberships in deterministic order before reassignment.
+    memberships = (await db.scalars(select(KnowledgeGapGroupMember).where(
         KnowledgeGapGroupMember.organization_id == user.organization_id,
         KnowledgeGapGroupMember.gap_id.in_(ids),
-    ).values(group_id=group_id))
-    existing = (await db.scalars(select(KnowledgeGapGroupMember.gap_id).where(
-        KnowledgeGapGroupMember.organization_id == user.organization_id,
-        KnowledgeGapGroupMember.group_id == group_id,
-    ))).all()
+    ).order_by(KnowledgeGapGroupMember.gap_id).with_for_update())).all()
+    assigned = {membership.gap_id for membership in memberships}
+    for membership in memberships:
+        membership.group_id = group_id
     for gap in gaps:
-        if gap.id not in existing:
-            db.add(KnowledgeGapGroupMember(organization_id=user.organization_id, group_id=group_id, gap_id=gap.id))
+        if gap.id not in assigned:
+            db.add(KnowledgeGapGroupMember(
+                organization_id=user.organization_id, group_id=group_id, gap_id=gap.id,
+            ))
     await db.flush()
     return {"moved": len(ids)}
