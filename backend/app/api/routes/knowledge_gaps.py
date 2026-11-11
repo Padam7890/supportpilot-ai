@@ -116,57 +116,6 @@ async def list_grouped_gaps(
     )
 
 
-@router.post("/groups/auto", response_model=dict[str, int])
-async def persist_semantic_groups(
-    threshold: float = Query(default=0.86, gt=0.0, le=1.0),
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_roles("owner", "admin")),
-) -> dict[str, int]:
-    """Persist reviewed-by-algorithm similarity clusters as durable groups.
-
-    Similarity alone does not resolve questions or publish answers.
-    Existing manual group membership is never overwritten.
-    """
-    from app.features.ai.application.knowledge_gap_grouping import list_semantic_groups
-    from app.features.ai.infrastructure.embedding_gateway import EmbeddingProviderError
-
-    try:
-        candidates = await list_semantic_groups(
-            db, organization_id=user.organization_id, limit=100, threshold=threshold,
-        )
-    except EmbeddingProviderError as exc:
-        raise HTTPException(status_code=503, detail="Semantic grouping is unavailable") from exc
-    created = 0
-    for candidate in candidates:
-        if len(candidate.gap_ids) < 2:
-            continue
-        gaps = (await db.scalars(select(KnowledgeGap).where(
-            KnowledgeGap.organization_id == user.organization_id,
-            KnowledgeGap.id.in_(candidate.gap_ids),
-            KnowledgeGap.status == "open",
-        ).order_by(KnowledgeGap.id).with_for_update())).all()
-        if len(gaps) != len(candidate.gap_ids):
-            continue
-        occupied = await db.scalar(select(KnowledgeGapGroupMember).where(
-            KnowledgeGapGroupMember.organization_id == user.organization_id,
-            KnowledgeGapGroupMember.gap_id.in_(candidate.gap_ids),
-        ))
-        if occupied is not None:
-            continue
-        group = KnowledgeGapGroup(
-            organization_id=user.organization_id, representative=candidate.representative,
-        )
-        db.add(group)
-        await db.flush()
-        for gap in gaps:
-            db.add(KnowledgeGapGroupMember(
-                organization_id=user.organization_id, group_id=group.id, gap_id=gap.id,
-            ))
-        created += 1
-    await db.flush()
-    return {"created_groups": created}
-
-
 class GapReview(BaseModel):
     status: str = Field(pattern="^(dismissed|resolved|open)$")
 
@@ -578,18 +527,31 @@ async def auto_assign_semantic_groups(
             representative_vectors[group.id] = result[0].values
     except EmbeddingProviderError as exc:
         raise HTTPException(status_code=503, detail="Semantic grouping unavailable") from exc
+    # Repeated identical questions must group even when the embedding provider
+    # gives slightly different vectors. Normalize formatting, not meaning.
+    import re
+    def normalized_question(value: str) -> str:
+        return re.sub(r"[^\\w]+", " ", value.casefold()).strip()
+
+    existing_by_question = {
+        normalized_question(group.representative): group for group in existing
+    }
     created = 0
     for gap in gaps:
         vector = vectors[gap.id]
         matches = [(cosine_similarity(vector, representative_vectors[group.id]), group)
                    for group in existing if len(vector) == len(representative_vectors[group.id])]
         score, target = max(matches, key=lambda item: item[0]) if matches else (0.0, None)
+        target = existing_by_question.get(normalized_question(gap.question)) or target
+        if target is not None and normalized_question(gap.question) == normalized_question(target.representative):
+            score = 1.0
         if target is None or score < payload.threshold:
             target = KnowledgeGapGroup(organization_id=user.organization_id, representative=gap.question)
             db.add(target)
             await db.flush()
             existing.append(target)
             representative_vectors[target.id] = vector
+            existing_by_question[normalized_question(gap.question)] = target
             created += 1
         db.add(KnowledgeGapGroupMember(
             organization_id=user.organization_id, group_id=target.id, gap_id=gap.id,
