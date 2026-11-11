@@ -16,6 +16,7 @@ class ComposedAnswer:
     usage: dict[str, int]
     model_name: str | None
     expected_answer: Literal["delivery_date", "contextual"] | None = None
+    answer_resolution: Literal["answered", "insufficient_evidence", "needs_clarification"] | None = None
 
 
 class AnswerEnvelope(BaseModel):
@@ -23,6 +24,7 @@ class AnswerEnvelope(BaseModel):
 
     text: str = Field(min_length=1, max_length=4000)
     expected_answer: Literal["delivery_date", "contextual"] | None
+    answer_resolution: Literal["answered", "insufficient_evidence", "needs_clarification"] | None = None
 
 
 _SYSTEM = (
@@ -50,7 +52,13 @@ _SYSTEM = (
     "expected_answer. Set expected_answer to delivery_date if your reply asks when "
     "the customer's item was delivered, contextual for any other follow-up question, "
     "or null if you did not ask a question. This field records the question only. "
-    "Never include actions, authorization, identity or verification in this field."
+    "Never include actions, authorization, identity or verification in this field. "
+    "Also return answer_resolution: answered only when the customer\x27s actual question is "
+    "answered by explicit store evidence, insufficient_evidence when you cannot "
+    "confirm the requested fact even if you found related documents, or "
+    "needs_clarification when the customer must clarify. This describes question "
+    "resolution, not whether the reply is safe. Include it as a JSON field. "
+    "Never claim answered for a response that only offers verification or support."
 )
 
 
@@ -106,7 +114,7 @@ async def compose_natural_answer(
             from app.features.ai.infrastructure.llm_gateway import AIProviderError
 
             raise AIProviderError("provider_invalid_response", "Invalid answer envelope") from exc
-        return ComposedAnswer(answer.text, usage, model, answer.expected_answer)
+        return ComposedAnswer(answer.text, usage, model, answer.expected_answer, answer.answer_resolution)
     # Existing providers can return plain text. It still goes through the
     # release gate, and no workflow state is inferred from it.
     return ComposedAnswer(text=text, usage=usage, model_name=model)
