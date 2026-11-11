@@ -687,6 +687,12 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 answer_grounded=guarded.accepted,
             )
             if gap is not None:
+                from app.db.session import async_session_factory
+                from app.features.ai.application.knowledge_gap_repository import persist_knowledge_gap
+
+                async with async_session_factory() as gap_db:
+                    await persist_knowledge_gap(gap_db, gap)
+                    await gap_db.commit()
                 _log_ai_execution_event(
                     "ai_knowledge_gap_candidate_detected",
                     execution_id=str(execution_id),
