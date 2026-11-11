@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.features.ai.infrastructure.embedding_gateway import embed_texts
+from app.core.config import settings
 from app.models.knowledge_gap import KnowledgeGap
 
 
@@ -73,7 +74,10 @@ async def list_semantic_groups(
     )).all()
     if not rows:
         return []
-    vectors = await embed_texts([row.question for row in rows])
+    vectors = []
+    batch_size = settings.ai_embedding_batch_size
+    for offset in range(0, len(rows), batch_size):
+        vectors.extend(await embed_texts([row.question for row in rows[offset:offset + batch_size]]))
     return group_vectors(
         [(row.id, row.question) for row in rows],
         [vector.values for vector in vectors],
