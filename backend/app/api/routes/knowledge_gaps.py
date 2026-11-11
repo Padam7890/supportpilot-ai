@@ -96,6 +96,8 @@ async def review_group(
     user: User = Depends(require_roles("owner", "admin")),
 ) -> dict[str, int]:
     ids = set(payload.gap_ids)
+    if len(ids) != len(payload.gap_ids):
+        raise HTTPException(status_code=422, detail="Duplicate gap IDs are not allowed")
     rows = (await db.scalars(
         select(KnowledgeGap)
         .where(KnowledgeGap.organization_id == user.organization_id, KnowledgeGap.id.in_(ids))
@@ -212,8 +214,16 @@ async def publish_reviewed_faq(
         KnowledgeGapReview.gap_id.in_(ids),
     ))).all()
     if existing:
-        if len(existing) == len(ids) and len({r.document_id for r in existing}) == 1:
-            return AtomicFAQResult(document_id=existing[0].document_id, status="already_submitted", already_submitted=True)
+        if (len(existing) == len(ids) and len({r.document_id for r in existing}) == 1
+            and all(r.question == question and r.answer == answer for r in existing)):
+            linked_document = await db.scalar(select(KnowledgeDocument).where(
+                KnowledgeDocument.organization_id == user.organization_id,
+                KnowledgeDocument.id == existing[0].document_id,
+                KnowledgeDocument.knowledge_base_id == payload.knowledge_base_id,
+                KnowledgeDocument.deleted_at.is_(None),
+            ))
+            if linked_document is not None:
+                return AtomicFAQResult(document_id=linked_document.id, status="already_submitted", already_submitted=True)
         raise HTTPException(status_code=409, detail="Some questions already have a linked FAQ")
     selected_base = await _resolve_knowledge_base(
         db, user.organization_id, payload.knowledge_base_id, require_active=True
