@@ -41,7 +41,7 @@ def detect_knowledge_gap(
         return None
     if retrieval_outcome == "no_relevant_evidence":
         reason = GapReason.NO_RELEVANT_EVIDENCE
-    elif retrieval_outcome == "retrieved" and answer_grounded is False:
+    elif retrieval_outcome == "insufficient_evidence" or (\n        retrieval_outcome == "retrieved" and answer_grounded is False\n    ):
         reason = GapReason.INSUFFICIENT_EVIDENCE
     else:
         return None
