@@ -9,6 +9,7 @@ from app.db.session import get_db
 from app.models import User
 from app.models.knowledge_gap import KnowledgeGap
 from app.models.knowledge_gap_review import KnowledgeGapReview
+from app.models.knowledge_gap_group import KnowledgeGapGroup, KnowledgeGapGroupMember
 from app.models.knowledge_document import KnowledgeDocument, KnowledgeDocumentSource, DocumentIngestionJob, DocumentChunk, DocumentEmbedding, DocumentEmbeddingJob
 from app.models.knowledge_base import KnowledgeBase
 from app.features.ai.domain.content_hash import PENDING_CONTENT_REVISION
@@ -286,3 +287,106 @@ async def publish_reviewed_faq(
         ))
     await db.flush()
     return AtomicFAQResult(document_id=document.id, status="queued", already_submitted=False)
+
+
+class DurableGroupCreate(BaseModel):
+    gap_ids: list[UUID] = Field(min_length=1, max_length=100)
+
+
+class DurableGroupOut(BaseModel):
+    id: UUID
+    representative: str
+    gap_ids: list[UUID]
+
+
+@router.post("/durable-groups", response_model=DurableGroupOut)
+async def create_durable_group(
+    payload: DurableGroupCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_roles("owner", "admin")),
+) -> DurableGroupOut:
+    ids = set(payload.gap_ids)
+    if len(ids) != len(payload.gap_ids):
+        raise HTTPException(status_code=422, detail="Duplicate gap IDs")
+    gaps = (await db.scalars(select(KnowledgeGap).where(
+        KnowledgeGap.organization_id == user.organization_id,
+        KnowledgeGap.id.in_(ids), KnowledgeGap.status == "open",
+    ).order_by(KnowledgeGap.id).with_for_update())).all()
+    if len(gaps) != len(ids):
+        raise HTTPException(status_code=404, detail="Open knowledge gaps not found")
+    occupied = await db.scalar(select(KnowledgeGapGroupMember).where(
+        KnowledgeGapGroupMember.organization_id == user.organization_id,
+        KnowledgeGapGroupMember.gap_id.in_(ids),
+    ))
+    if occupied:
+        raise HTTPException(status_code=409, detail="A gap already belongs to a durable group")
+    group = KnowledgeGapGroup(organization_id=user.organization_id, representative=gaps[0].question)
+    db.add(group)
+    await db.flush()
+    for gap in gaps:
+        db.add(KnowledgeGapGroupMember(organization_id=user.organization_id, group_id=group.id, gap_id=gap.id))
+    await db.flush()
+    return DurableGroupOut(id=group.id, representative=group.representative, gap_ids=[gap.id for gap in gaps])
+
+
+@router.get("/durable-groups", response_model=list[DurableGroupOut])
+async def list_durable_groups(
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_roles("owner", "admin")),
+) -> list[DurableGroupOut]:
+    groups = (await db.scalars(select(KnowledgeGapGroup).where(
+        KnowledgeGapGroup.organization_id == user.organization_id,
+    ).order_by(KnowledgeGapGroup.created_at.desc(), KnowledgeGapGroup.id.desc()).offset(offset).limit(limit))).all()
+    if not groups:
+        return []
+    members = (await db.scalars(select(KnowledgeGapGroupMember).where(
+        KnowledgeGapGroupMember.organization_id == user.organization_id,
+        KnowledgeGapGroupMember.group_id.in_([group.id for group in groups]),
+    ))).all()
+    by_group: dict[UUID, list[UUID]] = {group.id: [] for group in groups}
+    for member in members:
+        by_group[member.group_id].append(member.gap_id)
+    return [DurableGroupOut(id=group.id, representative=group.representative, gap_ids=by_group[group.id]) for group in groups]
+
+
+class DurableGroupMove(BaseModel):
+    gap_ids: list[UUID] = Field(min_length=1, max_length=100)
+
+
+@router.post("/durable-groups/{group_id}/members")
+async def move_durable_group_members(
+    group_id: UUID,
+    payload: DurableGroupMove,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_roles("owner", "admin")),
+) -> dict[str, int]:
+    ids = set(payload.gap_ids)
+    if len(ids) != len(payload.gap_ids):
+        raise HTTPException(status_code=422, detail="Duplicate gap IDs")
+    target = await db.scalar(select(KnowledgeGapGroup).where(
+        KnowledgeGapGroup.organization_id == user.organization_id,
+        KnowledgeGapGroup.id == group_id,
+    ).with_for_update())
+    if target is None:
+        raise HTTPException(status_code=404, detail="Target group not found")
+    gaps = (await db.scalars(select(KnowledgeGap).where(
+        KnowledgeGap.organization_id == user.organization_id,
+        KnowledgeGap.id.in_(ids), KnowledgeGap.status == "open",
+    ).order_by(KnowledgeGap.id).with_for_update())).all()
+    if len(gaps) != len(ids):
+        raise HTTPException(status_code=404, detail="Open gaps not found")
+    await db.execute(update(KnowledgeGapGroupMember).where(
+        KnowledgeGapGroupMember.organization_id == user.organization_id,
+        KnowledgeGapGroupMember.gap_id.in_(ids),
+    ).values(group_id=group_id))
+    existing = (await db.scalars(select(KnowledgeGapGroupMember.gap_id).where(
+        KnowledgeGapGroupMember.organization_id == user.organization_id,
+        KnowledgeGapGroupMember.group_id == group_id,
+    ))).all()
+    for gap in gaps:
+        if gap.id not in existing:
+            db.add(KnowledgeGapGroupMember(organization_id=user.organization_id, group_id=group_id, gap_id=gap.id))
+    await db.flush()
+    return {"moved": len(ids)}
