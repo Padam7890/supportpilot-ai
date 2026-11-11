@@ -116,6 +116,57 @@ async def list_grouped_gaps(
     )
 
 
+@router.post("/groups/auto", response_model=dict[str, int])
+async def persist_semantic_groups(
+    threshold: float = Query(default=0.86, gt=0.0, le=1.0),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_roles("owner", "admin")),
+) -> dict[str, int]:
+    """Persist reviewed-by-algorithm similarity clusters as durable groups.
+
+    Similarity alone does not resolve questions or publish answers.
+    Existing manual group membership is never overwritten.
+    """
+    from app.features.ai.application.knowledge_gap_grouping import list_semantic_groups
+    from app.features.ai.infrastructure.embedding_gateway import EmbeddingProviderError
+
+    try:
+        candidates = await list_semantic_groups(
+            db, organization_id=user.organization_id, limit=100, threshold=threshold,
+        )
+    except EmbeddingProviderError as exc:
+        raise HTTPException(status_code=503, detail="Semantic grouping is unavailable") from exc
+    created = 0
+    for candidate in candidates:
+        if len(candidate.gap_ids) < 2:
+            continue
+        gaps = (await db.scalars(select(KnowledgeGap).where(
+            KnowledgeGap.organization_id == user.organization_id,
+            KnowledgeGap.id.in_(candidate.gap_ids),
+            KnowledgeGap.status == "open",
+        ).order_by(KnowledgeGap.id).with_for_update())).all()
+        if len(gaps) != len(candidate.gap_ids):
+            continue
+        occupied = await db.scalar(select(KnowledgeGapGroupMember).where(
+            KnowledgeGapGroupMember.organization_id == user.organization_id,
+            KnowledgeGapGroupMember.gap_id.in_(candidate.gap_ids),
+        ))
+        if occupied is not None:
+            continue
+        group = KnowledgeGapGroup(
+            organization_id=user.organization_id, representative=candidate.representative,
+        )
+        db.add(group)
+        await db.flush()
+        for gap in gaps:
+            db.add(KnowledgeGapGroupMember(
+                organization_id=user.organization_id, group_id=group.id, gap_id=gap.id,
+            ))
+        created += 1
+    await db.flush()
+    return {"created_groups": created}
+
+
 class GapReview(BaseModel):
     status: str = Field(pattern="^(dismissed|resolved|open)$")
 
