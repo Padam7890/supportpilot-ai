@@ -265,16 +265,19 @@ async def start_widget_conversation(
     customer_name = (
         payload.visitor_name
         if payload.contact_consent and payload.visitor_name
-        else "Store visitor"
+        else None
     )
     customer = Customer(
-        organization_id=widget.organization_id, name=customer_name, email=customer_email
+        organization_id=widget.organization_id, name=customer_name or "Anonymous visitor", email=customer_email
     )
     db.add(customer)
     await db.flush()
+    if customer_name is None:
+        # Stable, distinct label without collecting personal information.
+        customer.name = f"Visitor #{customer.id.hex[:8].upper()}"
 
     first_line = " ".join(payload.content.split())
-    subject = first_line[:237].rstrip() + ("…" if len(first_line) > 237 else "")
+    subject = first_line[:100].rstrip() + ("…" if len(first_line) > 100 else "")
     ticket = Ticket(
         organization_id=widget.organization_id,
         customer_id=customer.id,
