@@ -668,6 +668,33 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
         generated_draft = guarded.text
         citations = guarded.citations
         outcomes = guarded.outcomes
+        # Knowledge-gap candidates are derived from structured grounding outcomes,
+        # never by matching text in the generated customer reply. This is a
+        # diagnostic signal only; persistence and clustering are separate stages.
+        if execution.kind == "widget_reply" and execution.source_message_id is not None:
+            from app.features.ai.domain.knowledge_gap_policy import detect_knowledge_gap
+
+            gap = detect_knowledge_gap(
+                organization_id=str(organization_id),
+                conversation_id=str(execution.conversation_id),
+                source_message_id=str(execution.source_message_id),
+                question=execution.question,
+                intent="knowledge" if requires_store_evidence else "other",
+                retrieval_outcome=(
+                    "no_relevant_evidence" if requires_store_evidence and not context and not citations
+                    else "retrieved" if citations else "unknown"
+                ),
+                answer_grounded=guarded.accepted,
+            )
+            if gap is not None:
+                _log_ai_execution_event(
+                    "ai_knowledge_gap_candidate_detected",
+                    execution_id=str(execution_id),
+                    correlation_id=correlation_id,
+                    execution_kind=execution_kind,
+                    ai_agent_id=str(ai_agent_id) if ai_agent_id else None,
+                    gap_reason=gap.reason.value,
+                )
         if execution.kind == "widget_reply":
             remembered_policy = policy_follow_up.state if policy_follow_up else None
             if guarded.accepted and citations and guarded.expected_answer:
