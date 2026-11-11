@@ -527,18 +527,31 @@ async def auto_assign_semantic_groups(
             representative_vectors[group.id] = result[0].values
     except EmbeddingProviderError as exc:
         raise HTTPException(status_code=503, detail="Semantic grouping unavailable") from exc
+    # Repeated identical questions must group even when the embedding provider
+    # gives slightly different vectors. Normalize formatting, not meaning.
+    import re
+    def normalized_question(value: str) -> str:
+        return re.sub(r"[^\\w]+", " ", value.casefold()).strip()
+
+    existing_by_question = {
+        normalized_question(group.representative): group for group in existing
+    }
     created = 0
     for gap in gaps:
         vector = vectors[gap.id]
         matches = [(cosine_similarity(vector, representative_vectors[group.id]), group)
                    for group in existing if len(vector) == len(representative_vectors[group.id])]
         score, target = max(matches, key=lambda item: item[0]) if matches else (0.0, None)
+        target = existing_by_question.get(normalized_question(gap.question)) or target
+        if target is not None and normalized_question(gap.question) == normalized_question(target.representative):
+            score = 1.0
         if target is None or score < payload.threshold:
             target = KnowledgeGapGroup(organization_id=user.organization_id, representative=gap.question)
             db.add(target)
             await db.flush()
             existing.append(target)
             representative_vectors[target.id] = vector
+            existing_by_question[normalized_question(gap.question)] = target
             created += 1
         db.add(KnowledgeGapGroupMember(
             organization_id=user.organization_id, group_id=target.id, gap_id=gap.id,

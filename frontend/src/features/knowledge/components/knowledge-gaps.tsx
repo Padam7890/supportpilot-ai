@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Plus, RotateCw, Search } from "lucide-react";
-import { useDeferredValue, useRef, useState, type ReactNode } from "react";
+import { useDeferredValue, useEffect, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -46,6 +46,15 @@ export function KnowledgeGaps({ heading }: { heading: ReactNode }) {
     queryFn: listQuestionReviews,
     refetchInterval: (query) => query.state.data?.some((item) => ["pending_ingestion", "pending_embeddings"].includes(item.status)) ? 5000 : false,
   });
+  // The reviews endpoint reconciles completed FAQ ingestion. Refresh open
+  // questions when review state changes so resolved gaps disappear promptly.
+  const reviewStates = reviews.data?.map((item) => item.id + ":" + item.status).join("|");
+  useEffect(() => {
+    if (reviewStates !== undefined) {
+      void queryClient.invalidateQueries({ queryKey: questionKeys.dashboard });
+    }
+  }, [reviewStates, queryClient]);
+
   const operation = useMutation({
     mutationFn: (action: () => Promise<string>) => action(),
     onMutate: () => setNotice(""),
@@ -207,7 +216,14 @@ export function KnowledgeGaps({ heading }: { heading: ReactNode }) {
       </section>
 
       {!!reviews.data?.length && (
-        <p className="text-xs text-muted-foreground">Recent answer submissions · {readyReviews} ready · {reviews.data.length - readyReviews} pending or failed</p>
+        <div className="space-y-1 text-xs text-muted-foreground">
+          <p>Recent answer submissions · {readyReviews} ready · {reviews.data.length - readyReviews} pending or failed</p>
+          {reviews.data.filter((item) => item.status !== "ready").map((item) => (
+            <p key={item.id} role={item.status === "failed" ? "alert" : "status"}>
+              {item.question}: {item.status === "failed" ? "Processing failed — check knowledge document ingestion and embedding jobs." : item.status.replaceAll("_", " ")}
+            </p>
+          ))}
+        </div>
       )}
       {editor && (
         <CustomerQuestionAnswerDrawer key={draftKey} title={editor.representative} questions={editor.questions} savedDraft={drafts[draftKey]}
@@ -220,7 +236,8 @@ export function KnowledgeGaps({ heading }: { heading: ReactNode }) {
               delete remaining[draftKey];
               return remaining;
             });
-            setNotice(alreadySubmitted ? "This answer was already submitted. Check processing before resolving the questions." : "Answer submitted. Resolve the questions once the knowledge base finishes processing it.");
+            setNotice(alreadySubmitted ? "This answer was already submitted. Its processing status is shown below." : "Answer submitted. Linked questions will resolve after successful FAQ ingestion and embedding.");
+            void queryClient.invalidateQueries({ queryKey: questionKeys.reviews });
             setEditorOpen(false);
           }} />
       )}
