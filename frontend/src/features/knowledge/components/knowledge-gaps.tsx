@@ -33,11 +33,16 @@ export function KnowledgeGaps() {
         file: new File([markdown], `FAQ-${item.group.gap_ids[0]}.md`, { type: "text/markdown" }),
         knowledgeBaseId: item.knowledgeBaseId,
       });
+      // Record the human review and link each source gap to its uploaded document.
+      await api("/knowledge/gaps/groups/publications", {
+        method: "POST",
+        body: JSON.stringify({ gap_ids: item.group.gap_ids, document_id: document.id, question, answer }),
+      });
       // Ingestion is asynchronous. Do not claim the answer is searchable yet.
       return document;
     },
     onSuccess: async (document) => {
-      setNotice(`FAQ submitted to the knowledge ingestion queue (status: ${document.status}). Verify processing before resolving the gap.`);
+      setNotice(`FAQ submitted and review history linked to the knowledge document (status: ${document.status}). Verify processing before resolving the gap.`);
       setDraft(null);
       await queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents });
     },
