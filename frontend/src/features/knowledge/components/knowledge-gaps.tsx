@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api/client";
 import { knowledgeBaseKey, listKnowledgeBases } from "../api/knowledge-base-api";
-import { knowledgeKeys, uploadKnowledgeDocument } from "../api/knowledge-api";
+import { knowledgeKeys } from "../api/knowledge-api";
 
 type Group = { representative: string; count: number; gap_ids: string[] };
 type GroupPage = { items: Group[] };
@@ -27,26 +27,18 @@ export function KnowledgeGaps() {
       const answer = item.answer.trim();
       if (!question || !answer || !item.knowledgeBaseId) throw new Error("Enter a verified answer and select a knowledge base.");
       if (question.length > 1000 || answer.length > 10000) throw new Error("FAQ content is too long.");
-      const existing = await api<Array<{ gap_id: string; document_id: string; status: string }>>("/knowledge/gaps/reviews");
-      if (existing.some((review) => item.group.gap_ids.includes(review.gap_id))) {
-        throw new Error("This question already has an FAQ submission. Check its review status before uploading another.");
-      }
-      // Reuse the existing document upload and ingestion pipeline.
-      const markdown = `# ${question}\n\n${answer}\n`;
-      const document = await uploadKnowledgeDocument({
-        file: new File([markdown], `FAQ-${item.group.gap_ids[0]}.md`, { type: "text/markdown" }),
-        knowledgeBaseId: item.knowledgeBaseId,
-      });
-      // Record the human review and link each source gap to its uploaded document.
-      await api("/knowledge/gaps/groups/publications", {
+      return api<{ document_id: string; status: string; already_submitted: boolean }>("/knowledge/gaps/groups/publish", {
         method: "POST",
-        body: JSON.stringify({ gap_ids: item.group.gap_ids, document_id: document.id, question, answer }),
+        body: JSON.stringify({
+          gap_ids: item.group.gap_ids,
+          knowledge_base_id: item.knowledgeBaseId,
+          question,
+          answer,
+        }),
       });
-      // Ingestion is asynchronous. Do not claim the answer is searchable yet.
-      return document;
     },
     onSuccess: async (document) => {
-      setNotice(`FAQ submitted and review history linked to the knowledge document (status: ${document.status}). Verify processing before resolving the gap.`);
+      setNotice(document.already_submitted ? "This FAQ was already submitted. Check its ingestion status before resolving." : `FAQ submitted atomically with its review history (status: ${document.status}). Verify processing before resolving.`);
       setDraft(null);
       await Promise.all([queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents }), queryClient.invalidateQueries({ queryKey: ["knowledge-gap-reviews"] })]);
     },
