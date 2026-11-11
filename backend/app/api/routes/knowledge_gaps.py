@@ -105,6 +105,14 @@ async def review_group(
     )).all()
     if len(rows) != len(ids):
         raise HTTPException(status_code=404, detail="One or more knowledge gaps not found")
+    if payload.status == "resolved":
+        pending = (await db.scalars(select(KnowledgeGapReview).where(
+            KnowledgeGapReview.organization_id == user.organization_id,
+            KnowledgeGapReview.gap_id.in_(ids),
+            KnowledgeGapReview.status != "ready",
+        ))).all()
+        if pending:
+            raise HTTPException(status_code=409, detail="FAQ ingestion must be ready before resolving linked gaps")
     for row in rows:
         row.status = payload.status
     await db.flush()
