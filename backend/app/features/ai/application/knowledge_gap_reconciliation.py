@@ -47,7 +47,7 @@ async def reconcile_organization(db: AsyncSession, organization_id: UUID, *, lim
     """Safe to repeat; never automatically resolve or publish an unverified gap."""
     records = (await db.scalars(select(KnowledgeGapReview).where(
         KnowledgeGapReview.organization_id == organization_id,
-        KnowledgeGapReview.status != "ready",
+        KnowledgeGapReview.status.in_(("pending_ingestion", "pending_embeddings")),
     ).order_by(KnowledgeGapReview.created_at).limit(limit).with_for_update(skip_locked=True))).all()
     for record in records:
         await reconcile_review(db, record)
