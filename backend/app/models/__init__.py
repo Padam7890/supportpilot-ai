@@ -123,3 +123,5 @@ __all__ = [
     "WidgetOrderVerification",
     "WidgetSubmission",
 ]
+
+from app.models.knowledge_gap_embedding import KnowledgeGapEmbedding
