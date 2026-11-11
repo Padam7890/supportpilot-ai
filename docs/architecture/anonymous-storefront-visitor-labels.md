@@ -18,3 +18,9 @@ Existing `Store visitor` records are not renamed automatically. Contact collecti
 - Check old tickets and customer records remain unchanged.
 
 This is a focused usability change. Verified identity capture, returning-visitor linkage, customer merging, and AI-generated issue titles require separate design and implementation.
+
+## Missing email behavior (PR #41 follow-up)
+
+Customer email is nullable. New anonymous widget customers have no email rather than a synthetic address. Migration 0071 clears only previously generated `visitor+...@widget.invalid` addresses and retains customer IDs, ticket IDs and conversations. The Inbox and customer directory display `Email not provided`; the Inbox order lookup link is not offered for absent or `.invalid` addresses. Other integrations may still use internal synthetic emails and need separate treatment.
+
+Before merging, validate Alembic upgrade/downgrade against a copy of real data; run backend and frontend checks, and inspect any remaining UI components that assume every customer has an email. Progressive contact capture, email ownership verification status, and cross-channel identity merging are not included.
