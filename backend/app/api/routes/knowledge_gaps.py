@@ -56,3 +56,28 @@ async def suggest_faq(
     if row is None:
         raise HTTPException(status_code=404, detail="Knowledge gap not found")
     return FAQSuggestion(**faq_suggestion(row.question))
+
+
+class GroupOut(BaseModel):
+    representative: str
+    count: int
+    gap_ids: list[UUID]
+
+
+class GroupPage(BaseModel):
+    items: list[GroupOut]
+
+
+@router.get("/groups", response_model=GroupPage)
+async def list_grouped_gaps(
+    limit: int = Query(default=50, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_roles("owner", "admin")),
+) -> GroupPage:
+    from app.features.ai.application.knowledge_gap_grouping import list_semantic_groups
+    from app.features.ai.infrastructure.embedding_gateway import EmbeddingProviderError
+    try:
+        groups = await list_semantic_groups(db, organization_id=user.organization_id, limit=limit)
+    except EmbeddingProviderError as exc:
+        raise HTTPException(status_code=503, detail="Semantic grouping is temporarily unavailable") from exc
+    return GroupPage(items=[GroupOut(representative=g.representative, count=g.count, gap_ids=list(g.gap_ids)) for g in groups])
