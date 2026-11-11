@@ -687,10 +687,11 @@ async def _process_ai_execution(organization_id: UUID, execution_id: UUID) -> No
                 answer_grounded=guarded.accepted,
             )
             if gap is not None:
-                from app.db.session import async_session_factory
+                from app.db.session import SessionLocal, set_tenant_context
                 from app.features.ai.application.knowledge_gap_repository import persist_knowledge_gap
 
-                async with async_session_factory() as gap_db:
+                async with SessionLocal() as gap_db:
+                    await set_tenant_context(gap_db, organization_id)
                     await persist_knowledge_gap(gap_db, gap)
                     await gap_db.commit()
                 _log_ai_execution_event(
