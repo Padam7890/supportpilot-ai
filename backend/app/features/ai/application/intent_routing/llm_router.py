@@ -28,7 +28,9 @@ _JSON_FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
 _SYSTEM = (
     "You classify customer support intent only. Reply with JSON matching the schema. "
     "Do not include tool names, URLs, SQL, or policy claims. "
-    "Use general only for standalone conversation or general information unrelated to this store. Never authorize refunds, cancellations, or order access."
+    "Use general only for standalone conversation or general information unrelated to this store. Never authorize refunds, cancellations, or order access. "
+    "Independently classify the speech act of the latest customer message. Information requests ask for an answer, explanation, help or store facts, including indirect requests without a question mark. "
+    "Statements, corrections, denials and answers to a previous question are NOT information requests merely because they mention store policies, refund or delivery. When the act is uncertain, use unclear. "
 )
 
 
@@ -93,7 +95,14 @@ def _build_user_prompt(
         f"Recent turns:\n" + ("\n".join(history) if history else "(none)") + "\n"
         f"Latest message:\n{context.message}\n"
         "Return JSON with keys: intents (list of {intent, confidence, requires_knowledge, "
-        "requires_tools}), requires_context, should_clarify, reason_code." + follow_up_schema
+        "requires_tools}), requires_context, should_clarify, reason_code, customer_message_act. "
+        "customer_message_act MUST be one of information_request, statement, correction, contextual_reply, unclear. "
+        "Classify this field from the latest turn in conversation context independently of the intent topic. "
+        "Examples: \"Do you deliver to Pokhara?\" -> information_request; "
+        "\"I need your refund policy\" -> information_request; "
+        "\"I did not demand any refund\" -> statement (or correction when clearly correcting prior context); "
+        "\"The package arrived damaged\" -> statement; "
+        "\"No, I did not request a refund\" -> correction when correcting a prior claim. " + follow_up_schema
     )
 
 

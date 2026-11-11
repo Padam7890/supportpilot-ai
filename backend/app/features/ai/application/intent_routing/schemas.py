@@ -1,6 +1,7 @@
 """Validated structured contracts for optional LLM intent routing."""
 
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -32,6 +33,10 @@ class RoutingDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     intents: list[IntentDecision] = Field(min_length=1, max_length=4)
+    # Missing on old model responses means uncertainty, not permission to create a gap.
+    customer_message_act: Literal[
+        "information_request", "statement", "correction", "contextual_reply", "unclear",
+    ] = "unclear"
     requires_context: bool = False
     should_clarify: bool = False
     follow_up: FollowUpInterpretation | None = None

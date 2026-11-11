@@ -203,3 +203,64 @@ def test_intent_router_cost_requires_exact_model_pricing(monkeypatch):
     assert estimate_router_cost_usd(
         prompt_tokens=1000, completion_tokens=500, model_name="unknown",
     ) is None
+
+
+def test_structured_router_separates_message_act_from_knowledge_topic():
+    from app.features.ai.application.intent_routing.service import CustomerRoutingResolution
+
+    assessment = assess_deterministic_route("I did not demand any refund", [])
+    statement = RoutingDecision.model_validate({
+        "intents": [{
+            "intent": "knowledge", "confidence": 0.92,
+            "requires_knowledge": True, "requires_tools": False,
+        }],
+        "reason_code": "policy_subject",
+        "customer_message_act": "statement",
+    })
+    outcome = CustomerRoutingResolution(
+        deterministic=assessment, llm=statement,
+    ).tool_outcome()
+    assert outcome["customer_message_act"] == "statement"
+    assert outcome["primary_intent"] == assessment.intent.value
+
+
+def test_structured_router_accepts_direct_and_indirect_requests():
+    for content in ("Do you deliver to Pokhara?", "I need your refund policy"):
+        assessment = assess_deterministic_route(content, [])
+        decision = RoutingDecision.model_validate({
+            "intents": [{
+                "intent": "knowledge", "confidence": 0.92,
+                "requires_knowledge": True, "requires_tools": False,
+            }],
+            "reason_code": "information_request",
+            "customer_message_act": "information_request",
+        })
+        from app.features.ai.application.intent_routing.service import CustomerRoutingResolution
+        assert CustomerRoutingResolution(
+            deterministic=assessment, llm=decision,
+        ).tool_outcome()["customer_message_act"] == "information_request"
+
+
+def test_missing_or_invalid_message_act_fails_closed():
+    from app.features.ai.application.intent_routing.service import CustomerRoutingResolution
+
+    assessment = assess_deterministic_route("I did not demand any refund", [])
+    old_model_response = RoutingDecision.model_validate({
+        "intents": [{
+            "intent": "knowledge", "confidence": 0.8,
+            "requires_knowledge": True, "requires_tools": False,
+        }],
+        "reason_code": "legacy",
+    })
+    assert CustomerRoutingResolution(
+        deterministic=assessment, llm=old_model_response,
+    ).tool_outcome()["customer_message_act"] == "unclear"
+    with pytest.raises(ValidationError):
+        RoutingDecision.model_validate({
+            "intents": [{
+                "intent": "knowledge", "confidence": 0.8,
+                "requires_knowledge": True, "requires_tools": False,
+            }],
+            "reason_code": "invalid",
+            "customer_message_act": "always_create_gap",
+        })

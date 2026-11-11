@@ -108,3 +108,50 @@ def test_answered_question_does_not_create_gap():
         "retrieval_outcome": "retrieved",
         "answer_grounded": True,
     }) is None
+
+
+def test_customer_statement_is_not_an_unanswered_knowledge_question():
+    # A topic match (refund policy) is not proof of an information request.
+    assert not eligible_widget_knowledge_gap(
+        route="knowledge", requires_evidence=True,
+        customer_message_act="statement",
+    )
+    assert not eligible_widget_knowledge_gap(
+        route="knowledge", requires_evidence=True,
+        customer_message_act="correction",
+    )
+    assert not eligible_widget_knowledge_gap(
+        route="knowledge", requires_evidence=True,
+        customer_message_act="contextual_reply",
+    )
+
+
+def test_unclear_or_missing_llm_act_fails_closed():
+    for act in ("unclear", "unrecognized"):
+        assert not eligible_widget_knowledge_gap(
+            route="knowledge", requires_evidence=True,
+            customer_message_act=act,
+        )
+
+
+def test_information_request_without_question_mark_remains_eligible():
+    assert eligible_widget_knowledge_gap(
+        route="knowledge", requires_evidence=True,
+        customer_message_act="information_request",
+    )
+    assert eligible_widget_knowledge_gap(
+        route="knowledge", requires_evidence=True,
+        customer_message_act="information_request",
+        policy_follow_up_kind="policy_question",
+    )
+
+
+def test_non_question_never_becomes_gap_even_with_no_evidence():
+    eligible = eligible_widget_knowledge_gap(
+        route="knowledge", requires_evidence=True,
+        customer_message_act="statement",
+    )
+    assert detect_knowledge_gap(**{
+        **BASE, "question": "I did not demand any refund",
+        "intent": "knowledge" if eligible else "other",
+    }) is None

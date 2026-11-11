@@ -73,6 +73,7 @@ def eligible_widget_knowledge_gap(
     has_commerce_follow_up: bool = False,
     should_clarify: bool = False,
     multi_intent: bool = False,
+    customer_message_act: str | None = None,
 ) -> bool:
     """Determine whether a widget turn is a store-knowledge question.
 
@@ -81,6 +82,10 @@ def eligible_widget_knowledge_gap(
     follow-ups qualify; order/refund/date workflows are deliberately excluded.
     """
     if not requires_evidence or has_commerce_follow_up or should_clarify or multi_intent:
+        return False
+    # Caller-provided speech acts must explicitly ask for information. A
+    # policy-related statement or missing/invalid classification is not a gap.
+    if customer_message_act is not None and customer_message_act != "information_request":
         return False
     if policy_follow_up_kind is not None:
         return policy_follow_up_kind == "policy_question"
