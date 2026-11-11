@@ -65,15 +65,19 @@ async def list_semantic_groups(
     *,
     organization_id: UUID,
     limit: int = 100,
+    offset: int = 0,
+    threshold: float = 0.86,
 ) -> list[GapGroup]:
     """Bounded review-time grouping; tenant-scoped before embedding."""
-    if not 1 <= limit <= 100:
-        raise ValueError("limit must be between 1 and 100")
+    if not 1 <= limit <= 100 or not 0 <= offset <= 10000:
+        raise ValueError("invalid grouping page")
+    if not 0.0 < threshold <= 1.0:
+        raise ValueError("invalid similarity threshold")
     rows = (await db.scalars(
         select(KnowledgeGap)
         .where(KnowledgeGap.organization_id == organization_id, KnowledgeGap.status == "open")
         .order_by(KnowledgeGap.created_at.desc(), KnowledgeGap.id.desc())
-        .limit(limit)
+        .offset(offset).limit(limit)
     )).all()
     if not rows:
         return []
@@ -120,4 +124,5 @@ async def list_semantic_groups(
     return group_vectors(
         [(row.id, row.question) for row in rows],
         [vectors_by_id[row.id] for row in rows],
+        threshold=threshold,
     )
