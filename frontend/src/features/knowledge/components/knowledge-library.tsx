@@ -16,6 +16,7 @@ import { formatDateTime } from "@/lib/utils";
 import { archiveKnowledgeBase, createKnowledgeBase, knowledgeBaseKey, listKnowledgeBaseAudit, listKnowledgeBases, makeDefaultKnowledgeBase, restoreKnowledgeBase, updateKnowledgeBase } from "../api/knowledge-base-api";
 import { deleteKnowledgeDocument, isKnowledgeDocumentProcessing, KNOWLEDGE_PROCESSING_POLL_INTERVAL_MS, knowledgeKeys, knowledgePdfUrl, listKnowledgeDocuments, moveKnowledgeDocument, KNOWLEDGE_DOCUMENT_PAGE_SIZE, reprocessKnowledgeDocument, searchKnowledge, uploadKnowledgeDocument } from "../api/knowledge-api";
 import type { KnowledgeDocument } from "../types/knowledge.types";
+import { KnowledgeGaps } from "./knowledge-gaps";
 
 type UploadEntry = { file: File; status: "queued" | "uploading" | "processing" | "ready" | "failed"; error?: string };
 
@@ -117,6 +118,7 @@ export function KnowledgeLibrary() {
   const baseToArchive = activeBases.find((base) => base.id === archiveBaseId);
 
   return <div className="space-y-6 text-foreground">
+      {canManage && <KnowledgeGaps />}
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div><h1 className="text-2xl font-semibold tracking-tight">Knowledge bases</h1><p className="mt-1.5 text-sm text-muted-foreground">Organize support documents and assign them to your AI bots.</p></div>
         <div className="flex items-center gap-2">
