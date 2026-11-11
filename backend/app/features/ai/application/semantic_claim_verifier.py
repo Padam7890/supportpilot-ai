@@ -146,21 +146,52 @@ async def verify_candidate(
             "spans": [{"index": index, "text": span} for index, span in enumerate(spans, 1)],
         }, ensure_ascii=False)},
     ]
-    try:
-        async with asyncio.timeout(_REVIEW_TIMEOUT_SECONDS):
-            raw, usage, _ = await (review_model or generate_completion)(messages, max_tokens=750)
-    except TimeoutError:
-        return SemanticVerification(False, "review_timeout")
-    try:
-        review = _parse_review(raw)
-    except (ValidationError, ValueError, TypeError) as exc:
-        logger.warning("semantic_review_invalid format=%s response_chars=%d", type(exc).__name__, len(raw))
+    reviewer = review_model or generate_completion
+    usage: dict[str, int] = {}
+    review: CandidateReview | None = None
+    for attempt in range(2):
+        try:
+            async with asyncio.timeout(_REVIEW_TIMEOUT_SECONDS):
+                raw, attempt_usage, _ = await reviewer(messages, max_tokens=750)
+            for key, value in attempt_usage.items():
+                if isinstance(value, int):
+                    usage[key] = usage.get(key, 0) + value
+        except TimeoutError:
+            return SemanticVerification(False, "review_timeout", usage=usage)
+        try:
+            parsed = _parse_review(raw)
+            indices = sorted(item.index for item in parsed.spans)
+            if indices != list(range(1, len(spans) + 1)):
+                raise ValueError("span_index_mismatch")
+            review = parsed
+            break
+        except (ValidationError, ValueError, TypeError) as exc:
+            if isinstance(exc, ValidationError):
+                errors = sorted({str(item["type"]) for item in exc.errors()})
+                detail = ",".join(errors)[:120]
+            else:
+                detail = str(exc)[:120] if isinstance(exc, ValueError) else type(exc).__name__
+            logger.warning(
+                "semantic_review_invalid format=%s detail=%s response_chars=%d attempt=%d",
+                type(exc).__name__, detail, len(raw), attempt + 1,
+            )
+            if attempt == 0:
+                messages = [
+                    *messages,
+                    {"role": "assistant", "content": raw[:1200]},
+                    {"role": "user", "content": (
+                        "Your previous JSON review was structurally invalid. "
+                        "Re-evaluate the ORIGINAL candidate spans and numbered sources. "
+                        "Return ONLY a JSON object with exactly one span per original index "
+                        "in order. Every span requires integer index, verdict from "
+                        "general/entailed/unsupported/contradicted/ambiguous/sensitive, "
+                        "and a list of integer source indices (empty for general). "
+                        "Do not change your evidence standards or approve uncertain claims."
+                    )},
+                ]
+    if review is None:
         return SemanticVerification(False, "invalid_review", usage=usage)
     reviews = sorted(review.spans, key=lambda result: result.index)
-    if [result.index for result in reviews] != list(range(1, len(spans) + 1)):
-        logger.warning("semantic_review_invalid format=span_index_mismatch expected=%d actual=%d",
-                       len(spans), len(reviews))
-        return SemanticVerification(False, "invalid_review", usage=usage)
 
     used: set[int] = set()
     recovered = 0

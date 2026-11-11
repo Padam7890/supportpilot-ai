@@ -138,3 +138,49 @@ async def test_broad_geographic_policy_does_not_justify_delivery_time():
     )
     assert not result.accepted
     assert result.reason == "unsupported_numeric_claim"
+
+
+@pytest.mark.anyio
+async def test_invalid_review_is_retried_once_and_validated():
+    model = AsyncMock(side_effect=[
+        ('{"spans":[{"index":1,"verdict":"entailed","sources":"1"}]}', {}, "test"),
+        ('{"spans":[{"index":1,"verdict":"entailed","sources":[1]}]}', {}, "test"),
+    ])
+    result = await verify_candidate(
+        "Only unused items may be returned within 14 days [source 1].",
+        _POLICY,
+        review_model=model,
+    )
+    assert result.accepted
+    assert model.await_count == 2
+
+
+@pytest.mark.anyio
+async def test_two_invalid_reviews_fail_closed():
+    model = AsyncMock(return_value=(
+        '{"spans":[{"index":1,"verdict":"entailed","sources":"1"}]}',
+        {}, "test",
+    ))
+    result = await verify_candidate(
+        "Only unused items may be returned within 14 days [source 1].",
+        _POLICY,
+        review_model=model,
+    )
+    assert not result.accepted
+    assert result.reason == "invalid_review"
+    assert model.await_count == 2
+
+
+@pytest.mark.anyio
+async def test_invalid_span_indices_retry_before_rejecting():
+    model = AsyncMock(side_effect=[
+        ('{"spans":[{"index":2,"verdict":"entailed","sources":[1]}]}', {}, "test"),
+        ('{"spans":[{"index":1,"verdict":"entailed","sources":[1]}]}', {}, "test"),
+    ])
+    result = await verify_candidate(
+        "Only unused items may be returned within 14 days [source 1].",
+        _POLICY,
+        review_model=model,
+    )
+    assert result.accepted
+    assert model.await_count == 2
